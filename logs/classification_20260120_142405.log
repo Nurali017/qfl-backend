@@ -1,0 +1,32 @@
+2026-01-20 14:24:05,336 - INFO - ============================================================
+2026-01-20 14:24:05,336 - INFO - NEWS CLASSIFICATION SCRIPT
+2026-01-20 14:24:05,336 - INFO - Dry run: True
+2026-01-20 14:24:05,336 - INFO - Language filter: all
+2026-01-20 14:24:05,336 - INFO - Limit: 10
+2026-01-20 14:24:05,336 - INFO - Batch size: 20
+2026-01-20 14:24:05,336 - INFO - ============================================================
+2026-01-20 14:24:05,425 - INFO - Found 10 unclassified news articles
+2026-01-20 14:24:05,426 - INFO - 
+Processing batch 1/1 (10 articles)
+2026-01-20 14:24:06,765 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,050 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,068 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,082 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,091 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,151 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,192 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,230 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,256 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:07,755 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-01-20 14:24:08,764 - INFO - ✓ Batch 1 classified (dry-run, not saved)
+2026-01-20 14:24:08,764 - INFO - Progress: 10/10 (100.0%)
+2026-01-20 14:24:08,764 - INFO - 
+============================================================
+2026-01-20 14:24:08,764 - INFO - CLASSIFICATION COMPLETE
+2026-01-20 14:24:08,764 - INFO - Total processed: 10
+2026-01-20 14:24:08,764 - INFO -   - NEWS: 2 (20.0%)
+2026-01-20 14:24:08,765 - INFO -   - ANALYTICS: 4 (40.0%)
+2026-01-20 14:24:08,765 - INFO -   - Errors: 0
+2026-01-20 14:24:08,765 - INFO - 
+⚠️  DRY RUN MODE - No changes saved to database
+2026-01-20 14:24:08,765 - INFO - ============================================================
