@@ -1,0 +1,217 @@
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
+
+from app.api.deps import get_db
+from app.models import Player, PlayerTeam, Game, GamePlayerStats, PlayerSeasonStats
+from app.schemas.player import (
+    PlayerResponse,
+    PlayerListResponse,
+    PlayerDetailResponse,
+    PlayerSeasonStatsResponse,
+)
+from app.schemas.game import GameResponse, GameListResponse
+from app.schemas.team import TeamInGame
+from app.config import get_settings
+from app.utils.localization import get_localized_field, get_localized_name
+
+settings = get_settings()
+
+router = APIRouter(prefix="/players", tags=["players"])
+
+
+@router.get("", response_model=PlayerListResponse)
+async def get_players(
+    season_id: int | None = None,
+    team_id: int | None = None,
+    limit: int = Query(default=50, le=100),
+    offset: int = Query(default=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get players, optionally filtered by season and team."""
+    query = select(Player)
+
+    if season_id or team_id:
+        subquery = select(PlayerTeam.player_id)
+        if season_id:
+            subquery = subquery.where(PlayerTeam.season_id == season_id)
+        if team_id:
+            subquery = subquery.where(PlayerTeam.team_id == team_id)
+        query = query.where(Player.id.in_(subquery.distinct()))
+
+    # Count total
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Get paginated results
+    query = query.order_by(Player.last_name, Player.first_name).offset(offset).limit(limit)
+    result = await db.execute(query)
+    players = result.scalars().all()
+
+    items = [PlayerResponse.model_validate(p) for p in players]
+    return PlayerListResponse(items=items, total=total)
+
+
+@router.get("/{player_id}")
+async def get_player(
+    player_id: UUID,
+    season_id: int | None = Query(default=None),
+    lang: str = Query(default="kz", description="Language: kz, ru, or en"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get player by ID."""
+    result = await db.execute(
+        select(Player)
+        .where(Player.id == player_id)
+        .options(
+            selectinload(Player.player_teams),
+            selectinload(Player.country),
+        )
+    )
+    player = result.scalar_one_or_none()
+
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    # Filter teams by season if season_id provided
+    if season_id is not None:
+        teams = list(set(pt.team_id for pt in player.player_teams if pt.season_id == season_id))
+    else:
+        teams = list(set(pt.team_id for pt in player.player_teams))
+
+    # Build country response
+    country_data = None
+    if player.country:
+        country_data = {
+            "id": player.country.id,
+            "code": player.country.code,
+            "name": get_localized_name(player.country, lang),
+            "flag_url": player.country.flag_url,
+        }
+
+    return {
+        "id": player.id,
+        "first_name": get_localized_field(player, "first_name", lang),
+        "last_name": get_localized_field(player, "last_name", lang),
+        "birthday": player.birthday,
+        "player_type": player.player_type,
+        "country": country_data,
+        "photo_url": player.photo_url,
+        "age": player.age,
+        "top_role": player.top_role,
+        "teams": teams,
+    }
+
+
+@router.get("/{player_id}/stats", response_model=PlayerSeasonStatsResponse)
+async def get_player_stats(
+    player_id: UUID,
+    season_id: int = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get player statistics for a season.
+
+    Returns 50+ metrics from SOTA API v2 including:
+    - xG, xG per 90
+    - Goals, assists
+    - Duels, dribbles, tackles
+    - Passes, key passes
+    - And more in extra_stats
+    """
+    if season_id is None:
+        season_id = settings.current_season_id
+
+    # Get from player_season_stats table
+    result = await db.execute(
+        select(PlayerSeasonStats).where(
+            PlayerSeasonStats.player_id == player_id,
+            PlayerSeasonStats.season_id == season_id,
+        )
+    )
+    stats = result.scalar_one_or_none()
+
+    if not stats:
+        raise HTTPException(
+            status_code=404,
+            detail="Stats not found. Run /sync/player-season-stats first.",
+        )
+
+    return PlayerSeasonStatsResponse.model_validate(stats)
+
+
+@router.get("/{player_id}/games", response_model=GameListResponse)
+async def get_player_games(
+    player_id: UUID,
+    season_id: int = Query(default=None),
+    limit: int = Query(default=50, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get games a player participated in."""
+    if season_id is None:
+        season_id = settings.current_season_id
+
+    # Get game IDs where player has stats
+    game_ids_result = await db.execute(
+        select(GamePlayerStats.game_id).where(GamePlayerStats.player_id == player_id)
+    )
+    game_ids = [g[0] for g in game_ids_result.fetchall()]
+
+    if not game_ids:
+        return GameListResponse(items=[], total=0)
+
+    # Get games
+    result = await db.execute(
+        select(Game)
+        .where(Game.id.in_(game_ids), Game.season_id == season_id)
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.season),
+        )
+        .order_by(Game.date.desc())
+        .limit(limit)
+    )
+    games = result.scalars().all()
+
+    items = []
+    for g in games:
+        home_team = None
+        away_team = None
+        if g.home_team:
+            home_team = TeamInGame(
+                id=g.home_team.id,
+                name=g.home_team.name,
+                logo_url=g.home_team.logo_url,
+                score=g.home_score,
+            )
+        if g.away_team:
+            away_team = TeamInGame(
+                id=g.away_team.id,
+                name=g.away_team.name,
+                logo_url=g.away_team.logo_url,
+                score=g.away_score,
+            )
+
+        items.append(
+            GameResponse(
+                id=g.id,
+                date=g.date,
+                time=g.time,
+                tour=g.tour,
+                season_id=g.season_id,
+                home_score=g.home_score,
+                away_score=g.away_score,
+                has_stats=g.has_stats,
+                stadium=g.stadium,
+                visitors=g.visitors,
+                home_team=home_team,
+                away_team=away_team,
+                season_name=g.season.name if g.season else None,
+            )
+        )
+
+    return GameListResponse(items=items, total=len(items))
