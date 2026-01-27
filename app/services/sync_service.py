@@ -4,7 +4,7 @@ from datetime import datetime, date, time
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.dialects.postgresql import insert
 
 
@@ -216,6 +216,28 @@ class SyncService:
         self.db.add(new_stadium)
         await self.db.flush()
         return new_stadium.id
+
+    async def _get_home_stadium_for_team(self, team_id: int) -> int | None:
+        """Get home stadium ID for a team based on hardcoded mapping."""
+        # Mapping: team_id -> stadium_id (based on KPL 2025 season)
+        TEAM_HOME_STADIUMS = {
+            13: 34,    # Кайрат (Алматы) -> Центральный стадион
+            45: 28,    # Жетысу (Талдыкорган) -> стадион им Б. Онгарова
+            49: 9,     # Атырау -> Спорткомплекс «Мунайшы»
+            51: 4,     # Актобе -> Центральный (ФК «Актобе»)
+            80: 7,     # Туран (Туркестан) -> Туркестан Арена
+            81: 5,     # Ордабасы (Шымкент) -> Центральный стадион им. Кажымукана
+            87: 3,     # Кызылжар (Петропавловск) -> стадион Карасай
+            90: 2,     # Тобол (Костанай) -> Центральный стадион Костанай
+            91: 10,    # Астана -> СК «Астана Арена»
+            92: 11,    # Женис (Жезказган) -> «Металлург»
+            93: 8,     # Елимай (Семей) -> Стадион «Спартак»
+            94: 1,     # Кайсар (Кызылорда) -> ККГП «Стадион имени Г. Муратбаева»
+            293: 11,   # Улытау (Жезказган) -> «Металлург»
+            318: 6,    # Окжетпес (Кокшетау) -> «Окжетпес»
+        }
+
+        return TEAM_HOME_STADIUMS.get(team_id)
 
     async def sync_tournaments(self) -> int:
         """Sync tournaments from SOTA API with all 3 languages."""
@@ -496,9 +518,13 @@ class SyncService:
             home_team = g.get("home_team", {})
             away_team = g.get("away_team", {})
 
-            # Get or create stadium
+            # Get or create stadium from SOTA
             stadium_name = g.get("stadium")
             stadium_id = await self._get_or_create_stadium(stadium_name)
+
+            # Fallback: Use home team's stadium if SOTA doesn't provide one
+            if not stadium_id and home_team.get("id"):
+                stadium_id = await self._get_home_stadium_for_team(home_team["id"])
 
             stmt = insert(Game).values(
                 id=game_id,
@@ -877,6 +903,81 @@ class SyncService:
             "games_synced": games_synced,
             "total_events_added": total_events,
             "errors": errors,
+        }
+
+    async def sync_game_metadata_from_live(self, season_id: int | None = None) -> dict:
+        """
+        Sync stadium and time for games from live SOTA /em/ endpoints.
+
+        Stadium and time are extracted from /em/<game_id>-team-home.json
+        using special markers like STADIUM, TIME, VENUE, DATE.
+        """
+        if season_id is None:
+            season_id = settings.current_season_id
+
+        # Get games without stadium or time
+        result = await self.db.execute(
+            select(Game).where(
+                Game.season_id == season_id,
+                or_(Game.stadium_id.is_(None), Game.time.is_(None)),
+            )
+        )
+        games = list(result.scalars().all())
+
+        updated = 0
+        errors = []
+
+        for game in games:
+            try:
+                # Try to get live lineup data (may contain stadium and time)
+                home_data = await self.client.get_live_team_lineup(str(game.id), "home")
+
+                # Extract stadium and time from special markers
+                stadium_name = None
+                time_str = None
+
+                for item in home_data:
+                    number = item.get("number", "")
+
+                    # Check for stadium markers
+                    if number in ["STADIUM", "VENUE"]:
+                        stadium_name = item.get("first_name") or item.get("full_name")
+
+                    # Check for time markers
+                    if number in ["TIME", "DATE"]:
+                        time_str = item.get("first_name") or item.get("full_name")
+
+                # Update game if we found new data
+                game_updated = False
+
+                if stadium_name and not game.stadium_id:
+                    stadium_id = await self._get_or_create_stadium(stadium_name)
+                    if stadium_id:
+                        game.stadium_id = stadium_id
+                        game.stadium = stadium_name
+                        game_updated = True
+
+                if time_str and not game.time:
+                    parsed_time = parse_time(time_str)
+                    if parsed_time:
+                        game.time = parsed_time
+                        game_updated = True
+
+                if game_updated:
+                    updated += 1
+
+            except Exception as e:
+                # Many games won't have live endpoints - this is expected
+                if "404" not in str(e):
+                    logger.warning(f"Failed to sync metadata for game {game.id}: {e}")
+                errors.append({"game_id": str(game.id), "error": str(e)})
+
+        await self.db.commit()
+
+        return {
+            "games_checked": len(games),
+            "metadata_updated": updated,
+            "errors_count": len(errors),
         }
 
     async def sync_game_formations(self, season_id: int | None = None) -> dict:
@@ -1641,6 +1742,35 @@ class SyncService:
                 await self.db.execute(tc_stmt)
                 result["coaches"] += 1
 
+        # Ensure player exists in DB before inserting lineup (auto-create if missing)
+        async def ensure_player_exists(player_data: dict, team_id: int):
+            pid_str = player_data.get("id")
+            if not pid_str:
+                return
+            try:
+                pid = UUID(pid_str)
+            except (ValueError, TypeError):
+                return
+            existing = await self.db.execute(select(Player.id).where(Player.id == pid))
+            if existing.scalar_one_or_none() is None:
+                first_name = player_data.get("first_name", "")
+                last_name_raw = player_data.get("last_name", [])
+                last_name = last_name_raw[0] if isinstance(last_name_raw, list) and last_name_raw else str(last_name_raw) if last_name_raw else ""
+                stmt = insert(Player).values(
+                    id=pid,
+                    first_name=first_name,
+                    last_name=last_name,
+                ).on_conflict_do_nothing()
+                await self.db.execute(stmt)
+                # Also link to team
+                pt_stmt = insert(PlayerTeam).values(
+                    player_id=pid,
+                    team_id=team_id,
+                    season_id=game.season_id,
+                ).on_conflict_do_nothing()
+                await self.db.execute(pt_stmt)
+                logger.info(f"Auto-created missing player {first_name} {last_name} ({pid})")
+
         # Sync lineups for home and away teams
         # SOTA API returns all players in "lineup" field, with substitutes field empty
         # Starters = first 10 field players (is_gk=false) + first goalkeeper (is_gk=true)
@@ -1685,6 +1815,8 @@ class SyncService:
                 except (ValueError, TypeError):
                     continue
 
+                await ensure_player_exists(player, team_id)
+
                 gl_stmt = insert(GameLineup).values(
                     game_id=game_uuid,
                     team_id=team_id,
@@ -1715,6 +1847,8 @@ class SyncService:
                 except (ValueError, TypeError):
                     continue
 
+                await ensure_player_exists(player, team_id)
+
                 gl_stmt = insert(GameLineup).values(
                     game_id=game_uuid,
                     team_id=team_id,
@@ -1741,6 +1875,106 @@ class SyncService:
                 .where(Game.id == game_uuid)
                 .values(has_lineup=True)
             )
+
+        await self.db.commit()
+
+        # Also sync positions from live endpoint
+        await self.sync_live_lineup_positions(game_id)
+
+        return result
+
+    async def sync_live_lineup_positions(self, game_id: str) -> dict:
+        """
+        Sync player positions from live endpoint for a specific game.
+        Updates amplua and field_position fields in GameLineup.
+        If a player from live endpoint doesn't exist in GameLineup, adds them.
+
+        SOTA live endpoint returns:
+        - amplua: position category (Gk, D, DM, M, AM, F) - only for starters
+        - position: field side (C, L, R, LC, RC) - only for starters
+        - Players without amplua are substitutes
+        """
+        game_uuid = UUID(game_id)
+        result = {"positions_updated": 0, "players_added": 0}
+
+        # Get game to know home/away team IDs
+        game_result = await self.db.execute(
+            select(Game).where(Game.id == game_uuid)
+        )
+        game = game_result.scalar_one_or_none()
+        if not game:
+            return result
+
+        for side, team_id in [("home", game.home_team_id), ("away", game.away_team_id)]:
+            if not team_id:
+                continue
+
+            try:
+                live_data = await self.client.get_live_team_lineup(game_id, side)
+            except Exception as e:
+                logger.warning(f"Failed to fetch live lineup for game {game_id} {side}: {e}")
+                continue
+
+            for player in live_data:
+                # Get shirt number - skip metadata entries (TEAM, FORMATION, COACH, etc.)
+                shirt_number = player.get("number")
+                if not isinstance(shirt_number, int):
+                    continue
+
+                player_id_str = player.get("id")
+                amplua = player.get("amplua")  # Gk, D, DM, M, AM, F - only starters have this
+                field_position = player.get("position")  # C, L, R, LC, RC
+                is_captain = player.get("capitan", False)
+
+                # Determine lineup type: players with amplua are starters
+                lineup_type = LineupType.starter if amplua else LineupType.substitute
+
+                # Try to update existing entry by shirt_number + team_id
+                update_result = await self.db.execute(
+                    GameLineup.__table__.update()
+                    .where(
+                        GameLineup.game_id == game_uuid,
+                        GameLineup.team_id == team_id,
+                        GameLineup.shirt_number == shirt_number
+                    )
+                    .values(
+                        amplua=amplua,
+                        field_position=field_position,
+                        lineup_type=lineup_type,
+                        is_captain=is_captain
+                    )
+                )
+
+                if update_result.rowcount > 0:
+                    if amplua:
+                        result["positions_updated"] += 1
+                elif player_id_str:
+                    # Entry doesn't exist - try to insert new one
+                    try:
+                        player_uuid = UUID(player_id_str)
+                        # Check if player exists in our database
+                        player_exists = await self.db.execute(
+                            select(Player.id).where(Player.id == player_uuid)
+                        )
+                        if player_exists.scalar_one_or_none():
+                            # Insert new GameLineup entry
+                            await self.db.execute(
+                                GameLineup.__table__.insert().values(
+                                    game_id=game_uuid,
+                                    team_id=team_id,
+                                    player_id=player_uuid,
+                                    shirt_number=shirt_number,
+                                    lineup_type=lineup_type,
+                                    amplua=amplua,
+                                    field_position=field_position,
+                                    is_captain=is_captain
+                                )
+                            )
+                            result["players_added"] += 1
+                            if amplua:
+                                result["positions_updated"] += 1
+                    except (ValueError, TypeError):
+                        continue
 
         await self.db.commit()
         return result
@@ -1770,14 +2004,25 @@ class SyncService:
         stats_synced = 0
         lineups_synced = 0
         for game_id in game_ids:
-            await self.sync_game_stats(game_id)
-            stats_synced += 1
+            try:
+                await self.sync_game_stats(game_id)
+                stats_synced += 1
+            except Exception as e:
+                logger.warning(f"Failed to sync stats for game {game_id}: {e}")
 
-            # Sync pre-game lineup (referees, coaches, lineups)
-            lineup_result = await self.sync_pre_game_lineup(game_id)
-            if lineup_result["lineups"] > 0:
-                lineups_synced += 1
+            try:
+                # Sync pre-game lineup (referees, coaches, lineups)
+                lineup_result = await self.sync_pre_game_lineup(game_id)
+                if lineup_result["lineups"] > 0:
+                    lineups_synced += 1
+            except Exception as e:
+                logger.warning(f"Failed to sync lineup for game {game_id}: {e}")
 
         results["game_stats_synced"] = stats_synced
         results["game_lineups_synced"] = lineups_synced
+
+        # Sync stadium and time from live /em/ endpoints
+        metadata_result = await self.sync_game_metadata_from_live(season_id)
+        results["metadata_synced"] = metadata_result["metadata_updated"]
+
         return results

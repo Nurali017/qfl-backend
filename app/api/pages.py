@@ -7,19 +7,20 @@ from app.models import Page, Language
 from app.schemas.page import PageResponse, PageListResponse
 from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
+from app.utils.error_messages import get_error_message
 
 router = APIRouter(prefix="/pages", tags=["pages"])
 
 
 @router.get("", response_model=list[PageListResponse])
 async def get_pages(
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all pages for a language."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
     result = await db.execute(
-        select(Page).where(Page.language == lang).order_by(Page.slug)
+        select(Page).where(Page.language == lang_enum).order_by(Page.slug)
     )
     return result.scalars().all()
 
@@ -27,17 +28,17 @@ async def get_pages(
 @router.get("/{slug}", response_model=PageResponse)
 async def get_page(
     slug: str,
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get page by slug."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
     result = await db.execute(
-        select(Page).where(Page.slug == slug, Page.language == lang)
+        select(Page).where(Page.slug == slug, Page.language == lang_enum)
     )
     page = result.scalar_one_or_none()
     if not page:
-        raise HTTPException(status_code=404, detail="Page not found")
+        raise HTTPException(status_code=404, detail=get_error_message("page_not_found", lang))
     return page
 
 

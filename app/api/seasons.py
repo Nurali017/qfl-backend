@@ -7,7 +7,8 @@ from sqlalchemy import select, func, desc, nulls_last, case, or_
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.models import Season, Game, ScoreTable, Team, Player, PlayerSeasonStats, TeamSeasonStats
+from app.models import Season, Game, ScoreTable, Team, Player, PlayerSeasonStats, TeamSeasonStats, Country
+from app.utils.localization import get_localized_field
 from app.schemas.season import SeasonResponse, SeasonListResponse, SeasonStatisticsResponse
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.stats import (
@@ -18,8 +19,9 @@ from app.schemas.stats import (
     ResultsGridResponse,
     TeamResultsGridEntry,
 )
-from app.schemas.team import TeamInGame
+from app.schemas.team import TeamInGame, TeamStatsTableEntry, TeamStatsTableResponse
 from app.schemas.player import PlayerStatsTableEntry, PlayerStatsTableResponse
+from app.schemas.country import CountryInPlayer
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -130,6 +132,7 @@ async def calculate_dynamic_table(
     tour_from: int | None,
     tour_to: int | None,
     home_away: str | None,
+    lang: str = "ru",
 ) -> list[dict]:
     """Calculate league table dynamically from games with filters."""
     query = (
@@ -174,7 +177,7 @@ async def calculate_dynamic_table(
         if home_away != "away":
             stats = team_stats[home_id]
             stats["team_id"] = home_id
-            stats["team_name"] = game.home_team.name if game.home_team else None
+            stats["team_name"] = get_localized_field(game.home_team, "name", lang) if game.home_team else None
             stats["team_logo"] = game.home_team.logo_url if game.home_team else None
             stats["games_played"] += 1
             stats["goals_scored"] += home_score
@@ -195,7 +198,7 @@ async def calculate_dynamic_table(
         if home_away != "home":
             stats = team_stats[away_id]
             stats["team_id"] = away_id
-            stats["team_name"] = game.away_team.name if game.away_team else None
+            stats["team_name"] = get_localized_field(game.away_team, "name", lang) if game.away_team else None
             stats["team_logo"] = game.away_team.logo_url if game.away_team else None
             stats["games_played"] += 1
             stats["goals_scored"] += away_score
@@ -235,6 +238,7 @@ async def get_season_table(
     tour_from: int | None = Query(default=None, description="From matchweek (inclusive)"),
     tour_to: int | None = Query(default=None, description="To matchweek (inclusive)"),
     home_away: str | None = Query(default=None, pattern="^(home|away)$", description="Filter home/away games"),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -249,7 +253,7 @@ async def get_season_table(
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
     if has_filters:
-        table_data = await calculate_dynamic_table(db, season_id, tour_from, tour_to, home_away)
+        table_data = await calculate_dynamic_table(db, season_id, tour_from, tour_to, home_away, lang)
     else:
         result = await db.execute(
             select(ScoreTable)
@@ -264,7 +268,7 @@ async def get_season_table(
             table_data.append({
                 "position": e.position,
                 "team_id": e.team_id,
-                "team_name": e.team.name if e.team else None,
+                "team_name": get_localized_field(e.team, "name", lang) if e.team else None,
                 "team_logo": e.team.logo_url if e.team else None,
                 "games_played": e.games_played,
                 "wins": e.wins,
@@ -307,6 +311,7 @@ async def get_season_table(
 @router.get("/{season_id}/results-grid", response_model=ResultsGridResponse)
 async def get_results_grid(
     season_id: int,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -372,7 +377,7 @@ async def get_results_grid(
             TeamResultsGridEntry(
                 position=entry.position,
                 team_id=entry.team_id,
-                team_name=entry.team.name if entry.team else None,
+                team_name=get_localized_field(entry.team, "name", lang) if entry.team else None,
                 team_logo=entry.team.logo_url if entry.team else None,
                 results=team_results.get(entry.team_id, []),
             )
@@ -385,6 +390,7 @@ async def get_results_grid(
 async def get_season_games(
     season_id: int,
     tour: int | None = None,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get games for a season."""
@@ -412,14 +418,14 @@ async def get_season_games(
         if g.home_team:
             home_team = {
                 "id": g.home_team.id,
-                "name": g.home_team.name,
+                "name": get_localized_field(g.home_team, "name", lang),
                 "logo_url": g.home_team.logo_url,
                 "score": g.home_score,
             }
         if g.away_team:
             away_team = {
                 "id": g.away_team.id,
-                "name": g.away_team.name,
+                "name": get_localized_field(g.away_team, "name", lang),
                 "logo_url": g.away_team.logo_url,
                 "score": g.away_score,
             }
@@ -462,6 +468,7 @@ async def get_player_stats_table(
     sort_by: str = Query(default="goals"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -492,9 +499,10 @@ async def get_player_stats_table(
 
     # Main query with JOIN
     query = (
-        select(PlayerSeasonStats, Player, Team)
+        select(PlayerSeasonStats, Player, Team, Country)
         .join(Player, PlayerSeasonStats.player_id == Player.id)
         .outerjoin(Team, PlayerSeasonStats.team_id == Team.id)
+        .outerjoin(Country, Player.country_id == Country.id)
         .where(PlayerSeasonStats.season_id == season_id)
         .order_by(nulls_last(desc(sort_column)))
         .offset(offset)
@@ -505,15 +513,26 @@ async def get_player_stats_table(
     rows = result.all()
 
     items = []
-    for stats, player, team in rows:
+    for stats, player, team, country in rows:
+        # Build country data
+        country_data = None
+        if country:
+            country_data = CountryInPlayer(
+                id=country.id,
+                code=country.code,
+                name=country.name,
+                flag_url=country.flag_url,
+            )
+
         items.append(
             PlayerStatsTableEntry(
                 player_id=player.id,
-                first_name=player.first_name,
-                last_name=player.last_name,
+                first_name=get_localized_field(player, "first_name", lang),
+                last_name=get_localized_field(player, "last_name", lang),
                 photo_url=player.photo_url,
+                country=country_data,
                 team_id=team.id if team else None,
-                team_name=team.name if team else None,
+                team_name=get_localized_field(team, "name", lang) if team else None,
                 team_logo=team.logo_url if team else None,
                 games_played=stats.games_played,
                 minutes_played=stats.minutes_played,
@@ -627,4 +646,126 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
         yellow_cards=team_row.yellow_cards or 0,
         second_yellow_cards=team_row.second_yellow_cards or 0,
         red_cards=team_row.red_cards or 0,
+    )
+
+
+# Available sort fields for team stats
+TEAM_STATS_SORT_FIELDS = [
+    "points", "goals_scored", "goals_conceded", "goal_difference",
+    "wins", "draws", "losses", "games_played",
+    "shots", "shots_on_goal", "possession_avg",
+    "passes", "pass_accuracy_avg", "key_pass",
+    "tackle", "interception", "recovery",
+    "dribble", "fouls", "yellow_cards", "red_cards",
+    "xg", "corners", "offsides",
+]
+
+
+@router.get("/{season_id}/team-stats", response_model=TeamStatsTableResponse)
+async def get_team_stats_table(
+    season_id: int,
+    sort_by: str = Query(default="points"),
+    limit: int = Query(default=50, le=100),
+    offset: int = Query(default=0),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get statistics for all teams in a season.
+
+    Sort by: points, goals_scored, goals_conceded, wins, draws, losses,
+    shots, passes, possession_avg, tackles, fouls, yellow_cards, etc.
+    """
+    # Validate sort field
+    if sort_by not in TEAM_STATS_SORT_FIELDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sort_by field. Available: {', '.join(TEAM_STATS_SORT_FIELDS)}",
+        )
+
+    # Get the sort column
+    sort_column = getattr(TeamSeasonStats, sort_by, None)
+    if sort_column is None:
+        raise HTTPException(status_code=400, detail=f"Sort field '{sort_by}' not found")
+
+    # Count total
+    count_query = select(func.count()).select_from(TeamSeasonStats).where(
+        TeamSeasonStats.season_id == season_id
+    )
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Main query with JOIN
+    query = (
+        select(TeamSeasonStats, Team)
+        .join(Team, TeamSeasonStats.team_id == Team.id)
+        .where(TeamSeasonStats.season_id == season_id)
+        .order_by(nulls_last(desc(sort_column)))
+        .offset(offset)
+        .limit(limit)
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    items = []
+    for stats, team in rows:
+        # Calculate derived metrics
+        games = stats.games_played or 1
+        goals_per_match = round((stats.goals_scored or 0) / games, 2) if games > 0 else None
+        goals_conceded_per_match = round((stats.goals_conceded or 0) / games, 2) if games > 0 else None
+        shots_per_match = round((stats.shots or 0) / games, 2) if games > 0 else None
+        fouls_per_match = round((stats.fouls or 0) / games, 2) if games > 0 else None
+
+        # Shot accuracy
+        shot_accuracy = None
+        if stats.shots and stats.shots > 0:
+            shot_accuracy = round((stats.shots_on_goal or 0) / stats.shots * 100, 1)
+
+        items.append(
+            TeamStatsTableEntry(
+                team_id=team.id,
+                team_name=get_localized_field(team, "name", lang),
+                team_logo=team.logo_url,
+                games_played=stats.games_played,
+                wins=stats.wins,
+                draws=stats.draws,
+                losses=stats.losses,
+                goals_scored=stats.goals_scored,
+                goals_conceded=stats.goals_conceded,
+                goal_difference=stats.goals_difference,
+                points=stats.points,
+                goals_per_match=goals_per_match,
+                goals_conceded_per_match=goals_conceded_per_match,
+                shots=stats.shots,
+                shots_on_goal=stats.shots_on_goal,
+                shot_accuracy=shot_accuracy,
+                shots_per_match=shots_per_match,
+                passes=stats.passes,
+                pass_accuracy=float(stats.pass_accuracy_avg) if stats.pass_accuracy_avg else None,
+                key_passes=stats.key_pass,
+                crosses=stats.pass_cross,
+                possession=float(stats.possession_avg) if stats.possession_avg else None,
+                dribbles=stats.dribble,
+                dribble_success=float(stats.dribble_ratio) if stats.dribble_ratio else None,
+                tackles=stats.tackle,
+                interceptions=stats.interception,
+                recoveries=stats.recovery,
+                fouls=stats.fouls,
+                fouls_per_match=fouls_per_match,
+                yellow_cards=stats.yellow_cards,
+                second_yellow_cards=stats.second_yellow_cards,
+                red_cards=stats.red_cards,
+                corners=stats.corners,
+                offsides=stats.offsides,
+                xg=float(stats.xg) if stats.xg else None,
+                xg_per_match=float(stats.xg_per_match) if stats.xg_per_match else None,
+            )
+        )
+
+    return TeamStatsTableResponse(
+        season_id=season_id,
+        sort_by=sort_by,
+        items=items,
+        total=total,
     )

@@ -98,6 +98,7 @@ class PlayerStatsTableEntry(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     photo_url: str | None = None
+    country: CountryInPlayer | None = None
     team_id: int | None = None
     team_name: str | None = None
     team_logo: str | None = None
@@ -136,4 +137,50 @@ class PlayerStatsTableResponse(BaseModel):
     season_id: int
     sort_by: str
     items: list[PlayerStatsTableEntry]
+    total: int
+
+
+class PlayerTeammateResponse(BaseModel):
+    """Response for player teammate."""
+
+    player_id: UUID
+    first_name: str | None = None
+    last_name: str | None = None
+    jersey_number: int | None = None
+    position: str | None = None
+    age: int | None = None
+    photo_url: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class PlayerTeammatesListResponse(BaseModel):
+    """Response for player teammates list."""
+
+    items: list[PlayerTeammateResponse]
+    total: int
+
+
+class PlayerTournamentHistoryEntry(BaseModel):
+    """Single entry in player tournament history."""
+
+    season_id: int
+    season_name: str | None = None
+    tournament_name: str | None = None
+    team_id: int | None = None
+    team_name: str | None = None
+    position: str | None = None
+    games_played: int | None = None
+    minutes_played: int | None = None
+    goals: int | None = None
+    assists: int | None = None
+    yellow_cards: int | None = None
+    red_cards: int | None = None
+
+
+class PlayerTournamentHistoryResponse(BaseModel):
+    """Response for player tournament history."""
+
+    items: list[PlayerTournamentHistoryEntry]
     total: int

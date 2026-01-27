@@ -107,7 +107,7 @@ def compute_game_status(game: Game, today: date_type | None = None) -> str:
 
 def group_games_by_date(
     games: list[Game],
-    language: str = "ru",
+    lang: str = "ru",
     today: date_type | None = None
 ) -> list[dict]:
     """
@@ -115,7 +115,7 @@ def group_games_by_date(
 
     Args:
         games: List of Game objects to group
-        language: Language for date formatting (kz, ru, en)
+        lang: Language for date formatting (kz, ru, en)
         today: Current date for status computation (defaults to today)
 
     Returns:
@@ -151,7 +151,7 @@ def group_games_by_date(
 
     result = []
     for game_date in sorted(grouped.keys()):
-        date_label = format_match_date(game_date, language)
+        date_label = format_match_date(game_date, lang)
         result.append({
             "date": game_date,
             "date_label": date_label,
@@ -161,36 +161,88 @@ def group_games_by_date(
     return result
 
 
+SUPPORTED_FORMATIONS = {
+    "4-4-2", "4-3-3", "4-2-3-1", "3-5-2", "5-3-2", "3-4-3", "4-5-1",
+    "4-1-4-1", "4-4-1-1", "3-4-1-2", "5-4-1", "4-3-2-1"
+}
+
+
+def normalize_formation(formation: str | None) -> str | None:
+    """
+    Normalize formation string from SOTA.
+    Removes suffixes like ' down', ' up', extra spaces, etc.
+    Returns None if formation is invalid.
+    """
+    if not formation:
+        return None
+
+    # Remove common suffixes and clean up
+    cleaned = formation.lower().replace(" down", "").replace(" up", "").strip()
+
+    # Extract just the numbers with dashes (e.g., "4-3-3")
+    import re
+    match = re.match(r'^[\d]+-[\d]+(?:-[\d]+)*', cleaned)
+    if match:
+        return match.group(0)
+
+    return None
+
+
 def detect_formation(positions: list[str | None]) -> str | None:
     """
-    Detect team formation from player positions.
-    Returns formation string like "4-3-3", "4-4-2", etc.
+    Detect team formation from player positions (amplua).
+    Returns formation string like "4-2-3-1", "4-4-2", etc.
+
+    Amplua codes from SOTA: Gk, D, DM, M, AM, F
     """
     if not positions or len(positions) < 10:
         return None
 
     defenders = 0
-    midfielders = 0
+    defensive_mids = 0  # DM
+    central_mids = 0    # M
+    attacking_mids = 0  # AM
     forwards = 0
 
     for pos in positions[:11]:  # Only first 11 players
         if not pos:
             continue
-        pos_code = pos.split()[0] if pos else ""
+        pos_upper = pos.upper()
 
-        if pos_code in ("GK",):
+        if pos_upper in ("GK",):
             continue  # Goalkeeper doesn't count
-        elif pos_code in ("CD", "LD", "RD", "LB", "RB", "CB"):
+        elif pos_upper == "D":
             defenders += 1
-        elif pos_code in ("DM", "CM", "AM", "LM", "RM", "LW", "RW"):
-            midfielders += 1
-        elif pos_code in ("CF", "ST", "FW"):
+        elif pos_upper == "DM":
+            defensive_mids += 1
+        elif pos_upper == "M":
+            central_mids += 1
+        elif pos_upper == "AM":
+            attacking_mids += 1
+        elif pos_upper == "F":
             forwards += 1
 
-    if defenders + midfielders + forwards < 10:
+    total_outfield = defenders + defensive_mids + central_mids + attacking_mids + forwards
+    if total_outfield < 10:
         return None
 
-    return f"{defenders}-{midfielders}-{forwards}"
+    # Determine formation based on composition
+    total_mids = defensive_mids + central_mids + attacking_mids
+
+    # 4-X-1 formations (4 defenders, 1 forward, varying midfield)
+    if defenders == 4 and forwards == 1 and total_mids == 5:
+        return "4-2-3-1"  # Standard modern formation
+    elif defenders == 4 and forwards == 2:
+        return "4-4-2"
+    elif defenders == 4 and forwards == 3:
+        return "4-3-3"
+    elif defenders == 3 and forwards == 2:
+        return "3-5-2"
+    elif defenders == 5 and forwards == 2:
+        return "5-3-2"
+    else:
+        # Fallback: simple D-M-F format
+        return f"{defenders}-{total_mids}-{forwards}"
 
 
 @router.get("")
@@ -207,7 +259,7 @@ async def get_games(
     status: str | None = Query(default=None, pattern="^(upcoming|finished|live|all)$"),
     hide_past: bool = False,
     group_by_date: bool = False,
-    language: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
     db: AsyncSession = Depends(get_db),
@@ -228,7 +280,7 @@ async def get_games(
     - status: Filter by match status (upcoming, finished, live, all)
     - hide_past: Hide matches before today
     - group_by_date: Group results by date with formatted labels
-    - language: Language for localized fields (kz, ru, en)
+    - lang: Language for localized fields (kz, ru, en)
     """
     if season_id is None:
         season_id = settings.current_season_id
@@ -322,7 +374,7 @@ async def get_games(
 
         return {
             "id": team.id,
-            "name": get_localized_field(team, "name", language),
+            "name": get_localized_field(team, "name", lang),
             "name_kz": team.name_kz,
             "name_en": team.name_en,
             "logo_url": team.logo_url,
@@ -337,14 +389,14 @@ async def get_games(
 
         return {
             "id": stadium.id,
-            "name": get_localized_field(stadium, "name", language),
-            "city": get_localized_field(stadium, "city", language),
+            "name": get_localized_field(stadium, "name", lang),
+            "city": get_localized_field(stadium, "city", lang),
             "capacity": stadium.capacity,
         }
 
     # Return grouped format if requested
     if group_by_date:
-        grouped = group_games_by_date(games, language, today)
+        grouped = group_games_by_date(games, lang, today)
 
         # Add team and stadium info to each game
         for group in grouped:
@@ -380,7 +432,7 @@ async def get_games(
             "home_team": build_team_dict(g.home_team, g.home_score),
             "away_team": build_team_dict(g.away_team, g.away_score),
             "stadium_info": build_stadium_dict(g.stadium_rel),
-            "season_name": get_localized_field(g.season, "name", language) if g.season else None,
+            "season_name": get_localized_field(g.season, "name", lang) if g.season else None,
         })
 
     return {"items": items, "total": total}
@@ -389,7 +441,7 @@ async def get_games(
 @router.get("/{game_id}")
 async def get_game(
     game_id: UUID,
-    language: str = Query(default="ru", description="Language: kz or ru"),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get game by ID."""
@@ -400,6 +452,8 @@ async def get_game(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
             selectinload(Game.season),
+            selectinload(Game.stadium_rel),
+            selectinload(Game.referees).selectinload(GameReferee.referee),
         )
     )
     game = result.scalar_one_or_none()
@@ -430,6 +484,37 @@ async def get_game(
             "accent_color": game.away_team.accent_color,
         }
 
+    # Build stadium object
+    stadium_dict = None
+    if game.stadium_rel:
+        stadium_dict = {
+            "id": game.stadium_rel.id,
+            "name": get_localized_field(game.stadium_rel, "name", lang),
+            "city": get_localized_field(game.stadium_rel, "city", lang),
+            "capacity": game.stadium_rel.capacity,
+        }
+
+    # Get main referee name
+    referee_name = None
+    if game.referees:
+        main_referee = next((gr for gr in game.referees if gr.role.value == "main"), None)
+        if main_referee and main_referee.referee:
+            ref = main_referee.referee
+            if lang == "kz":
+                first_name = ref.first_name_kz or ref.first_name
+                last_name = ref.last_name_kz or ref.last_name
+            elif lang == "en":
+                first_name = ref.first_name_en or ref.first_name
+                last_name = ref.last_name_en or ref.last_name
+            else:
+                first_name = ref.first_name
+                last_name = ref.last_name
+            referee_name = f"{first_name} {last_name}".strip()
+
+    # Compute game status
+    today = date_type.today()
+    game_status = compute_game_status(game, today)
+
     return {
         "id": str(game.id),
         "date": game.date.isoformat() if game.date else None,
@@ -440,9 +525,13 @@ async def get_game(
         "away_score": game.away_score,
         "has_stats": game.has_stats,
         "has_lineup": game.has_lineup,
-        "stadium": game.stadium,
+        "is_live": game.is_live,
+        "stadium": stadium_dict,
+        "referee": referee_name,
         "visitors": game.visitors,
+        "ticket_url": game.ticket_url,
         "video_url": game.video_url,
+        "status": game_status,
         "home_team": home_team,
         "away_team": away_team,
         "season_name": game.season.name if game.season else None,
@@ -503,7 +592,7 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
         select(GamePlayerStats)
         .where(GamePlayerStats.game_id == game_id)
         .options(
-            selectinload(GamePlayerStats.player),
+            selectinload(GamePlayerStats.player).selectinload(Player.country),
             selectinload(GamePlayerStats.team),
         )
         .order_by(GamePlayerStats.team_id, GamePlayerStats.started.desc())
@@ -526,10 +615,21 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
             first_name = ps.player.first_name if ps.player else None
             last_name = ps.player.last_name if ps.player else None
 
+        # Build country data
+        country_data = None
+        if ps.player and ps.player.country:
+            country_data = {
+                "id": ps.player.country.id,
+                "code": ps.player.country.code,
+                "name": ps.player.country.name,
+                "flag_url": ps.player.country.flag_url,
+            }
+
         player_stats_response.append({
             "player_id": ps.player_id,
             "first_name": first_name,
             "last_name": last_name,
+            "country": country_data,
             "team_id": ps.team_id,
             "team_name": ps.team.name if ps.team else None,
             "team_primary_color": ps.team.primary_color if ps.team else None,
@@ -558,7 +658,7 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
 @router.get("/{game_id}/lineup")
 async def get_game_lineup(
     game_id: UUID,
-    language: str = Query(default="ru", description="Language: kz, ru, or en"),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -591,11 +691,11 @@ async def get_game_lineup(
     for gr in game_referees:
         ref = gr.referee
         if ref:
-            # Select name based on language
-            if language == "kz":
+            # Select name based on lang
+            if lang == "kz":
                 first_name = ref.first_name_kz or ref.first_name
                 last_name = ref.last_name_kz or ref.last_name
-            elif language == "en":
+            elif lang == "en":
                 first_name = ref.first_name_en or ref.first_name
                 last_name = ref.last_name_en or ref.last_name
             else:
@@ -624,10 +724,10 @@ async def get_game_lineup(
         for tc in team_coaches:
             coach = tc.coach
             if coach:
-                if language == "kz":
+                if lang == "kz":
                     first_name = coach.first_name_kz or coach.first_name
                     last_name = coach.last_name_kz or coach.last_name
-                elif language == "en":
+                elif lang == "en":
                     first_name = coach.first_name_en or coach.first_name
                     last_name = coach.last_name_en or coach.last_name
                 else:
@@ -647,13 +747,59 @@ async def get_game_lineup(
     home_coaches = await get_team_coaches(game.home_team_id) if game.home_team_id else []
     away_coaches = await get_team_coaches(game.away_team_id) if game.away_team_id else []
 
+    # Position order for sorting: line (GK→DEF→MID→FWD) + side (L→C→R)
+    POSITION_ORDER = {
+        # Goalkeeper
+        ('Gk', 'C'): 0, ('Gk', None): 0,
+        # Defenders: L → LC → C → RC → R (positions 1-5)
+        ('D', 'L'): 1,
+        ('D', 'LC'): 2,
+        ('D', 'C'): 3,
+        ('D', 'RC'): 4,
+        ('D', 'R'): 5,
+        ('D', None): 3,
+        # Holding line: DM first, then M with central/right positions
+        ('DM', 'L'): 6,
+        ('DM', 'LC'): 6,
+        ('DM', 'C'): 6,
+        ('DM', 'RC'): 7,
+        ('DM', 'R'): 7,
+        ('DM', None): 6,
+        ('M', 'C'): 7,
+        ('M', 'RC'): 7,
+        ('M', 'R'): 8,
+        # Attacking line: AM L first, then M LC as center, then AM R
+        ('AM', 'L'): 9,
+        ('AM', 'LC'): 9,
+        ('M', 'L'): 10,
+        ('M', 'LC'): 10,
+        ('M', None): 10,
+        ('AM', 'C'): 10,
+        ('AM', 'RC'): 11,
+        ('AM', 'R'): 11,
+        ('AM', None): 10,
+        # Forwards: L → C → R
+        ('F', 'L'): 12,
+        ('F', 'LC'): 12,
+        ('F', 'C'): 13,
+        ('F', 'RC'): 14,
+        ('F', 'R'): 14,
+        ('F', None): 13,
+    }
+
+    def get_position_order(amplua: str | None, field_pos: str | None) -> int:
+        """Get sort order for a position (GK→DEF→MID→FWD, L→C→R)."""
+        if not amplua:
+            return 99
+        return POSITION_ORDER.get((amplua, field_pos), POSITION_ORDER.get((amplua, None), 99))
+
     # Get lineups for home and away teams
     async def get_team_lineup(team_id: int, formation: str | None) -> dict:
         lineup_result = await db.execute(
             select(GameLineup)
             .where(GameLineup.game_id == game_id, GameLineup.team_id == team_id)
-            .options(selectinload(GameLineup.player))
-            .order_by(GameLineup.lineup_type, GameLineup.shirt_number)
+            .options(selectinload(GameLineup.player).selectinload(Player.country))
+            .order_by(GameLineup.lineup_type)
         )
         lineup_entries = lineup_result.scalars().all()
 
@@ -662,15 +808,31 @@ async def get_game_lineup(
 
         for entry in lineup_entries:
             player = entry.player
-            position = player.top_role if player else None
+            # Use match-specific position from GameLineup, fallback to player's general position
+            position = entry.amplua or (player.top_role if player else None)
+
+            # Build country data
+            country_data = None
+            if player and player.country:
+                country_data = {
+                    "id": player.country.id,
+                    "code": player.country.code,
+                    "name": player.country.name,
+                    "flag_url": player.country.flag_url,
+                }
+
             player_data = {
                 "player_id": str(entry.player_id),
                 "first_name": player.first_name if player else None,
                 "last_name": player.last_name if player else None,
+                "country": country_data,
                 "shirt_number": entry.shirt_number,
                 "is_captain": entry.is_captain,
                 "position": position,
+                "amplua": entry.amplua,
+                "field_position": entry.field_position,
                 "photo_url": player.photo_url if player else None,
+                "_sort_order": get_position_order(entry.amplua, entry.field_position),
             }
 
             if entry.lineup_type.value == "starter":
@@ -678,7 +840,24 @@ async def get_game_lineup(
             else:
                 substitutes.append(player_data)
 
-        return {"formation": formation, "starters": starters, "substitutes": substitutes}
+        # Sort starters by position (GK first, then DEF L→R, then MID L→R, then FWD L→R)
+        starters.sort(key=lambda x: x.get("_sort_order", 99))
+
+        # Remove internal sort field before returning
+        for p in starters:
+            p.pop("_sort_order", None)
+        for p in substitutes:
+            p.pop("_sort_order", None)
+
+        # Detect formation from actual player positions (most reliable)
+        positions = [p.get("amplua") for p in starters]
+        detected = detect_formation(positions)
+
+        # Use detected formation, fallback to normalized SOTA
+        normalized = normalize_formation(formation)
+        final_formation = detected or normalized or formation
+
+        return {"formation": final_formation, "starters": starters, "substitutes": substitutes}
 
     # Use formations from game (synced from SOTA)
     home_lineup = await get_team_lineup(game.home_team_id, game.home_formation) if game.home_team_id else {"formation": None, "starters": [], "substitutes": []}
