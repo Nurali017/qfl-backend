@@ -1,6 +1,6 @@
 from uuid import UUID
 import enum
-from sqlalchemy import Integer, Boolean, ForeignKey, Enum as SQLEnum, UniqueConstraint, Index
+from sqlalchemy import Integer, Boolean, String, ForeignKey, Enum as SQLEnum, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,6 +41,10 @@ class GameLineup(Base):
     )
     shirt_number: Mapped[int | None] = mapped_column(Integer)
     is_captain: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Match-specific position from SOTA live endpoint
+    amplua: Mapped[str | None] = mapped_column(String(10))  # Gk, D, DM, M, AM, F
+    field_position: Mapped[str | None] = mapped_column(String(5))  # C, L, R, LC, RC
 
     # Relationships
     game: Mapped["Game"] = relationship("Game", back_populates="lineups")

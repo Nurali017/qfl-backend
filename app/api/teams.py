@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import Team, Player, PlayerTeam, Game, GamePlayerStats, TeamSeasonStats, ScoreTable
+from app.models.coach import Coach, TeamCoach
 from app.schemas.team import TeamResponse, TeamListResponse, TeamDetailResponse, TeamSeasonStatsResponse
 from app.schemas.player import PlayerWithTeamResponse
 from app.schemas.game import GameResponse, GameListResponse
@@ -19,10 +20,14 @@ from app.schemas.head_to_head import (
 )
 from app.config import get_settings
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
+from app.utils.error_messages import get_error_message
 
 settings = get_settings()
 
 router = APIRouter(prefix="/teams", tags=["teams"])
+
+# Teams excluded from the teams list page
+EXCLUDED_TEAM_IDS = [46]  # Шахтёр
 
 
 @router.get("")
@@ -43,6 +48,7 @@ async def get_teams(
     else:
         query = select(Team)
 
+    query = query.where(Team.id.notin_(EXCLUDED_TEAM_IDS))
     query = query.order_by(Team.name)
     result = await db.execute(query)
     teams = result.scalars().all()
@@ -68,11 +74,22 @@ async def get_team(
     db: AsyncSession = Depends(get_db),
 ):
     """Get team by ID."""
-    result = await db.execute(select(Team).where(Team.id == team_id))
+    result = await db.execute(
+        select(Team)
+        .where(Team.id == team_id)
+        .options(selectinload(Team.stadium))
+    )
     team = result.scalar_one_or_none()
 
     if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+        raise HTTPException(status_code=404, detail=get_error_message("team_not_found", lang))
+
+    stadium_data = None
+    if team.stadium:
+        stadium_data = {
+            "name": get_localized_name(team.stadium, lang),
+            "city": get_localized_city(team.stadium, lang) if hasattr(team.stadium, 'city') else None,
+        }
 
     return {
         "id": team.id,
@@ -82,6 +99,8 @@ async def get_team(
         "primary_color": team.primary_color,
         "secondary_color": team.secondary_color,
         "accent_color": team.accent_color,
+        "website": team.website,
+        "stadium": stadium_data,
     }
 
 
@@ -125,7 +144,7 @@ async def get_team_players(
             "country": country_data,
             "photo_url": p.photo_url,
             "age": p.age,
-            "top_role": p.top_role,
+            "top_role": get_localized_field(p, "top_role", lang),
             "team_id": pt.team_id,
             "number": pt.number,
         })
@@ -154,6 +173,7 @@ async def get_team_games(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
             selectinload(Game.season),
+            selectinload(Game.stadium_rel),
         )
         .order_by(Game.date.desc())
     )
@@ -180,6 +200,16 @@ async def get_team_games(
                 "score": g.away_score,
             }
 
+        # Build stadium object from relationship or legacy string
+        stadium_data = None
+        if g.stadium_rel:
+            stadium_data = {
+                "name": get_localized_name(g.stadium_rel, lang),
+                "city": get_localized_city(g.stadium_rel, lang) if hasattr(g.stadium_rel, 'city') else None,
+            }
+        elif g.stadium:
+            stadium_data = {"name": g.stadium, "city": None}
+
         items.append({
             "id": g.id,
             "date": g.date.isoformat() if g.date else None,
@@ -189,7 +219,7 @@ async def get_team_games(
             "home_score": g.home_score,
             "away_score": g.away_score,
             "has_stats": g.has_stats,
-            "stadium": g.stadium,
+            "stadium": stadium_data,
             "visitors": g.visitors,
             "home_team": home_team,
             "away_team": away_team,
@@ -203,6 +233,7 @@ async def get_team_games(
 async def get_team_stats(
     team_id: int,
     season_id: int = Query(default=None),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get team statistics for a season from local DB."""
@@ -219,12 +250,34 @@ async def get_team_stats(
     stats = result.scalar_one_or_none()
 
     if not stats:
-        raise HTTPException(status_code=404, detail="Stats not found. Run sync first.")
+        raise HTTPException(status_code=404, detail=get_error_message("stats_not_found", lang))
 
     # Calculate goal_difference for response
     goal_diff = None
     if stats.goals_scored is not None and stats.goals_conceded is not None:
         goal_diff = stats.goals_scored - stats.goals_conceded
+
+    # Calculate clean sheets from games (matches where opponent scored 0)
+    clean_sheets = 0
+    cs_query = (
+        select(Game)
+        .where(
+            Game.season_id == season_id,
+            or_(Game.home_team_id == team_id, Game.away_team_id == team_id),
+            Game.home_score.is_not(None),
+        )
+    )
+    cs_result = await db.execute(cs_query)
+    cs_games = cs_result.scalars().all()
+    for game in cs_games:
+        if game.home_team_id == team_id and game.away_score == 0:
+            clean_sheets += 1
+        elif game.away_team_id == team_id and game.home_score == 0:
+            clean_sheets += 1
+
+    def _f(val):
+        """Convert Decimal to float."""
+        return float(val) if val is not None else None
 
     return TeamSeasonStatsResponse(
         team_id=stats.team_id,
@@ -237,18 +290,118 @@ async def get_team_stats(
         goals_conceded=stats.goals_conceded,
         goal_difference=goal_diff,
         points=stats.points,
+        # xG
+        xg=_f(stats.xg),
+        xg_per_match=_f(stats.xg_per_match),
+        opponent_xg=_f(stats.opponent_xg),
+        # Shots
         shots=stats.shots,
         shots_on_goal=stats.shots_on_goal,
-        possession_avg=float(stats.possession_avg) if stats.possession_avg else None,
+        shots_off_goal=stats.shots_off_goal,
+        shot_per_match=_f(stats.shot_per_match),
+        goal_to_shot_ratio=_f(stats.goal_to_shot_ratio),
+        # Possession & Passes
+        possession_avg=_f(stats.possession_avg),
         passes=stats.passes,
-        pass_accuracy_avg=float(stats.pass_accuracy_avg) if stats.pass_accuracy_avg else None,
+        pass_accuracy_avg=_f(stats.pass_accuracy_avg),
+        pass_per_match=_f(stats.pass_per_match),
+        pass_forward=stats.pass_forward,
+        pass_long=stats.pass_long,
+        pass_long_ratio=_f(stats.pass_long_ratio),
+        pass_progressive=stats.pass_progressive,
+        pass_cross=stats.pass_cross,
+        pass_cross_ratio=_f(stats.pass_cross_ratio),
+        pass_to_box=stats.pass_to_box,
+        pass_to_3rd=stats.pass_to_3rd,
+        key_pass=stats.key_pass,
+        key_pass_per_match=_f(stats.key_pass_per_match),
+        goal_pass=stats.goal_pass,
+        # Defense
+        tackle=stats.tackle,
+        tackle_per_match=_f(stats.tackle_per_match),
+        interception=stats.interception,
+        interception_per_match=_f(stats.interception_per_match),
+        recovery=stats.recovery,
+        recovery_per_match=_f(stats.recovery_per_match),
+        # Duels
+        duel=stats.duel,
+        duel_ratio=_f(stats.duel_ratio),
+        aerial_duel_offence=stats.aerial_duel_offence,
+        aerial_duel_offence_ratio=_f(stats.aerial_duel_offence_ratio),
+        ground_duel_offence=stats.ground_duel_offence,
+        ground_duel_offence_ratio=_f(stats.ground_duel_offence_ratio),
+        # Dribbles
+        dribble=stats.dribble,
+        dribble_per_match=_f(stats.dribble_per_match),
+        dribble_ratio=_f(stats.dribble_ratio),
+        # Discipline
         fouls=stats.fouls,
+        foul_taken=stats.foul_taken,
         yellow_cards=stats.yellow_cards,
+        second_yellow_cards=stats.second_yellow_cards,
         red_cards=stats.red_cards,
+        # Set pieces
         corners=stats.corners,
+        corner_per_match=_f(stats.corner_per_match),
         offsides=stats.offsides,
+        # Penalty
+        penalty=stats.penalty,
+        penalty_ratio=_f(stats.penalty_ratio),
+        # Other
+        clean_sheets=clean_sheets,
         extra_stats=stats.extra_stats,
     )
+
+
+@router.get("/{team_id}/coaches")
+async def get_team_coaches(
+    team_id: int,
+    season_id: int = Query(default=None),
+    lang: str = Query(default="kz", description="Language: kz, ru, or en"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get coaching staff for a team in a specific season."""
+    if season_id is None:
+        season_id = settings.current_season_id
+
+    result = await db.execute(
+        select(TeamCoach)
+        .where(
+            TeamCoach.team_id == team_id,
+            TeamCoach.season_id == season_id,
+            TeamCoach.is_active == True,
+        )
+        .options(
+            selectinload(TeamCoach.coach).selectinload(Coach.country),
+        )
+    )
+    team_coaches = result.scalars().all()
+
+    items = []
+    for tc in team_coaches:
+        c = tc.coach
+        country_data = None
+        if c.country:
+            country_data = {
+                "id": c.country.id,
+                "code": c.country.code,
+                "name": get_localized_name(c.country, lang),
+                "flag_url": c.country.flag_url,
+            }
+        items.append({
+            "id": c.id,
+            "first_name": get_localized_field(c, "first_name", lang),
+            "last_name": get_localized_field(c, "last_name", lang),
+            "photo_url": c.photo_url,
+            "role": tc.role.value,
+            "country": country_data,
+        })
+
+    # Sort: head_coach first, then by role
+    role_order = {"head_coach": 0, "assistant": 1, "goalkeeper_coach": 2, "fitness_coach": 3, "other": 4}
+    items.sort(key=lambda x: role_order.get(x["role"], 99))
+
+    return {"items": items, "total": len(items)}
 
 
 @router.get("/{team1_id}/vs/{team2_id}/head-to-head")
@@ -279,7 +432,7 @@ async def get_head_to_head(
     team2 = team2_result.scalar_one_or_none()
 
     if not team1 or not team2:
-        raise HTTPException(status_code=404, detail="One or both teams not found")
+        raise HTTPException(status_code=404, detail=get_error_message("teams_not_found", lang))
 
     # 1. OVERALL H2H STATS (all seasons)
     overall_query = (
@@ -425,7 +578,7 @@ async def get_head_to_head(
             team_id=entry.team_id,
             team_name=get_localized_name(entry.team, lang),
             logo_url=entry.team.logo_url if entry.team else None,
-            games_played=entry.games or 0,
+            games_played=entry.games_played or 0,
             wins=entry.wins or 0,
             draws=entry.draws or 0,
             losses=entry.losses or 0,

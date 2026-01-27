@@ -7,13 +7,14 @@ from app.models import News, Language
 from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse
 from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
+from app.utils.error_messages import get_error_message
 
 router = APIRouter(prefix="/news", tags=["news"])
 
 
 @router.get("", response_model=NewsListResponse)
 async def get_news_list(
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     category: str | None = Query(None, description="Filter by category"),
     article_type: str | None = Query(None, description="Filter by type: news or analytics"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -21,10 +22,10 @@ async def get_news_list(
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated news list."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
 
     # Base query
-    query = select(News).where(News.language == lang)
+    query = select(News).where(News.language == lang_enum)
 
     # Filter by category
     if category:
@@ -60,14 +61,14 @@ async def get_news_list(
 
 @router.get("/categories", response_model=list[str])
 async def get_news_categories(
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all news categories."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
     result = await db.execute(
         select(News.category)
-        .where(News.language == lang, News.category.isnot(None))
+        .where(News.language == lang_enum, News.category.isnot(None))
         .distinct()
         .order_by(News.category)
     )
@@ -76,15 +77,15 @@ async def get_news_categories(
 
 @router.get("/article-types", response_model=dict[str, int])
 async def get_article_types(
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get count of articles by type."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
 
     result = await db.execute(
         select(News.article_type, func.count(News.id))
-        .where(News.language == lang)
+        .where(News.language == lang_enum)
         .group_by(News.article_type)
     )
 
@@ -94,15 +95,15 @@ async def get_article_types(
 
 @router.get("/latest", response_model=list[NewsListItem])
 async def get_latest_news(
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     limit: int = Query(10, ge=1, le=50, description="Number of news items"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get latest news."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
     result = await db.execute(
         select(News)
-        .where(News.language == lang)
+        .where(News.language == lang_enum)
         .order_by(desc(News.publish_date), desc(News.id))
         .limit(limit)
     )
@@ -111,14 +112,14 @@ async def get_latest_news(
 
 @router.get("/slider", response_model=list[NewsListItem])
 async def get_slider_news(
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get news for slider."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
     result = await db.execute(
         select(News)
-        .where(News.language == lang, News.is_slider == True)
+        .where(News.language == lang_enum, News.is_slider == True)
         .order_by(asc(News.slider_order), desc(News.publish_date))
     )
     return result.scalars().all()
@@ -127,17 +128,17 @@ async def get_slider_news(
 @router.get("/{news_id}")
 async def get_news_item(
     news_id: int,
-    language: str = Query("ru", description="Language: kz or ru"),
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get single news article by ID with images from MinIO."""
-    lang = Language.KZ if language == "kz" else Language.RU
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
     result = await db.execute(
-        select(News).where(News.id == news_id, News.language == lang)
+        select(News).where(News.id == news_id, News.language == lang_enum)
     )
     news = result.scalar_one_or_none()
     if not news:
-        raise HTTPException(status_code=404, detail="News not found")
+        raise HTTPException(status_code=404, detail=get_error_message("news_not_found", lang))
 
     # Get images from MinIO
     images = await FileStorageService.get_files_by_news_id(str(news_id))
