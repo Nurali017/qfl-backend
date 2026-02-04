@@ -25,6 +25,8 @@ class GameResponse(GameBase):
     away_team: TeamInGame | None = None
     season_name: str | None = None
     tournament_name: str | None = None
+    status: str | None = None
+    has_score: bool = False
 
     class Config:
         from_attributes = True

@@ -142,6 +142,7 @@ def group_games_by_date(
                 "has_lineup": game.has_lineup,
                 "visitors": game.visitors,
                 "status": compute_game_status(game, today),
+                "has_score": game.home_score is not None and game.away_score is not None,
                 "ticket_url": getattr(game, "ticket_url", None),
                 "video_url": game.video_url,
                 # Teams and stadium will be added by caller
@@ -427,6 +428,7 @@ async def get_games(
             "stadium": g.stadium,  # Legacy field
             "visitors": g.visitors,
             "status": game_status,
+            "has_score": g.home_score is not None and g.away_score is not None,
             "ticket_url": getattr(g, "ticket_url", None),
             "video_url": g.video_url,
             "home_team": build_team_dict(g.home_team, g.home_score),
@@ -532,6 +534,7 @@ async def get_game(
         "ticket_url": game.ticket_url,
         "video_url": game.video_url,
         "status": game_status,
+        "has_score": game.home_score is not None and game.away_score is not None,
         "home_team": home_team,
         "away_team": away_team,
         "season_name": game.season.name if game.season else None,
