@@ -105,9 +105,14 @@ async def get_player(
 
     # Filter teams by season if season_id provided
     if season_id is not None:
-        teams = list(set(pt.team_id for pt in player.player_teams if pt.season_id == season_id))
+        player_teams_filtered = [pt for pt in player.player_teams if pt.season_id == season_id]
     else:
-        teams = list(set(pt.team_id for pt in player.player_teams))
+        player_teams_filtered = list(player.player_teams)
+
+    teams = list(set(pt.team_id for pt in player_teams_filtered))
+
+    # Get jersey number from the first matching player_team entry
+    jersey_number = player_teams_filtered[0].number if player_teams_filtered else None
 
     # Build country response
     country_data = None
@@ -130,6 +135,7 @@ async def get_player(
         "age": player.age,
         "top_role": get_localized_field(player, "top_role", lang),
         "teams": teams,
+        "jersey_number": jersey_number,
     }
 
 

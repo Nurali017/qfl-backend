@@ -29,6 +29,7 @@ class PlayerListResponse(BaseModel):
 
 class PlayerDetailResponse(PlayerResponse):
     teams: list[int] = []
+    jersey_number: int | None = None
 
 
 class PlayerWithTeamResponse(PlayerResponse):

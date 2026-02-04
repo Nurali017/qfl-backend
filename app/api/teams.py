@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from collections import defaultdict
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 
@@ -549,29 +550,25 @@ async def get_head_to_head(
     table_result = await db.execute(table_query)
     table_entries = table_result.scalars().all()
 
+    # Pre-calculate clean sheets for all teams in one query
+    all_games_result = await db.execute(
+        select(Game).where(
+            Game.season_id == season_id,
+            Game.home_score.is_not(None),
+        )
+    )
+    all_season_games = all_games_result.scalars().all()
+
+    clean_sheets_map: dict[int, int] = defaultdict(int)
+    for game in all_season_games:
+        if game.away_score == 0:
+            clean_sheets_map[game.home_team_id] += 1
+        if game.home_score == 0:
+            clean_sheets_map[game.away_team_id] += 1
+
     season_table = []
     for entry in table_entries:
-        # Calculate clean sheets from games
-        clean_sheets = 0
-        games_query = (
-            select(Game)
-            .where(
-                Game.season_id == season_id,
-                or_(
-                    Game.home_team_id == entry.team_id,
-                    Game.away_team_id == entry.team_id
-                ),
-                Game.home_score.is_not(None),
-            )
-        )
-        games_result = await db.execute(games_query)
-        team_games = games_result.scalars().all()
-
-        for game in team_games:
-            if game.home_team_id == entry.team_id and game.away_score == 0:
-                clean_sheets += 1
-            elif game.away_team_id == entry.team_id and game.home_score == 0:
-                clean_sheets += 1
+        clean_sheets = clean_sheets_map.get(entry.team_id, 0)
 
         season_table.append(SeasonTableEntry(
             position=entry.position,

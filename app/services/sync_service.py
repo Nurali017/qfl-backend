@@ -218,26 +218,14 @@ class SyncService:
         return new_stadium.id
 
     async def _get_home_stadium_for_team(self, team_id: int) -> int | None:
-        """Get home stadium ID for a team based on hardcoded mapping."""
-        # Mapping: team_id -> stadium_id (based on KPL 2025 season)
-        TEAM_HOME_STADIUMS = {
-            13: 34,    # Кайрат (Алматы) -> Центральный стадион
-            45: 28,    # Жетысу (Талдыкорган) -> стадион им Б. Онгарова
-            49: 9,     # Атырау -> Спорткомплекс «Мунайшы»
-            51: 4,     # Актобе -> Центральный (ФК «Актобе»)
-            80: 7,     # Туран (Туркестан) -> Туркестан Арена
-            81: 5,     # Ордабасы (Шымкент) -> Центральный стадион им. Кажымукана
-            87: 3,     # Кызылжар (Петропавловск) -> стадион Карасай
-            90: 2,     # Тобол (Костанай) -> Центральный стадион Костанай
-            91: 10,    # Астана -> СК «Астана Арена»
-            92: 11,    # Женис (Жезказган) -> «Металлург»
-            93: 8,     # Елимай (Семей) -> Стадион «Спартак»
-            94: 1,     # Кайсар (Кызылорда) -> ККГП «Стадион имени Г. Муратбаева»
-            293: 11,   # Улытау (Жезказган) -> «Металлург»
-            318: 6,    # Окжетпес (Кокшетау) -> «Окжетпес»
-        }
+        """Get home stadium ID for a team from the teams table."""
+        if not hasattr(self, '_team_stadium_cache'):
+            result = await self.db.execute(
+                select(Team.id, Team.stadium_id).where(Team.stadium_id.is_not(None))
+            )
+            self._team_stadium_cache = {row[0]: row[1] for row in result.all()}
 
-        return TEAM_HOME_STADIUMS.get(team_id)
+        return self._team_stadium_cache.get(team_id)
 
     async def sync_tournaments(self) -> int:
         """Sync tournaments from SOTA API with all 3 languages."""
@@ -1599,6 +1587,29 @@ class SyncService:
         # Sync referees - SOTA returns dict with role as key and name as value
         referees_data = lineup_data.get("referees", {})
         if isinstance(referees_data, dict):
+            # Normalize names for comparison (handle Kazakh/Russian spelling variations)
+            def normalize(s: str) -> str:
+                return (s.lower().strip()
+                    .replace('ё', 'е').replace('ә', 'а').replace('ұ', 'у')
+                    .replace('і', 'и').replace('ғ', 'г').replace('қ', 'к')
+                    .replace('ң', 'н').replace('ө', 'о').replace('ү', 'у')
+                    .replace('ы', 'и').replace('һ', 'х').replace('й', 'и')
+                )
+
+            def is_similar(s1: str, s2: str, max_diff: int = 2) -> bool:
+                """Check if two strings are similar (allow max_diff character differences)."""
+                n1, n2 = normalize(s1), normalize(s2)
+                if n1 == n2:
+                    return True
+                if abs(len(n1) - len(n2)) > max_diff:
+                    return False
+                diff = sum(1 for a, b in zip(n1, n2) if a != b) + abs(len(n1) - len(n2))
+                return diff <= max_diff
+
+            # Load all referees once before the loop
+            existing = await self.db.execute(select(Referee))
+            all_refs = list(existing.scalars().all())
+
             for role_key, name in referees_data.items():
                 if not name:
                     continue
@@ -1612,39 +1623,14 @@ class SyncService:
                 first_name = name_parts[0] if len(name_parts) > 1 else ""
                 last_name = name_parts[-1] if name_parts else name
 
-                # Normalize names for comparison (handle Kazakh/Russian spelling variations)
-                def normalize(s: str) -> str:
-                    return (s.lower().strip()
-                        .replace('ё', 'е').replace('ә', 'а').replace('ұ', 'у')
-                        .replace('і', 'и').replace('ғ', 'г').replace('қ', 'к')
-                        .replace('ң', 'н').replace('ө', 'о').replace('ү', 'у')
-                        .replace('ы', 'и').replace('һ', 'х').replace('й', 'и')
-                    )
-
-                def is_similar(s1: str, s2: str, max_diff: int = 2) -> bool:
-                    """Check if two strings are similar (allow max_diff character differences)."""
-                    n1, n2 = normalize(s1), normalize(s2)
-                    if n1 == n2:
-                        return True
-                    if abs(len(n1) - len(n2)) > max_diff:
-                        return False
-                    # Simple edit distance check
-                    diff = sum(1 for a, b in zip(n1, n2) if a != b) + abs(len(n1) - len(n2))
-                    return diff <= max_diff
-
                 # Check if referee exists (try both name orders and fuzzy match)
-                existing = await self.db.execute(select(Referee))
-                all_refs = existing.scalars().all()
-
                 existing_ref = None
                 for ref in all_refs:
                     ref_fn = ref.first_name or ''
                     ref_ln = ref.last_name or ''
-                    # Check normal order (exact + fuzzy)
                     if is_similar(ref_fn, first_name) and is_similar(ref_ln, last_name):
                         existing_ref = ref
                         break
-                    # Check swapped order
                     if is_similar(ref_fn, last_name) and is_similar(ref_ln, first_name):
                         existing_ref = ref
                         break
@@ -1652,13 +1638,16 @@ class SyncService:
                 if existing_ref:
                     ref_id = existing_ref.id
                 else:
-                    # Create new referee
+                    # Create new referee and add to cache
                     ref_stmt = insert(Referee).values(
                         first_name=first_name,
                         last_name=last_name,
                     )
                     ref_result = await self.db.execute(ref_stmt)
                     ref_id = ref_result.inserted_primary_key[0]
+                    # Add to in-memory list so subsequent iterations find it
+                    new_ref = Referee(id=ref_id, first_name=first_name, last_name=last_name)
+                    all_refs.append(new_ref)
 
                 # Create game-referee association
                 gr_stmt = insert(GameReferee).values(
