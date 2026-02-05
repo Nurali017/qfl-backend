@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 import enum
 
 from app.database import Base
+from app.utils.file_urls import FileUrlType
 from app.models.page import Language
 
 
@@ -20,7 +21,9 @@ class News(Base):
     __tablename__ = "news"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    translation_group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), default=uuid.uuid4, index=True)
+    translation_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), default=uuid.uuid4, index=True, nullable=False
+    )
     source_id: Mapped[int | None] = mapped_column(Integer, index=True)  # Original ID from kffleague.kz
     source_url: Mapped[str | None] = mapped_column(String(500))  # Original URL from kffleague.kz
     language: Mapped[Language] = mapped_column(SQLEnum(Language), nullable=False)
@@ -28,7 +31,7 @@ class News(Base):
     excerpt: Mapped[str | None] = mapped_column(Text)
     content: Mapped[str | None] = mapped_column(Text)
     content_text: Mapped[str | None] = mapped_column(Text)
-    image_url: Mapped[str | None] = mapped_column(String(500))
+    image_url: Mapped[str | None] = mapped_column(FileUrlType)
     video_url: Mapped[str | None] = mapped_column(String(500))  # YouTube embed URL
     category: Mapped[str | None] = mapped_column(String(100))
     tournament_id: Mapped[str | None] = mapped_column(String(10), index=True)  # pl, 1l, cup, 2l, el

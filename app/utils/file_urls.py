@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Annotated
 
 from pydantic import BeforeValidator
+from sqlalchemy import Text
+from sqlalchemy.types import TypeDecorator
 
 from app.config import get_settings
 
@@ -60,6 +62,31 @@ Any stored object name (e.g. ``player_photos/abc.webp``) is automatically
 expanded to a full public URL at serialisation time.  External URLs pass
 through unchanged.
 """
+
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy TypeDecorator — resolves URLs at DB-load level
+# ---------------------------------------------------------------------------
+
+class FileUrlType(TypeDecorator):
+    """Column type that stores MinIO object names and resolves to full URLs on read.
+
+    Use in SQLAlchemy models instead of ``Text`` / ``String`` for columns that
+    hold MinIO object paths.  On SELECT the stored object name is expanded to a
+    full public URL via ``resolve_file_url()``.  On INSERT/UPDATE the value is
+    stored as-is (callers are responsible for passing object names).
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def process_result_value(self, value, dialect):
+        """DB → Python: expand object name to full URL."""
+        return resolve_file_url(value)
+
+    def process_bind_param(self, value, dialect):
+        """Python → DB: strip full URL back to object name for safety."""
+        return to_object_name(value) if value else value
 
 
 # ---------------------------------------------------------------------------

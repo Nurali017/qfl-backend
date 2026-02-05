@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models import Tournament, Season, Team
 from app.services.file_storage import FileStorageService
 from app.services.sync.base import BaseSyncService, parse_date
+from app.utils.file_urls import to_object_name
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,9 @@ class ReferenceSyncService(BaseSyncService):
             mapped_name = LOGO_NAME_MAP.get(normalized, normalized)
 
             logo_url = logo_map.get(mapped_name)
-            if logo_url and logo_url != team.logo_url:
+            # team.logo_url returns resolved full URL via FileUrlType;
+            # compare against object_name to avoid unnecessary updates
+            if logo_url and logo_url != to_object_name(team.logo_url):
                 team.logo_url = logo_url
                 team.logo_updated_at = datetime.utcnow()
                 count += 1

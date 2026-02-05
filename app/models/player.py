@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.file_urls import FileUrlType
 
 
 class Player(Base):
@@ -20,7 +21,7 @@ class Player(Base):
     birthday: Mapped[date | None] = mapped_column(Date)
     player_type: Mapped[str | None] = mapped_column(String(50))
     country_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("countries.id"), index=True)
-    photo_url: Mapped[str | None] = mapped_column(Text)
+    photo_url: Mapped[str | None] = mapped_column(FileUrlType)
     age: Mapped[int | None] = mapped_column(Integer)
     top_role: Mapped[str | None] = mapped_column(String(100))  # Russian (default)
     top_role_kz: Mapped[str | None] = mapped_column(String(100))
