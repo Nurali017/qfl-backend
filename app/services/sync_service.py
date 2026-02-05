@@ -3,6 +3,8 @@ from uuid import UUID
 from datetime import datetime, date, time
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.file_urls import to_object_name
+
 logger = logging.getLogger(__name__)
 from sqlalchemy import select, func, or_
 from sqlalchemy.dialects.postgresql import insert
@@ -392,7 +394,7 @@ class SyncService:
 
         # Get all logos from MinIO
         logos = await FileStorageService.list_team_logos()
-        logo_map = {logo["team_name"].lower(): logo["url"] for logo in logos}
+        logo_map = {logo["team_name"].lower(): logo["object_name"] for logo in logos}
 
         # Get all teams from DB
         result = await self.db.execute(select(Team))
@@ -405,7 +407,9 @@ class SyncService:
             mapped_name = LOGO_NAME_MAP.get(normalized, normalized)
 
             logo_url = logo_map.get(mapped_name)
-            if logo_url and logo_url != team.logo_url:
+            # team.logo_url returns resolved full URL via FileUrlType;
+            # compare against object_name to avoid unnecessary updates
+            if logo_url and logo_url != to_object_name(team.logo_url):
                 team.logo_url = logo_url
                 team.logo_updated_at = datetime.utcnow()
                 count += 1
@@ -734,9 +738,15 @@ class SyncService:
         # Create deduplication set
         existing_signatures = set()
         for e in existing_events:
-            player_key = str(e.player_id) if e.player_id else e.player_name
-            sig = (e.half, e.minute, e.event_type.value, player_key)
-            existing_signatures.add(sig)
+            normalized_name = e.player_name.strip().lower() if e.player_name else ""
+
+            if e.player_id:
+                sig_by_id = (e.half, e.minute, e.event_type.value, str(e.player_id))
+                existing_signatures.add(sig_by_id)
+
+            if normalized_name:
+                sig_by_name = (e.half, e.minute, e.event_type.value, normalized_name)
+                existing_signatures.add(sig_by_name)
 
         # Fetch events from SOTA
         events_data = await self.client.get_live_match_events(game_id)
@@ -777,10 +787,21 @@ class SyncService:
                 game_uuid, first_name1, last_name1, team_id
             )
 
-            # Check for duplicate
-            player_key = str(player_id) if player_id else player_name
-            sig = (half, minute, event_type.value, player_key)
-            if sig in existing_signatures:
+            # Check for duplicate using player_id and normalized name signatures.
+            normalized_name = player_name.strip().lower() if player_name else ""
+
+            is_duplicate = False
+            if player_id:
+                sig_by_id = (half, minute, event_type.value, str(player_id))
+                if sig_by_id in existing_signatures:
+                    is_duplicate = True
+
+            if normalized_name and not is_duplicate:
+                sig_by_name = (half, minute, event_type.value, normalized_name)
+                if sig_by_name in existing_signatures:
+                    is_duplicate = True
+
+            if is_duplicate:
                 continue
 
             # Find player2 ID
@@ -816,7 +837,12 @@ class SyncService:
             )
 
             self.db.add(event)
-            existing_signatures.add(sig)
+            if player_id:
+                sig_by_id = (half, minute, event_type.value, str(player_id))
+                existing_signatures.add(sig_by_id)
+            if normalized_name:
+                sig_by_name = (half, minute, event_type.value, normalized_name)
+                existing_signatures.add(sig_by_name)
             events_added += 1
 
         if events_added > 0:
@@ -1556,7 +1582,11 @@ class SyncService:
         await self.db.commit()
         return count
 
-    async def sync_pre_game_lineup(self, game_id: str) -> dict:
+    async def sync_pre_game_lineup(
+        self,
+        game_id: str,
+        sync_positions_from_live: bool = False,
+    ) -> dict:
         """
         Sync pre-game lineup data for a specific game.
         Includes referees, coaches, and player lineups.
@@ -1567,6 +1597,11 @@ class SyncService:
             "home_team": {"id": "123", "lineup": [...], "substitutes": [...], "coach": {...}},
             "away_team": {"id": "123", "lineup": [...], "substitutes": [...], "coach": {...}}
         }
+
+        Args:
+            game_id: Game UUID string.
+            sync_positions_from_live: If True, enrich lineup with live amplua/field position.
+                Disabled by default to avoid historical lineup degradation from incomplete live data.
         """
         try:
             lineup_data = await self.client.get_pre_game_lineup(game_id)
@@ -1879,8 +1914,9 @@ class SyncService:
 
         await self.db.commit()
 
-        # Also sync positions from live endpoint
-        await self.sync_live_lineup_positions(game_id)
+        # Optionally enrich lineup with live endpoint positions.
+        if sync_positions_from_live:
+            await self.sync_live_lineup_positions(game_id)
 
         return result
 
@@ -1916,66 +1952,94 @@ class SyncService:
                 logger.warning(f"Failed to fetch live lineup for game {game_id} {side}: {e}")
                 continue
 
+            current_section: LineupType | None = None
+
             for player in live_data:
-                # Get shirt number - skip metadata entries (TEAM, FORMATION, COACH, etc.)
-                shirt_number = player.get("number")
-                if not isinstance(shirt_number, int):
+                # Track explicit lineup sections from live feed.
+                number = player.get("number")
+                if number == "ОСНОВНЫЕ":
+                    current_section = LineupType.starter
+                    continue
+                if number == "ЗАПАСНЫЕ":
+                    current_section = LineupType.substitute
                     continue
 
+                # Skip metadata entries (TEAM, FORMATION, COACH, etc.)
+                if not isinstance(number, int):
+                    continue
+
+                shirt_number = number
                 player_id_str = player.get("id")
                 amplua = player.get("amplua")  # Gk, D, DM, M, AM, F - only starters have this
                 field_position = player.get("position")  # C, L, R, LC, RC
                 is_captain = player.get("capitan", False)
+                if is_captain == "":
+                    is_captain = False
 
-                # Determine lineup type: players with amplua are starters
-                lineup_type = LineupType.starter if amplua else LineupType.substitute
+                # Use only reliable lineup type signals:
+                # 1) explicit section markers, 2) amplua (starter signal).
+                # Never downgrade to substitute solely due to missing amplua.
+                lineup_type_hint: LineupType | None = None
+                if current_section is not None:
+                    lineup_type_hint = current_section
+                elif amplua:
+                    lineup_type_hint = LineupType.starter
 
-                # Try to update existing entry by shirt_number + team_id
+                values = {
+                    "amplua": amplua,
+                    "field_position": field_position,
+                    "is_captain": bool(is_captain),
+                }
+                if lineup_type_hint is not None:
+                    values["lineup_type"] = lineup_type_hint
+
+                # Try to update existing entry by shirt_number + team_id.
                 update_result = await self.db.execute(
                     GameLineup.__table__.update()
                     .where(
                         GameLineup.game_id == game_uuid,
                         GameLineup.team_id == team_id,
-                        GameLineup.shirt_number == shirt_number
+                        GameLineup.shirt_number == shirt_number,
                     )
-                    .values(
-                        amplua=amplua,
-                        field_position=field_position,
-                        lineup_type=lineup_type,
-                        is_captain=is_captain
-                    )
+                    .values(**values)
                 )
 
                 if update_result.rowcount > 0:
                     if amplua:
                         result["positions_updated"] += 1
-                elif player_id_str:
-                    # Entry doesn't exist - try to insert new one
-                    try:
-                        player_uuid = UUID(player_id_str)
-                        # Check if player exists in our database
-                        player_exists = await self.db.execute(
-                            select(Player.id).where(Player.id == player_uuid)
-                        )
-                        if player_exists.scalar_one_or_none():
-                            # Insert new GameLineup entry
-                            await self.db.execute(
-                                GameLineup.__table__.insert().values(
-                                    game_id=game_uuid,
-                                    team_id=team_id,
-                                    player_id=player_uuid,
-                                    shirt_number=shirt_number,
-                                    lineup_type=lineup_type,
-                                    amplua=amplua,
-                                    field_position=field_position,
-                                    is_captain=is_captain
-                                )
-                            )
-                            result["players_added"] += 1
-                            if amplua:
-                                result["positions_updated"] += 1
-                    except (ValueError, TypeError):
-                        continue
+                    continue
+
+                # Entry doesn't exist - only insert when we have player_id and reliable lineup type.
+                if not player_id_str or lineup_type_hint is None:
+                    continue
+
+                try:
+                    player_uuid = UUID(player_id_str)
+                except (ValueError, TypeError):
+                    continue
+
+                # Check if player exists in our database.
+                player_exists = await self.db.execute(
+                    select(Player.id).where(Player.id == player_uuid)
+                )
+                if not player_exists.scalar_one_or_none():
+                    continue
+
+                await self.db.execute(
+                    GameLineup.__table__.insert().values(
+                        game_id=game_uuid,
+                        team_id=team_id,
+                        player_id=player_uuid,
+                        shirt_number=shirt_number,
+                        lineup_type=lineup_type_hint,
+                        amplua=amplua,
+                        field_position=field_position,
+                        is_captain=bool(is_captain),
+                    )
+                )
+                result["players_added"] += 1
+                if amplua:
+                    result["positions_updated"] += 1
 
         await self.db.commit()
         return result

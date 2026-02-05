@@ -3,6 +3,7 @@ from sqlalchemy import Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.file_urls import FileUrlType
 
 
 class Team(Base):
@@ -12,7 +13,7 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # Russian (default)
     name_kz: Mapped[str | None] = mapped_column(String(255))
     name_en: Mapped[str | None] = mapped_column(String(255))
-    logo_url: Mapped[str | None] = mapped_column(Text)
+    logo_url: Mapped[str | None] = mapped_column(FileUrlType)
     logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
     city: Mapped[str | None] = mapped_column(String(100))  # Russian (default)
     city_kz: Mapped[str | None] = mapped_column(String(100))

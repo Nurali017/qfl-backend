@@ -3,6 +3,7 @@ from sqlalchemy import Integer, String, DateTime, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.file_urls import FileUrlType
 
 
 class Country(Base):
@@ -14,7 +15,7 @@ class Country(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)  # Russian (default)
     name_kz: Mapped[str | None] = mapped_column(String(100))
     name_en: Mapped[str | None] = mapped_column(String(100))
-    flag_url: Mapped[str | None] = mapped_column(String(500))
+    flag_url: Mapped[str | None] = mapped_column(FileUrlType)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
