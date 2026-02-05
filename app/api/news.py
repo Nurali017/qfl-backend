@@ -15,7 +15,7 @@ router = APIRouter(prefix="/news", tags=["news"])
 @router.get("", response_model=NewsListResponse)
 async def get_news_list(
     lang: str = Query("ru", pattern="^(kz|ru|en)$"),
-    category: str | None = Query(None, description="Filter by category"),
+    tournament_id: str | None = Query(None, description="Filter by tournament ID (pl, 1l, cup, 2l, el)"),
     article_type: str | None = Query(None, description="Filter by type: news or analytics"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -27,9 +27,9 @@ async def get_news_list(
     # Base query
     query = select(News).where(News.language == lang_enum)
 
-    # Filter by category
-    if category:
-        query = query.where(News.category == category)
+    # Filter by tournament_id
+    if tournament_id:
+        query = query.where(News.tournament_id == tournament_id)
 
     # Filter by article_type
     if article_type:
@@ -50,29 +50,14 @@ async def get_news_list(
     result = await db.execute(query)
     items = result.scalars().all()
 
+    total_count = total or 0
     return NewsListResponse(
         items=[NewsListItem.model_validate(item) for item in items],
-        total=total,
+        total=total_count,
         page=page,
         per_page=per_page,
-        pages=(total + per_page - 1) // per_page,
+        pages=(total_count + per_page - 1) // per_page if total_count > 0 else 0,
     )
-
-
-@router.get("/categories", response_model=list[str])
-async def get_news_categories(
-    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get all news categories."""
-    lang_enum = Language.KZ if lang == "kz" else Language.RU
-    result = await db.execute(
-        select(News.category)
-        .where(News.language == lang_enum, News.category.isnot(None))
-        .distinct()
-        .order_by(News.category)
-    )
-    return [row[0] for row in result.fetchall()]
 
 
 @router.get("/article-types", response_model=dict[str, int])
@@ -96,32 +81,43 @@ async def get_article_types(
 @router.get("/latest", response_model=list[NewsListItem])
 async def get_latest_news(
     lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    tournament_id: str | None = Query(None, description="Filter by tournament ID (pl, 1l, cup, 2l, el)"),
     limit: int = Query(10, ge=1, le=50, description="Number of news items"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get latest news."""
     lang_enum = Language.KZ if lang == "kz" else Language.RU
-    result = await db.execute(
-        select(News)
-        .where(News.language == lang_enum)
-        .order_by(desc(News.publish_date), desc(News.id))
-        .limit(limit)
-    )
+
+    query = select(News).where(News.language == lang_enum)
+
+    # Filter by tournament_id
+    if tournament_id:
+        query = query.where(News.tournament_id == tournament_id)
+
+    query = query.order_by(desc(News.publish_date), desc(News.id)).limit(limit)
+
+    result = await db.execute(query)
     return result.scalars().all()
 
 
 @router.get("/slider", response_model=list[NewsListItem])
 async def get_slider_news(
     lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    tournament_id: str | None = Query(None, description="Filter by tournament ID (pl, 1l, cup, 2l, el)"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get news for slider."""
     lang_enum = Language.KZ if lang == "kz" else Language.RU
-    result = await db.execute(
-        select(News)
-        .where(News.language == lang_enum, News.is_slider == True)
-        .order_by(asc(News.slider_order), desc(News.publish_date))
-    )
+
+    query = select(News).where(News.language == lang_enum, News.is_slider == True)
+
+    # Filter by tournament_id
+    if tournament_id:
+        query = query.where(News.tournament_id == tournament_id)
+
+    query = query.order_by(asc(News.slider_order), desc(News.publish_date))
+
+    result = await db.execute(query)
     return result.scalars().all()
 
 

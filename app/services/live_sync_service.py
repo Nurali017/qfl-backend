@@ -10,7 +10,7 @@ from datetime import datetime, date, time as dt_time, timedelta
 from uuid import UUID
 from typing import Any
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -234,6 +234,9 @@ class LiveSyncService:
         if is_captain == "":
             is_captain = False
 
+        amplua = player_data.get("amplua") or None
+        field_position = player_data.get("position") or None
+
         stmt = insert(GameLineup).values(
             game_id=game_id,
             team_id=team_id,
@@ -241,6 +244,8 @@ class LiveSyncService:
             lineup_type=lineup_type,
             shirt_number=shirt_number,
             is_captain=bool(is_captain),
+            amplua=amplua,
+            field_position=field_position,
         )
         stmt = stmt.on_conflict_do_update(
             constraint="uq_game_lineup_player",
@@ -248,6 +253,9 @@ class LiveSyncService:
                 "lineup_type": lineup_type,
                 "shirt_number": shirt_number,
                 "is_captain": bool(is_captain),
+                # Preserve existing values if new data doesn't provide them.
+                "amplua": func.coalesce(stmt.excluded.amplua, GameLineup.amplua),
+                "field_position": func.coalesce(stmt.excluded.field_position, GameLineup.field_position),
             }
         )
         await self.db.execute(stmt)

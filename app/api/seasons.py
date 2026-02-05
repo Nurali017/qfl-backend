@@ -7,9 +7,28 @@ from sqlalchemy import select, func, desc, nulls_last, case, or_
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.models import Season, Game, ScoreTable, Team, Player, PlayerSeasonStats, TeamSeasonStats, Country
+from app.models import (
+    Season,
+    Game,
+    ScoreTable,
+    Team,
+    Player,
+    PlayerSeasonStats,
+    TeamSeasonStats,
+    Country,
+    GameEvent,
+    GameEventType,
+)
 from app.utils.localization import get_localized_field
-from app.schemas.season import SeasonResponse, SeasonListResponse, SeasonStatisticsResponse
+from app.utils.positions import infer_position_code
+from app.schemas.season import (
+    GoalPeriodItem,
+    GoalsByPeriodMeta,
+    SeasonGoalsByPeriodResponse,
+    SeasonListResponse,
+    SeasonResponse,
+    SeasonStatisticsResponse,
+)
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.stats import (
     ScoreTableResponse,
@@ -24,6 +43,47 @@ from app.schemas.player import PlayerStatsTableEntry, PlayerStatsTableResponse
 from app.schemas.country import CountryInPlayer
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
+
+
+GOAL_PERIOD_LABELS = ("0-15", "16-30", "31-45+", "46-60", "61-75", "76-90+")
+
+
+def _get_goal_period_index(half: int | None, minute: int | None) -> int:
+    """
+    Map a goal event to one of 6 minute buckets.
+
+    Buckets:
+    - 0-15, 16-30, 31-45+ (first half with stoppage time)
+    - 46-60, 61-75, 76-90+ (second half with stoppage time)
+    """
+    safe_minute = max(int(minute or 0), 0)
+
+    if half == 1:
+        if safe_minute <= 15:
+            return 0
+        if safe_minute <= 30:
+            return 1
+        return 2
+
+    if half == 2:
+        if safe_minute <= 60:
+            return 3
+        if safe_minute <= 75:
+            return 4
+        return 5
+
+    # Fallback to absolute minute buckets if half is unavailable/invalid.
+    if safe_minute <= 15:
+        return 0
+    if safe_minute <= 30:
+        return 1
+    if safe_minute <= 45:
+        return 2
+    if safe_minute <= 60:
+        return 3
+    if safe_minute <= 75:
+        return 4
+    return 5
 
 
 @router.get("", response_model=SeasonListResponse)
@@ -466,6 +526,8 @@ PLAYER_STATS_SORT_FIELDS = [
 async def get_player_stats_table(
     season_id: int,
     sort_by: str = Query(default="goals"),
+    team_id: int | None = Query(default=None),
+    position_code: str | None = Query(default=None, pattern="^(GK|DEF|MID|FWD)$"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
@@ -490,31 +552,27 @@ async def get_player_stats_table(
     if sort_column is None:
         raise HTTPException(status_code=400, detail=f"Sort field '{sort_by}' not found")
 
-    # Count total
-    count_query = select(func.count()).select_from(PlayerSeasonStats).where(
-        PlayerSeasonStats.season_id == season_id
-    )
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
+    filters = [PlayerSeasonStats.season_id == season_id]
+    if team_id is not None:
+        filters.append(PlayerSeasonStats.team_id == team_id)
 
-    # Main query with JOIN
-    query = (
+    base_query = (
         select(PlayerSeasonStats, Player, Team, Country)
         .join(Player, PlayerSeasonStats.player_id == Player.id)
         .outerjoin(Team, PlayerSeasonStats.team_id == Team.id)
         .outerjoin(Country, Player.country_id == Country.id)
-        .where(PlayerSeasonStats.season_id == season_id)
-        .order_by(nulls_last(desc(sort_column)))
-        .offset(offset)
-        .limit(limit)
+        .where(*filters)
     )
 
-    result = await db.execute(query)
-    rows = result.all()
+    def build_entry(
+        stats: PlayerSeasonStats,
+        player: Player,
+        team: Team | None,
+        country: Country | None,
+    ) -> PlayerStatsTableEntry:
+        localized_top_role = get_localized_field(player, "top_role", lang)
+        inferred_position_code = infer_position_code(player.player_type, localized_top_role)
 
-    items = []
-    for stats, player, team, country in rows:
-        # Build country data
         country_data = None
         if country:
             country_data = CountryInPlayer(
@@ -524,47 +582,105 @@ async def get_player_stats_table(
                 flag_url=country.flag_url,
             )
 
-        items.append(
-            PlayerStatsTableEntry(
-                player_id=player.id,
-                first_name=get_localized_field(player, "first_name", lang),
-                last_name=get_localized_field(player, "last_name", lang),
-                photo_url=player.photo_url,
-                country=country_data,
-                team_id=team.id if team else None,
-                team_name=get_localized_field(team, "name", lang) if team else None,
-                team_logo=team.logo_url if team else None,
-                games_played=stats.games_played,
-                minutes_played=stats.minutes_played,
-                goals=stats.goals,
-                assists=stats.assists,
-                goal_and_assist=stats.goal_and_assist,
-                xg=float(stats.xg) if stats.xg else None,
-                shots=stats.shots,
-                shots_on_goal=stats.shots_on_goal,
-                passes=stats.passes,
-                key_passes=stats.key_passes,
-                pass_accuracy=float(stats.pass_accuracy) if stats.pass_accuracy else None,
-                duels=stats.duels,
-                duels_won=stats.duels_won,
-                aerial_duel=stats.aerial_duel,
-                ground_duel=stats.ground_duel,
-                tackle=stats.tackle,
-                interception=stats.interception,
-                recovery=stats.recovery,
-                dribble=stats.dribble,
-                dribble_success=stats.dribble_success,
-                yellow_cards=stats.yellow_cards,
-                red_cards=stats.red_cards,
-                save_shot=stats.save_shot,
-                dry_match=stats.dry_match,
-            )
+        return PlayerStatsTableEntry(
+            player_id=player.id,
+            first_name=get_localized_field(player, "first_name", lang),
+            last_name=get_localized_field(player, "last_name", lang),
+            photo_url=player.photo_url,
+            country=country_data,
+            team_id=team.id if team else None,
+            team_name=get_localized_field(team, "name", lang) if team else None,
+            team_logo=team.logo_url if team else None,
+            player_type=player.player_type,
+            top_role=localized_top_role,
+            position_code=inferred_position_code,
+            games_played=stats.games_played,
+            minutes_played=stats.minutes_played,
+            goals=stats.goals,
+            assists=stats.assists,
+            goal_and_assist=stats.goal_and_assist,
+            xg=float(stats.xg) if stats.xg is not None else None,
+            shots=stats.shots,
+            shots_on_goal=stats.shots_on_goal,
+            passes=stats.passes,
+            key_passes=stats.key_passes,
+            pass_accuracy=float(stats.pass_accuracy) if stats.pass_accuracy is not None else None,
+            duels=stats.duels,
+            duels_won=stats.duels_won,
+            aerial_duel=stats.aerial_duel,
+            ground_duel=stats.ground_duel,
+            tackle=stats.tackle,
+            interception=stats.interception,
+            recovery=stats.recovery,
+            dribble=stats.dribble,
+            dribble_success=stats.dribble_success,
+            yellow_cards=stats.yellow_cards,
+            red_cards=stats.red_cards,
+            save_shot=stats.save_shot,
+            dry_match=stats.dry_match,
         )
+
+    if position_code is None:
+        count_query = select(func.count()).select_from(PlayerSeasonStats).where(*filters)
+        total_result = await db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        query = (
+            base_query.order_by(nulls_last(desc(sort_column))).offset(offset).limit(limit)
+        )
+        result = await db.execute(query)
+        rows = result.all()
+        items = [build_entry(stats, player, team, country) for stats, player, team, country in rows]
+
+        return PlayerStatsTableResponse(
+            season_id=season_id,
+            sort_by=sort_by,
+            items=items,
+            total=total,
+        )
+
+    # Position code filter (computed from players.player_type/top_role); apply in Python.
+    result = await db.execute(base_query)
+    rows = result.all()
+
+    items: list[PlayerStatsTableEntry] = []
+    for stats, player, team, country in rows:
+        entry = build_entry(stats, player, team, country)
+        if entry.position_code != position_code:
+            continue
+        items.append(entry)
+
+    def to_finite_number(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return None
+        if num != num:  # NaN
+            return None
+        return num
+
+    def sort_key(item: PlayerStatsTableEntry) -> tuple:
+        primary_val = to_finite_number(getattr(item, sort_by, None))
+        is_none = 1 if primary_val is None else 0
+        primary_sort = 0.0 if primary_val is None else -primary_val
+        return (
+            is_none,
+            primary_sort,
+            item.last_name or "",
+            item.first_name or "",
+            str(item.player_id),
+        )
+
+    items_sorted = sorted(items, key=sort_key)
+    total = len(items_sorted)
+    paginated_items = items_sorted[offset : offset + limit]
 
     return PlayerStatsTableResponse(
         season_id=season_id,
         sort_by=sort_by,
-        items=items,
+        items=paginated_items,
         total=total,
     )
 
@@ -649,6 +765,73 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
     )
 
 
+@router.get("/{season_id}/goals-by-period", response_model=SeasonGoalsByPeriodResponse)
+async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)):
+    """Get goals grouped by minute periods for a season."""
+    season_result = await db.execute(
+        select(Season).where(Season.id == season_id)
+    )
+    season = season_result.scalar_one_or_none()
+    if not season:
+        raise HTTPException(status_code=404, detail="Season not found")
+
+    matches_played_result = await db.execute(
+        select(func.count()).select_from(Game).where(
+            Game.season_id == season_id,
+            Game.home_score.isnot(None),
+            Game.away_score.isnot(None),
+        )
+    )
+    matches_played = matches_played_result.scalar() or 0
+
+    events_result = await db.execute(
+        select(
+            GameEvent.game_id,
+            GameEvent.half,
+            GameEvent.minute,
+            GameEvent.team_id,
+            Game.home_team_id,
+            Game.away_team_id,
+        )
+        .join(Game, GameEvent.game_id == Game.id)
+        .where(
+            Game.season_id == season_id,
+            Game.home_score.isnot(None),
+            Game.away_score.isnot(None),
+            GameEvent.event_type == GameEventType.goal,
+        )
+    )
+    event_rows = events_result.all()
+
+    matches_with_goal_events = len({row.game_id for row in event_rows})
+
+    periods = [GoalPeriodItem(period=label) for label in GOAL_PERIOD_LABELS]
+
+    for row in event_rows:
+        period_idx = _get_goal_period_index(row.half, row.minute)
+        period_item = periods[period_idx]
+        period_item.goals += 1
+
+        if row.team_id is not None:
+            if row.team_id == row.home_team_id:
+                period_item.home += 1
+            elif row.team_id == row.away_team_id:
+                period_item.away += 1
+
+    coverage_pct = round((matches_with_goal_events / matches_played) * 100, 1) if matches_played > 0 else 0.0
+
+    return SeasonGoalsByPeriodResponse(
+        season_id=season_id,
+        period_size_minutes=15,
+        periods=periods,
+        meta=GoalsByPeriodMeta(
+            matches_played=matches_played,
+            matches_with_goal_events=matches_with_goal_events,
+            coverage_pct=coverage_pct,
+        ),
+    )
+
+
 # Available sort fields for team stats
 TEAM_STATS_SORT_FIELDS = [
     "points", "goals_scored", "goals_conceded", "goal_difference",
@@ -694,6 +877,170 @@ async def get_team_stats_table(
     )
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
+
+    def to_finite_number(value: object) -> float | None:
+        if isinstance(value, (int, float)) and value == value:  # NaN check
+            return float(value)
+        return None
+
+    def sort_items(items: list[TeamStatsTableEntry]) -> list[TeamStatsTableEntry]:
+        primary = sort_by if sort_by in TeamStatsTableEntry.model_fields else "points"
+
+        def key(item: TeamStatsTableEntry) -> tuple:
+            primary_val = to_finite_number(getattr(item, primary, None))
+            points_val = to_finite_number(getattr(item, "points", None))
+            gd_val = to_finite_number(getattr(item, "goal_difference", None))
+            gs_val = to_finite_number(getattr(item, "goals_scored", None))
+
+            # None values last; numbers sorted descending
+            def sortable(v: float | None) -> tuple[int, float]:
+                return (1, 0.0) if v is None else (0, -v)
+
+            return (
+                sortable(primary_val),
+                sortable(points_val),
+                sortable(gd_val),
+                sortable(gs_val),
+            )
+
+        return sorted(items, key=key)
+
+    # Fallback: if v2 TeamSeasonStats is empty, build a basic table
+    if total == 0:
+        score_table_query = (
+            select(ScoreTable, Team)
+            .join(Team, ScoreTable.team_id == Team.id)
+            .where(ScoreTable.season_id == season_id)
+        )
+        score_table_result = await db.execute(score_table_query)
+        score_table_rows = score_table_result.all()
+
+        fallback_items: list[TeamStatsTableEntry] = []
+        if score_table_rows:
+            for st, team in score_table_rows:
+                games = st.games_played or 0
+                goals_scored = st.goals_scored or 0
+                goals_conceded = st.goals_conceded or 0
+
+                goals_per_match = round(goals_scored / games, 2) if games > 0 else None
+                goals_conceded_per_match = (
+                    round(goals_conceded / games, 2) if games > 0 else None
+                )
+
+                goal_difference = (
+                    st.goal_difference
+                    if st.goal_difference is not None
+                    else (goals_scored - goals_conceded if games > 0 else None)
+                )
+
+                fallback_items.append(
+                    TeamStatsTableEntry(
+                        team_id=team.id,
+                        team_name=get_localized_field(team, "name", lang),
+                        team_logo=team.logo_url,
+                        games_played=st.games_played,
+                        wins=st.wins,
+                        draws=st.draws,
+                        losses=st.losses,
+                        goals_scored=st.goals_scored,
+                        goals_conceded=st.goals_conceded,
+                        goal_difference=goal_difference,
+                        points=st.points,
+                        goals_per_match=goals_per_match,
+                        goals_conceded_per_match=goals_conceded_per_match,
+                    )
+                )
+        else:
+            # Cup-style seasons may have no score_table; fallback to finished games aggregation
+            games_result = await db.execute(
+                select(Game.home_team_id, Game.away_team_id, Game.home_score, Game.away_score)
+                .where(
+                    Game.season_id == season_id,
+                    Game.home_score.isnot(None),
+                    Game.away_score.isnot(None),
+                )
+            )
+            game_rows = games_result.all()
+
+            team_stats: dict[int, dict] = {}
+            for home_id, away_id, home_score, away_score in game_rows:
+                for team_id in (home_id, away_id):
+                    team_stats.setdefault(
+                        team_id,
+                        {
+                            "team_id": team_id,
+                            "games_played": 0,
+                            "wins": 0,
+                            "draws": 0,
+                            "losses": 0,
+                            "goals_scored": 0,
+                            "goals_conceded": 0,
+                            "points": 0,
+                        },
+                    )
+
+                team_stats[home_id]["games_played"] += 1
+                team_stats[away_id]["games_played"] += 1
+                team_stats[home_id]["goals_scored"] += home_score
+                team_stats[home_id]["goals_conceded"] += away_score
+                team_stats[away_id]["goals_scored"] += away_score
+                team_stats[away_id]["goals_conceded"] += home_score
+
+                if home_score > away_score:
+                    team_stats[home_id]["wins"] += 1
+                    team_stats[home_id]["points"] += 3
+                    team_stats[away_id]["losses"] += 1
+                elif home_score < away_score:
+                    team_stats[away_id]["wins"] += 1
+                    team_stats[away_id]["points"] += 3
+                    team_stats[home_id]["losses"] += 1
+                else:
+                    team_stats[home_id]["draws"] += 1
+                    team_stats[away_id]["draws"] += 1
+                    team_stats[home_id]["points"] += 1
+                    team_stats[away_id]["points"] += 1
+
+            if team_stats:
+                teams_result = await db.execute(
+                    select(Team).where(Team.id.in_(list(team_stats.keys())))
+                )
+                teams_by_id = {t.id: t for t in teams_result.scalars().all()}
+
+                for team_id, stats in team_stats.items():
+                    games = stats["games_played"] or 0
+                    goals_scored = stats["goals_scored"]
+                    goals_conceded = stats["goals_conceded"]
+                    goals_per_match = round(goals_scored / games, 2) if games > 0 else None
+                    goals_conceded_per_match = (
+                        round(goals_conceded / games, 2) if games > 0 else None
+                    )
+                    team = teams_by_id.get(team_id)
+                    fallback_items.append(
+                        TeamStatsTableEntry(
+                            team_id=team_id,
+                            team_name=get_localized_field(team, "name", lang) if team else str(team_id),
+                            team_logo=team.logo_url if team else None,
+                            games_played=stats["games_played"],
+                            wins=stats["wins"],
+                            draws=stats["draws"],
+                            losses=stats["losses"],
+                            goals_scored=goals_scored,
+                            goals_conceded=goals_conceded,
+                            goal_difference=goals_scored - goals_conceded,
+                            points=stats["points"],
+                            goals_per_match=goals_per_match,
+                            goals_conceded_per_match=goals_conceded_per_match,
+                        )
+                    )
+
+        sorted_items = sort_items(fallback_items)
+        paged_items = sorted_items[offset : offset + limit]
+        return TeamStatsTableResponse(
+            season_id=season_id,
+            sort_by=sort_by,
+            items=paged_items,
+            total=len(sorted_items),
+        )
 
     # Main query with JOIN
     query = (

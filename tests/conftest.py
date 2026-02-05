@@ -11,7 +11,8 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 from app.main import app
-from app.database import Base, get_db
+from app.database import Base
+from app.api.deps import get_db  # Import from where routes actually use it
 from app.models import (
     Tournament, Season, Team, Player, PlayerTeam,
     Game, GameTeamStats, GamePlayerStats, ScoreTable,
@@ -35,12 +36,8 @@ def compile_jsonb_sqlite(type_, compiler, **kw):
     return "JSON"
 
 
-@pytest.fixture(scope="session")
-def event_loop() -> Generator:
-    """Create event loop for async tests."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# Note: Using pytest-asyncio's built-in event_loop fixture (asyncio_mode = auto)
+# Custom event_loop removed to avoid conflicts with pytest-asyncio 0.23.3+
 
 
 @pytest.fixture(scope="function")
@@ -149,8 +146,6 @@ async def sample_player(test_session) -> Player:
         last_name="Player",
         birthday=date(1995, 1, 15),
         player_type="halfback",
-        country_name="Kazakhstan",
-        country_code="KZ",
         age=30,
         top_role="AM (attacking midfielder)",
     )
@@ -234,6 +229,7 @@ async def sample_news(test_session) -> list[News]:
             excerpt="Excerpt 1",
             content="<p>Content 1</p>",
             category="PREMIER-LIGA",
+            tournament_id="pl",
             publish_date=date(2025, 5, 1),
         ),
         News(
@@ -243,6 +239,7 @@ async def sample_news(test_session) -> list[News]:
             excerpt="Excerpt 2",
             content="<p>Content 2</p>",
             category="CUP",
+            tournament_id="cup",
             publish_date=date(2025, 5, 2),
         ),
     ]

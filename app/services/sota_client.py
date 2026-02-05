@@ -1,10 +1,28 @@
 import httpx
+import logging
 from datetime import datetime, timedelta
 from typing import Any
+
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+# Exceptions to retry on
+RETRYABLE_EXCEPTIONS = (
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+)
 
 
 class SotaClient:
@@ -19,19 +37,51 @@ class SotaClient:
         self.refresh_token: str | None = None
         self.token_expires_at: datetime | None = None
 
-    async def authenticate(self) -> None:
-        """Authenticate and get JWT tokens."""
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def _make_request(
+        self,
+        method: str,
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        json: dict | None = None,
+        timeout: float = 30.0,
+    ) -> httpx.Response:
+        """
+        Make an HTTP request with automatic retry on transient failures.
+
+        Retries up to 3 times with exponential backoff (2s, 4s, 8s...)
+        on connection timeouts, read timeouts, and connection errors.
+        """
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.post(
-                f"{self.BASE_URL}/auth/token/",
-                json={"email": self.email, "password": self.password},
-                timeout=30.0,
+            response = await getattr(client, method)(
+                url,
+                headers=headers,
+                params=params,
+                json=json,
+                timeout=timeout,
             )
             response.raise_for_status()
-            data = response.json()
-            self.access_token = data["access"]
-            self.refresh_token = data.get("refresh")
-            self.token_expires_at = datetime.now() + timedelta(hours=23)
+            return response
+
+    async def authenticate(self) -> None:
+        """Authenticate and get JWT tokens."""
+        response = await self._make_request(
+            "post",
+            f"{self.BASE_URL}/auth/token/",
+            json={"email": self.email, "password": self.password},
+        )
+        data = response.json()
+        self.access_token = data["access"]
+        self.refresh_token = data.get("refresh")
+        self.token_expires_at = datetime.now() + timedelta(hours=23)
+        logger.info("SOTA API authentication successful")
 
     async def ensure_authenticated(self) -> None:
         """Ensure we have a valid access token."""
@@ -50,29 +100,34 @@ class SotaClient:
     async def _get_paginated(
         self, url: str, headers: dict | None = None, params: dict | None = None
     ) -> list[dict[str, Any]]:
-        """Fetch all pages from a paginated endpoint."""
+        """Fetch all pages from a paginated endpoint with retry support."""
         results = []
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            while url:
-                response = await client.get(
-                    url, headers=headers, params=params, timeout=30.0
-                )
-                response.raise_for_status()
-                data = response.json()
+        current_url = url
+        current_params = params
 
-                # Handle both paginated and non-paginated responses
-                if isinstance(data, list):
-                    # Direct list response
-                    results.extend(data)
-                    url = None
-                elif isinstance(data, dict):
-                    # Paginated response with results
-                    results.extend(data.get("results", data.get("data", [])))
-                    url = data.get("next")
-                else:
-                    url = None
+        while current_url:
+            response = await self._make_request(
+                "get",
+                current_url,
+                headers=headers,
+                params=current_params,
+            )
+            data = response.json()
 
-                params = None  # Params are included in next URL
+            # Handle both paginated and non-paginated responses
+            if isinstance(data, list):
+                # Direct list response
+                results.extend(data)
+                current_url = None
+            elif isinstance(data, dict):
+                # Paginated response with results
+                results.extend(data.get("results", data.get("data", [])))
+                current_url = data.get("next")
+            else:
+                current_url = None
+
+            current_params = None  # Params are included in next URL
+
         return results
 
     # ==================== Endpoints requiring authentication ====================
@@ -123,29 +178,25 @@ class SotaClient:
     async def get_score_table(self, season_id: int, language: str = "ru") -> dict[str, Any]:
         """Get league table for a season."""
         await self.ensure_authenticated()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                f"{self.BASE_URL}/public/v1/seasons/{season_id}/score_table/",
-                headers=self.get_headers(language),
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v1/seasons/{season_id}/score_table/",
+            headers=self.get_headers(language),
+        )
+        return response.json()
 
     async def get_team_season_stats(
         self, team_id: int, season_id: int, language: str = "ru"
     ) -> dict[str, Any]:
         """Get team statistics for a season (v1 - basic stats)."""
         await self.ensure_authenticated()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                f"{self.BASE_URL}/public/v1/teams/{team_id}/season_stats/",
-                headers=self.get_headers(language),
-                params={"season_id": season_id},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v1/teams/{team_id}/season_stats/",
+            headers=self.get_headers(language),
+            params={"season_id": season_id},
+        )
+        return response.json()
 
     async def get_team_season_stats_v2(
         self, team_id: int, season_id: int, language: str = "ru"
@@ -160,20 +211,18 @@ class SotaClient:
         - And many more...
         """
         await self.ensure_authenticated()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                f"{self.BASE_URL}/public/v2/teams/{team_id}/season_stats/",
-                headers=self.get_headers(language),
-                params={"season_id": season_id},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v2/teams/{team_id}/season_stats/",
+            headers=self.get_headers(language),
+            params={"season_id": season_id},
+        )
+        data = response.json()
 
-            # Convert array of {key, value, name} to dict {key: value}
-            stats_list = data.get("data", {}).get("stats", [])
-            stats_dict = {s["key"]: s["value"] for s in stats_list if "key" in s}
-            return stats_dict
+        # Convert array of {key, value, name} to dict {key: value}
+        stats_list = data.get("data", {}).get("stats", [])
+        stats_dict = {s["key"]: s["value"] for s in stats_list if "key" in s}
+        return stats_dict
 
     async def get_player_season_stats(
         self, player_id: str, season_id: int, language: str = "ru"
@@ -189,70 +238,64 @@ class SotaClient:
         - And more...
         """
         await self.ensure_authenticated()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                f"{self.BASE_URL}/public/v2/players/{player_id}/season_stats/",
-                headers=self.get_headers(language),
-                params={"season_id": season_id},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v2/players/{player_id}/season_stats/",
+            headers=self.get_headers(language),
+            params={"season_id": season_id},
+        )
+        data = response.json()
 
-            # Convert array of {key, value, name} to dict {key: value}
-            stats_list = data.get("data", {}).get("stats", [])
-            stats_dict = {s["key"]: s["value"] for s in stats_list if "key" in s}
+        # Convert array of {key, value, name} to dict {key: value}
+        stats_list = data.get("data", {}).get("stats", [])
+        stats_dict = {s["key"]: s["value"] for s in stats_list if "key" in s}
 
-            # Add player info
-            player_data = data.get("data", {})
-            stats_dict["first_name"] = player_data.get("first_name")
-            stats_dict["last_name"] = player_data.get("last_name")
+        # Add player info
+        player_data = data.get("data", {})
+        stats_dict["first_name"] = player_data.get("first_name")
+        stats_dict["last_name"] = player_data.get("last_name")
 
-            return stats_dict
+        return stats_dict
 
     # ==================== Game stats endpoints ====================
 
     async def get_game_player_stats(self, game_id: str, language: str = "ru") -> list[dict[str, Any]]:
         """Get player statistics for a game."""
         await self.ensure_authenticated()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                f"{self.BASE_URL}/public/v1/games/{game_id}/players/",
-                headers=self.get_headers(language),
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list):
-                return data
-            # Handle nested response: {"result": "...", "data": {"players": [...]}}
-            if isinstance(data, dict):
-                inner = data.get("data", {})
-                if isinstance(inner, dict):
-                    return inner.get("players", inner.get("results", []))
-                return data.get("results", [])
-            return []
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v1/games/{game_id}/players/",
+            headers=self.get_headers(language),
+        )
+        data = response.json()
+        if isinstance(data, list):
+            return data
+        # Handle nested response: {"result": "...", "data": {"players": [...]}}
+        if isinstance(data, dict):
+            inner = data.get("data", {})
+            if isinstance(inner, dict):
+                return inner.get("players", inner.get("results", []))
+            return data.get("results", [])
+        return []
 
     async def get_game_team_stats(self, game_id: str, language: str = "ru") -> list[dict[str, Any]]:
         """Get team statistics for a game."""
         await self.ensure_authenticated()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                f"{self.BASE_URL}/public/v1/games/{game_id}/teams/",
-                headers=self.get_headers(language),
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()
-            if isinstance(data, list):
-                return data
-            # Handle nested response: {"result": "...", "data": {"teams": [...]}}
-            if isinstance(data, dict):
-                inner = data.get("data", {})
-                if isinstance(inner, dict):
-                    return inner.get("teams", inner.get("results", []))
-                return data.get("results", [])
-            return []
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v1/games/{game_id}/teams/",
+            headers=self.get_headers(language),
+        )
+        data = response.json()
+        if isinstance(data, list):
+            return data
+        # Handle nested response: {"result": "...", "data": {"teams": [...]}}
+        if isinstance(data, dict):
+            inner = data.get("data", {})
+            if isinstance(inner, dict):
+                return inner.get("teams", inner.get("results", []))
+            return data.get("results", [])
+        return []
 
     async def get_game_stats(self, game_id: str, language: str = "ru") -> dict[str, Any]:
         """Get full game statistics."""
@@ -286,14 +329,12 @@ class SotaClient:
         }
         """
         await self.ensure_authenticated()
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                f"{self.BASE_URL}/public/v1/games/{game_id}/pre_game_lineup/",
-                headers=self.get_headers(language),
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v1/games/{game_id}/pre_game_lineup/",
+            headers=self.get_headers(language),
+        )
+        return response.json()
 
     # ==================== Live match endpoints (/em/) ====================
 
@@ -317,14 +358,12 @@ class SotaClient:
         """
         await self.ensure_authenticated()
         url = f"https://sota.id/em/{game_id}-team-{side}.json"
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                url,
-                params={"access_token": self.access_token},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        response = await self._make_request(
+            "get",
+            url,
+            params={"access_token": self.access_token},
+        )
+        return response.json()
 
     async def get_live_match_events(self, game_id: str) -> list[dict[str, Any]]:
         """
@@ -340,14 +379,12 @@ class SotaClient:
         """
         await self.ensure_authenticated()
         url = f"https://sota.id/em/{game_id}-list.json"
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                url,
-                params={"access_token": self.access_token},
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
+        response = await self._make_request(
+            "get",
+            url,
+            params={"access_token": self.access_token},
+        )
+        return response.json()
 
     async def get_live_match_data(self, game_id: str) -> dict[str, Any]:
         """
