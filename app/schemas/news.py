@@ -2,6 +2,8 @@ from datetime import datetime, date
 from pydantic import BaseModel
 from typing import Any
 
+from app.utils.file_urls import FileUrl
+
 
 class NewsResponse(BaseModel):
     id: int
@@ -12,7 +14,7 @@ class NewsResponse(BaseModel):
     excerpt: str | None = None
     content: str | None = None
     content_text: str | None = None
-    image_url: str | None = None
+    image_url: FileUrl = None
     video_url: str | None = None  # YouTube embed URL
     tournament_id: str | None = None  # Tournament ID: pl, 1l, cup, 2l, el
     article_type: str | None = None
@@ -30,7 +32,7 @@ class NewsListItem(BaseModel):
     language: str
     title: str
     excerpt: str | None = None
-    image_url: str | None = None
+    image_url: FileUrl = None
     tournament_id: str | None = None  # Tournament ID: pl, 1l, cup, 2l, el
     article_type: str | None = None
     is_slider: bool = False

@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.utils.file_urls import FileUrl
+
 
 class TeamBase(BaseModel):
     id: int
@@ -10,7 +12,7 @@ class TeamBase(BaseModel):
 
 
 class TeamResponse(TeamBase):
-    logo_url: str | None = None
+    logo_url: FileUrl = None
     primary_color: str | None = None
     secondary_color: str | None = None
     accent_color: str | None = None
@@ -32,7 +34,7 @@ class TeamDetailResponse(TeamResponse):
 class TeamInGame(BaseModel):
     id: int
     name: str
-    logo_url: str | None = None
+    logo_url: FileUrl = None
     score: int | None = None
     primary_color: str | None = None
     secondary_color: str | None = None
@@ -143,7 +145,7 @@ class TeamStatsTableEntry(BaseModel):
     """Single team entry for the statistics table."""
     team_id: int
     team_name: str
-    team_logo: str | None = None
+    team_logo: FileUrl = None
 
     # Basic stats
     games_played: int | None = None
@@ -217,7 +219,7 @@ class TeamOverviewTeam(BaseModel):
     id: int
     name: str
     city: str | None = None
-    logo_url: str | None = None
+    logo_url: FileUrl = None
     website: str | None = None
     stadium: TeamOverviewStadium | None = None
     primary_color: str | None = None
@@ -245,7 +247,7 @@ class TeamOverviewSummary(BaseModel):
 class TeamOverviewMatchTeam(BaseModel):
     id: int
     name: str
-    logo_url: str | None = None
+    logo_url: FileUrl = None
 
 
 class TeamOverviewMatch(BaseModel):
@@ -267,7 +269,7 @@ class TeamOverviewFormEntry(BaseModel):
     game_id: str
     is_home: bool
     opponent_name: str
-    opponent_logo: str | None = None
+    opponent_logo: FileUrl = None
     team_score: int
     opponent_score: int
     result: str
@@ -277,7 +279,7 @@ class TeamOverviewStandingEntry(BaseModel):
     position: int
     team_id: int
     team_name: str
-    team_logo: str | None = None
+    team_logo: FileUrl = None
     games_played: int
     points: int
     goal_difference: int
@@ -289,10 +291,10 @@ class TeamOverviewLeaderPlayer(BaseModel):
     player_id: UUID
     first_name: str | None = None
     last_name: str | None = None
-    photo_url: str | None = None
+    photo_url: FileUrl = None
     team_id: int | None = None
     team_name: str | None = None
-    team_logo: str | None = None
+    team_logo: FileUrl = None
     position: str | None = None
     games_played: int = 0
     goals: int = 0
@@ -323,7 +325,7 @@ class TeamOverviewCoachPreview(BaseModel):
     id: int
     first_name: str
     last_name: str
-    photo_url: str | None = None
+    photo_url: FileUrl = None
     role: str
     country_name: str | None = None
 
