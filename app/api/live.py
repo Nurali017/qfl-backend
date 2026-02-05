@@ -11,6 +11,7 @@ from app.models import Game
 from app.services.sota_client import get_sota_client, SotaClient
 from app.services.live_sync_service import LiveSyncService
 from app.services.websocket_manager import get_websocket_manager, ConnectionManager
+from app.services.live_event_bus import publish_live_message
 from app.schemas.live import (
     GameEventsListResponse,
     GameEventResponse,
@@ -52,6 +53,7 @@ async def start_live_sync(
 
     if "error" not in result:
         await manager.broadcast_game_status(game_id, "started")
+        await publish_live_message({"type": "status", "game_id": game_id, "status": "started"})
 
     return LiveSyncResponse(**result)
 
@@ -72,6 +74,7 @@ async def stop_live_sync(
 
     if "error" not in result:
         await manager.broadcast_game_status(game_id, "ended")
+        await publish_live_message({"type": "status", "game_id": game_id, "status": "ended"})
 
     return LiveSyncResponse(**result)
 
@@ -91,6 +94,7 @@ async def sync_lineup(
 
     if "error" not in result:
         await manager.broadcast_lineup(game_id, result)
+        await publish_live_message({"type": "lineup", "game_id": game_id, "data": result})
 
     return LineupSyncResponse(**result)
 
@@ -112,6 +116,7 @@ async def sync_events(
     for event in new_events:
         event_data = GameEventResponse.model_validate(event).model_dump(mode="json")
         await manager.broadcast_event(game_id, event_data)
+        await publish_live_message({"type": "event", "game_id": game_id, "data": event_data})
 
     return {
         "game_id": game_id,

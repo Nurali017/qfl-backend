@@ -1122,11 +1122,23 @@ class SyncService:
         )
         score_table_entries = {st.team_id: st for st in score_table_result.scalars().all()}
 
-        if not score_table_entries:
+        team_ids = set(score_table_entries.keys())
+        if not team_ids:
+            # Cup seasons may have no score table; infer teams from games.
+            games_result = await self.db.execute(
+                select(Game.home_team_id, Game.away_team_id).where(Game.season_id == season_id)
+            )
+            for home_id, away_id in games_result.all():
+                if home_id:
+                    team_ids.add(home_id)
+                if away_id:
+                    team_ids.add(away_id)
+
+        if not team_ids:
             return 0
 
         count = 0
-        for team_id in score_table_entries.keys():
+        for team_id in team_ids:
             try:
                 # Get all metrics from SOTA v2 API
                 stats = await self.client.get_team_season_stats_v2(team_id, season_id)

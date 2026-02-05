@@ -103,6 +103,9 @@ class PlayerStatsTableEntry(BaseModel):
     team_id: int | None = None
     team_name: str | None = None
     team_logo: str | None = None
+    player_type: str | None = None
+    top_role: str | None = None
+    position_code: str | None = None
 
     # Stats
     games_played: int | None = None

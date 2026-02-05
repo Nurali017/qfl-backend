@@ -1,77 +1,73 @@
-import asyncio
 from datetime import date, timedelta
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
-from app.services.sync_service import SyncService
+from app.services.sync import SyncOrchestrator
 from app.models import Game
 from app.config import get_settings
+from app.utils.async_celery import run_async
 
 settings = get_settings()
-
-
-def run_async(coro):
-    """Helper to run async code in sync context."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 async def _sync_references():
     """Sync tournaments, seasons, and teams."""
     async with AsyncSessionLocal() as db:
-        sync_service = SyncService(db)
-        results = {
-            "tournaments": await sync_service.sync_tournaments(),
-            "seasons": await sync_service.sync_seasons(),
-            "teams": await sync_service.sync_teams(),
-        }
-        return results
+        orchestrator = SyncOrchestrator(db)
+        return await orchestrator.sync_references()
 
 
 async def _sync_games():
-    """Sync games for current season."""
+    """Sync games for all configured seasons."""
     async with AsyncSessionLocal() as db:
-        sync_service = SyncService(db)
-        count = await sync_service.sync_games(settings.current_season_id)
-        return {"games_synced": count}
+        orchestrator = SyncOrchestrator(db)
+        results = {}
+        for season_id in settings.sync_season_ids:
+            count = await orchestrator.sync_games(season_id)
+            results[f"season_{season_id}"] = count
+        return {"games_synced": results}
 
 
 async def _sync_live_stats():
-    """Sync statistics for recent games (last 3 days)."""
+    """Sync statistics for recent games across all configured seasons."""
     async with AsyncSessionLocal() as db:
-        sync_service = SyncService(db)
-
-        # Find games from last 3 days with stats
+        orchestrator = SyncOrchestrator(db)
         three_days_ago = date.today() - timedelta(days=3)
-        result = await db.execute(
-            select(Game.id).where(
-                Game.season_id == settings.current_season_id,
-                Game.date >= three_days_ago,
-                Game.has_stats == True,
+
+        total_synced = 0
+        results_by_season = {}
+
+        for season_id in settings.sync_season_ids:
+            result = await db.execute(
+                select(Game.id).where(
+                    Game.season_id == season_id,
+                    Game.date >= three_days_ago,
+                    Game.has_stats == True,
+                )
             )
-        )
-        game_ids = [str(g[0]) for g in result.fetchall()]
+            game_ids = [str(g[0]) for g in result.fetchall()]
 
-        stats_synced = 0
-        for game_id in game_ids:
-            await sync_service.sync_game_stats(game_id)
-            stats_synced += 1
+            season_synced = 0
+            for game_id in game_ids:
+                await orchestrator.sync_game_stats(game_id)
+                season_synced += 1
 
-        return {"games_stats_synced": stats_synced}
+            results_by_season[f"season_{season_id}"] = season_synced
+            total_synced += season_synced
+
+        return {"games_stats_synced": total_synced, "by_season": results_by_season}
 
 
 async def _full_sync():
-    """Full synchronization."""
+    """Full synchronization for all configured seasons."""
     async with AsyncSessionLocal() as db:
-        sync_service = SyncService(db)
-        return await sync_service.full_sync(settings.current_season_id)
+        orchestrator = SyncOrchestrator(db)
+        results = {}
+        for season_id in settings.sync_season_ids:
+            results[f"season_{season_id}"] = await orchestrator.full_sync(season_id)
+        return results
 
 
 @celery_app.task(name="app.tasks.sync_tasks.sync_references")
@@ -82,17 +78,17 @@ def sync_references():
 
 @celery_app.task(name="app.tasks.sync_tasks.sync_games")
 def sync_games():
-    """Celery task: Sync games for current season."""
+    """Celery task: Sync games for all configured seasons."""
     return run_async(_sync_games())
 
 
 @celery_app.task(name="app.tasks.sync_tasks.sync_live_stats")
 def sync_live_stats():
-    """Celery task: Sync statistics for recent games."""
+    """Celery task: Sync statistics for recent games across all configured seasons."""
     return run_async(_sync_live_stats())
 
 
 @celery_app.task(name="app.tasks.sync_tasks.full_sync")
 def full_sync():
-    """Celery task: Full data synchronization."""
+    """Celery task: Full data synchronization for all configured seasons."""
     return run_async(_full_sync())

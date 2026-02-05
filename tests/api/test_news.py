@@ -31,21 +31,13 @@ class TestNewsAPI:
         assert len(data["items"]) == 1
         assert data["pages"] == 2
 
-    async def test_get_news_by_category(self, client: AsyncClient, sample_news):
-        """Test filtering news by category."""
-        response = await client.get("/api/v1/news?language=ru&category=PREMIER-LIGA")
+    async def test_get_news_by_tournament(self, client: AsyncClient, sample_news):
+        """Test filtering news by tournament_id."""
+        response = await client.get("/api/v1/news?language=ru&tournament_id=pl")
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
-        assert data["items"][0]["category"] == "PREMIER-LIGA"
-
-    async def test_get_news_categories(self, client: AsyncClient, sample_news):
-        """Test getting news categories."""
-        response = await client.get("/api/v1/news/categories?language=ru")
-        assert response.status_code == 200
-        data = response.json()
-        assert "PREMIER-LIGA" in data
-        assert "CUP" in data
+        assert data["items"][0]["tournament_id"] == "pl"
 
     async def test_get_latest_news(self, client: AsyncClient, sample_news):
         """Test getting latest news."""
@@ -67,4 +59,5 @@ class TestNewsAPI:
         """Test 404 for non-existent news."""
         response = await client.get("/api/v1/news/99999?language=ru")
         assert response.status_code == 404
-        assert response.json()["detail"] == "News not found"
+        # Error message may be localized (ru/kz/en)
+        assert "detail" in response.json()

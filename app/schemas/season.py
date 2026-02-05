@@ -63,3 +63,26 @@ class SeasonStatisticsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class GoalPeriodItem(BaseModel):
+    """Goals grouped by minute period."""
+    period: str
+    goals: int = 0
+    home: int = 0
+    away: int = 0
+
+
+class GoalsByPeriodMeta(BaseModel):
+    """Data quality metadata for goals-by-period chart."""
+    matches_played: int = 0
+    matches_with_goal_events: int = 0
+    coverage_pct: float = 0.0
+
+
+class SeasonGoalsByPeriodResponse(BaseModel):
+    """Goals by minute buckets for a season."""
+    season_id: int
+    period_size_minutes: int = 15
+    periods: list[GoalPeriodItem]
+    meta: GoalsByPeriodMeta

@@ -48,6 +48,7 @@ async def init_minio():
                         f"arn:aws:s3:::{bucket}/news_image/*",
                         f"arn:aws:s3:::{bucket}/news/*",
                         f"arn:aws:s3:::{bucket}/leadership/*",
+                        f"arn:aws:s3:::{bucket}/coach_photos/*",
                         f"arn:aws:s3:::{bucket}/player_photos/*",
                         f"arn:aws:s3:::{bucket}/document/*",
                     ],

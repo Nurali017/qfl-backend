@@ -651,10 +651,36 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
             "extra_stats": ps.extra_stats,
         })
 
+    # Get game events
+    events_result = await db.execute(
+        select(GameEvent)
+        .where(GameEvent.game_id == game_id)
+        .order_by(GameEvent.half, GameEvent.minute)
+    )
+    events = events_result.scalars().all()
+
+    events_response = []
+    for e in events:
+        events_response.append({
+            "id": e.id,
+            "half": e.half,
+            "minute": e.minute,
+            "event_type": e.event_type.value,
+            "team_id": e.team_id,
+            "team_name": e.team_name,
+            "player_id": str(e.player_id) if e.player_id else None,
+            "player_name": e.player_name,
+            "player_number": e.player_number,
+            "player2_id": str(e.player2_id) if e.player2_id else None,
+            "player2_name": e.player2_name,
+            "player2_number": e.player2_number,
+        })
+
     return {
         "game_id": str(game_id),
         "team_stats": team_stats_response,
         "player_stats": player_stats_response,
+        "events": events_response,
     }
 
 

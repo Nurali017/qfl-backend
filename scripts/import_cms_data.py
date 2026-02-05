@@ -63,6 +63,52 @@ def extract_category_from_excerpt(excerpt: str) -> str | None:
     return None
 
 
+# Mapping from category names (cyrillic) to tournament IDs
+CATEGORY_TO_TOURNAMENT_ID = {
+    "ПРЕМЬЕР-ЛИГА": "pl",
+    "ПЕРВАЯ ЛИГА": "1l",
+    "БІРІНШІ ЛИГА": "1l",
+    "КУБОК": "cup",
+    "ВТОРАЯ ЛИГА": "2l",
+    "ЕКІНШІ ЛИГА": "2l",
+    "ЖЕНСКАЯ ЛИГА": "el",
+    "ӘЙЕЛДЕР ЛИГАСЫ": "el",
+}
+
+
+def get_tournament_id_from_category(category: str | None) -> str | None:
+    """Get tournament_id from category name."""
+    if not category:
+        return None
+    return CATEGORY_TO_TOURNAMENT_ID.get(category.upper())
+
+
+def get_tournament_id_from_excerpt(excerpt: str | None) -> str | None:
+    """Get tournament_id from excerpt text by matching patterns."""
+    if not excerpt:
+        return None
+    
+    excerpt_upper = excerpt.upper()
+    
+    # Order matters - check more specific patterns first
+    patterns = [
+        ("КУБОК", "cup"),
+        ("ПЕРВАЯ ЛИГА", "1l"),
+        ("БІРІНШІ ЛИГА", "1l"),
+        ("ВТОРАЯ ЛИГА", "2l"),
+        ("ЕКІНШІ ЛИГА", "2l"),
+        ("ЖЕНСКАЯ", "el"),
+        ("ӘЙЕЛДЕР", "el"),
+        ("ПРЕМЬЕР", "pl"),
+    ]
+    
+    for pattern, tid in patterns:
+        if pattern in excerpt_upper:
+            return tid
+    
+    return None
+
+
 def extract_image_from_content(content: str) -> str | None:
     """Extract main image URL from content HTML."""
     if not content:
@@ -170,6 +216,8 @@ async def import_news(db: AsyncSession) -> dict:
                         # Use direct fields from JSON if available, fallback to extraction
                         image_url = item.get("image_url") or extract_image_from_content(content)
                         category = item.get("category") or extract_category_from_excerpt(excerpt)
+                        # Try to get tournament_id from category first, then from excerpt
+                        tournament_id = get_tournament_id_from_category(category) or get_tournament_id_from_excerpt(excerpt)
 
                         # Parse date - use 'date' field if available
                         publish_date = None
@@ -192,6 +240,7 @@ async def import_news(db: AsyncSession) -> dict:
                             url=item.get("url"),
                             image_url=image_url,
                             category=category,
+                            tournament_id=tournament_id,
                             publish_date=publish_date,
                             structured_data=item.get("structured_data"),
                             created_at=datetime.utcnow(),
@@ -207,6 +256,7 @@ async def import_news(db: AsyncSession) -> dict:
                                 "url": stmt.excluded.url,
                                 "image_url": stmt.excluded.image_url,
                                 "category": stmt.excluded.category,
+                                "tournament_id": stmt.excluded.tournament_id,
                                 "publish_date": stmt.excluded.publish_date,
                                 "structured_data": stmt.excluded.structured_data,
                                 "updated_at": stmt.excluded.updated_at,

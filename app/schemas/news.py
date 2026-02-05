@@ -14,7 +14,7 @@ class NewsResponse(BaseModel):
     content_text: str | None = None
     image_url: str | None = None
     video_url: str | None = None  # YouTube embed URL
-    category: str | None = None
+    tournament_id: str | None = None  # Tournament ID: pl, 1l, cup, 2l, el
     article_type: str | None = None
     is_slider: bool = False
     slider_order: int | None = None
@@ -31,7 +31,7 @@ class NewsListItem(BaseModel):
     title: str
     excerpt: str | None = None
     image_url: str | None = None
-    category: str | None = None
+    tournament_id: str | None = None  # Tournament ID: pl, 1l, cup, 2l, el
     article_type: str | None = None
     is_slider: bool = False
     slider_order: int | None = None

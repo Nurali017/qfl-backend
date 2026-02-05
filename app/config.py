@@ -21,9 +21,29 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+    live_events_channel: str = "qfl:live-events"
 
-    # Current season
+    # Current season (default for API when season_id not specified)
     current_season_id: int = 61
+
+    # Seasons to sync automatically (Celery tasks)
+    # IDs from SOTA API database:
+    # 61=Premier League, 85=First League, 71=Cup, 80=Second League, 81=Elite League, 84=Women's League
+    sync_season_ids: list[int] = [61, 85, 71, 80, 81, 84]
+
+    # CORS
+    allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kff.1sportkz.com"
+
+    # Admin auth (JWT + refresh cookie)
+    admin_jwt_secret: str = "change-me-admin-jwt-secret"
+    admin_access_ttl_minutes: int = 30
+    admin_refresh_ttl_days: int = 14
+    admin_refresh_cookie_name: str = "admin_refresh_token"
+    admin_cookie_secure: bool = False
+    admin_cookie_samesite: str = "lax"
+    admin_cookie_domain: str | None = None
+    admin_bootstrap_email: str = "admin@qfl.local"
+    admin_bootstrap_password: str = "ChangeMe123!"
 
     # OpenAI API Configuration
     openai_api_key: str = ""  # Set to empty string by default, add your key to .env

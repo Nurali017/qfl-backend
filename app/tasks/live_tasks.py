@@ -6,27 +6,17 @@ Tasks:
 - sync_live_game_events: Sync events for active games
 - end_finished_games: Auto-end games that should have finished
 """
-import asyncio
 import logging
 
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
 from app.services.live_sync_service import LiveSyncService
 from app.services.sota_client import get_sota_client
-from app.services.websocket_manager import get_websocket_manager
 from app.schemas.live import GameEventResponse
+from app.services.live_event_bus import publish_live_message
+from app.utils.async_celery import run_async
 
 logger = logging.getLogger(__name__)
-
-
-def run_async(coro):
-    """Helper to run async code in sync context."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 async def _check_upcoming_games():
@@ -39,7 +29,6 @@ async def _check_upcoming_games():
     """
     async with AsyncSessionLocal() as db:
         client = get_sota_client()
-        manager = get_websocket_manager()
         service = LiveSyncService(db, client)
 
         # Get games starting in next 30 minutes
@@ -53,8 +42,9 @@ async def _check_upcoming_games():
                 result = await service.sync_pregame_lineup(game_id)
                 results.append(result)
 
-                # Broadcast lineup update
-                await manager.broadcast_lineup(game_id, result)
+                # Publish lineup update (FastAPI WS process will broadcast)
+                if "error" not in result:
+                    await publish_live_message({"type": "lineup", "game_id": game_id, "data": result})
 
                 logger.info(f"Pre-game lineup synced for game {game_id}")
             except Exception as e:
@@ -79,7 +69,6 @@ async def _sync_live_game_events():
     """
     async with AsyncSessionLocal() as db:
         client = get_sota_client()
-        manager = get_websocket_manager()
         service = LiveSyncService(db, client)
 
         # Get active games
@@ -98,7 +87,7 @@ async def _sync_live_game_events():
                 # Broadcast each new event
                 for event in new_events:
                     event_data = GameEventResponse.model_validate(event).model_dump(mode="json")
-                    await manager.broadcast_event(game_id, event_data)
+                    await publish_live_message({"type": "event", "game_id": game_id, "data": event_data})
 
                 results.append({
                     "game_id": game_id,
@@ -127,7 +116,6 @@ async def _end_finished_games():
     """
     async with AsyncSessionLocal() as db:
         client = get_sota_client()
-        manager = get_websocket_manager()
         service = LiveSyncService(db, client)
 
         # Get games that should have ended
@@ -138,7 +126,7 @@ async def _end_finished_games():
             game_id = str(game.id)
             try:
                 await service.stop_live_tracking(game_id)
-                await manager.broadcast_game_status(game_id, "ended")
+                await publish_live_message({"type": "status", "game_id": game_id, "status": "ended"})
                 results.append({"game_id": game_id, "status": "ended"})
                 logger.info(f"Auto-ended game {game_id}")
             except Exception as e:
@@ -163,7 +151,6 @@ async def _start_game_by_schedule():
 
     async with AsyncSessionLocal() as db:
         client = get_sota_client()
-        manager = get_websocket_manager()
         service = LiveSyncService(db, client)
 
         now = datetime.now()
@@ -188,7 +175,7 @@ async def _start_game_by_schedule():
             game_id = str(game.id)
             try:
                 result = await service.start_live_tracking(game_id)
-                await manager.broadcast_game_status(game_id, "started")
+                await publish_live_message({"type": "status", "game_id": game_id, "status": "started"})
                 results.append(result)
                 logger.info(f"Auto-started live tracking for game {game_id}")
             except Exception as e:

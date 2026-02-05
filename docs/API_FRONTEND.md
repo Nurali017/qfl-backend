@@ -4,6 +4,74 @@
 
 ---
 
+## Мульти-турнирная поддержка
+
+### Доступные турниры (season_id)
+
+| season_id | Название (RU) | Название (KZ) | Название (EN) |
+|-----------|---------------|---------------|---------------|
+| 61 | Премьер-Лига | Премьер-Лига | Premier League |
+| 62 | Первая Лига | Бірінші лига | First League |
+| 63 | Кубок Казахстана | Қазақстан Кубогы | Kazakhstan Cup |
+| 65 | Вторая Лига | Екінші лига | Second League |
+| 66 | Женская Лига | Әйелдер лигасы | Women's League |
+
+Для корректной работы с разными турнирами фронтенд **обязательно** должен передавать параметр `season_id` в следующих эндпоинтах:
+
+| Эндпоинт | Параметр | По умолчанию |
+|----------|----------|--------------|
+| `GET /games` | `season_id` (query) | 61 (текущий сезон) |
+| `GET /teams/{id}/players` | `season_id` (query) | 61 |
+| `GET /teams/{id}/games` | `season_id` (query) | 61 |
+| `GET /teams/{id}/stats` | `season_id` (query) | 61 |
+| `GET /teams/{id}/coaches` | `season_id` (query) | 61 |
+| `GET /teams/{id}/vs/{id}/head-to-head` | `season_id` (query) | 61 |
+| `GET /players/{id}/stats` | `season_id` (query) | 61 |
+| `GET /players/{id}/games` | `season_id` (query) | 61 |
+| `GET /players/{id}/teammates` | `season_id` (query) | 61 |
+
+**Важно:** Если параметр не передан, API использует `current_season_id` (61). Для корректного отображения данных по выбранному турниру (например, Кубок - season_id=63) фронтенд должен всегда передавать `season_id`.
+
+**Примеры запросов:**
+```
+# Матчи Кубка
+GET /api/v1/games?season_id=63&group_by_date=true
+
+# Статистика команды в Первой лиге
+GET /api/v1/teams/1/stats?season_id=62
+
+# Таблица Женской лиги
+GET /api/v1/seasons/66/table
+
+# Игроки команды во Второй лиге
+GET /api/v1/teams/5/players?season_id=65
+```
+
+### Синхронизация данных по турнирам
+
+Для ручного запуска синхронизации данных по конкретному турниру используйте sync-эндпоинты с параметром `season_id`:
+
+```
+# Полная синхронизация для Кубка
+POST /api/v1/sync/full?season_id=63
+
+# Синхронизация матчей Первой лиги
+POST /api/v1/sync/games?season_id=62
+
+# Синхронизация таблицы Женской лиги
+POST /api/v1/sync/score-table?season_id=66
+
+# Синхронизация статистики команд Второй лиги
+POST /api/v1/sync/team-season-stats?season_id=65
+
+# Синхронизация статистики игроков Премьер-лиги
+POST /api/v1/sync/player-season-stats?season_id=61
+```
+
+**Примечание:** По умолчанию (если `season_id` не указан) используется текущий сезон Премьер-лиги (61).
+
+---
+
 ## 1. SEASONS (Сезоны)
 
 | Метод | Endpoint | Описание |

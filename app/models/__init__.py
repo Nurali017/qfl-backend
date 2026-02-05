@@ -12,6 +12,8 @@ from app.models.team_season_stats import TeamSeasonStats
 from app.models.player_season_stats import PlayerSeasonStats
 from app.models.page import Page, Language
 from app.models.news import News
+from app.models.admin_user import AdminUser
+from app.models.admin_session import AdminSession
 
 # New models
 from app.models.stadium import Stadium
@@ -36,6 +38,8 @@ __all__ = [
     "PlayerSeasonStats",
     "Page",
     "News",
+    "AdminUser",
+    "AdminSession",
     "Language",
     # New models
     "Stadium",

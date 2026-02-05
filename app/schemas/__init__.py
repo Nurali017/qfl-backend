@@ -1,5 +1,11 @@
 from app.schemas.tournament import TournamentResponse
-from app.schemas.season import SeasonResponse, SeasonListResponse
+from app.schemas.season import (
+    SeasonResponse,
+    SeasonListResponse,
+    GoalPeriodItem,
+    GoalsByPeriodMeta,
+    SeasonGoalsByPeriodResponse,
+)
 from app.schemas.team import TeamResponse, TeamListResponse, TeamDetailResponse
 from app.schemas.player import PlayerResponse, PlayerListResponse, PlayerDetailResponse
 from app.schemas.game import GameResponse, GameListResponse, GameDetailResponse
@@ -20,6 +26,9 @@ __all__ = [
     "TournamentResponse",
     "SeasonResponse",
     "SeasonListResponse",
+    "GoalPeriodItem",
+    "GoalsByPeriodMeta",
+    "SeasonGoalsByPeriodResponse",
     "TeamResponse",
     "TeamListResponse",
     "TeamDetailResponse",

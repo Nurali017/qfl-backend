@@ -1,3 +1,6 @@
+from datetime import date, time as dt_time
+from uuid import UUID
+
 from pydantic import BaseModel
 
 
@@ -203,3 +206,135 @@ class TeamStatsTableResponse(BaseModel):
     sort_by: str
     items: list[TeamStatsTableEntry]
     total: int
+
+
+class TeamOverviewStadium(BaseModel):
+    name: str | None = None
+    city: str | None = None
+
+
+class TeamOverviewTeam(BaseModel):
+    id: int
+    name: str
+    city: str | None = None
+    logo_url: str | None = None
+    website: str | None = None
+    stadium: TeamOverviewStadium | None = None
+    primary_color: str | None = None
+    secondary_color: str | None = None
+    accent_color: str | None = None
+
+
+class TeamOverviewSeason(BaseModel):
+    id: int
+    name: str
+    tournament_id: int | None = None
+
+
+class TeamOverviewSummary(BaseModel):
+    games_played: int = 0
+    wins: int = 0
+    draws: int = 0
+    losses: int = 0
+    goals_scored: int = 0
+    goals_conceded: int = 0
+    goal_difference: int = 0
+    points: int = 0
+
+
+class TeamOverviewMatchTeam(BaseModel):
+    id: int
+    name: str
+    logo_url: str | None = None
+
+
+class TeamOverviewMatch(BaseModel):
+    id: str
+    date: date
+    time: dt_time | None = None
+    tour: int | None = None
+    status: str
+    home_score: int | None = None
+    away_score: int | None = None
+    has_stats: bool = False
+    has_lineup: bool = False
+    home_team: TeamOverviewMatchTeam
+    away_team: TeamOverviewMatchTeam
+    stadium: TeamOverviewStadium | None = None
+
+
+class TeamOverviewFormEntry(BaseModel):
+    game_id: str
+    is_home: bool
+    opponent_name: str
+    opponent_logo: str | None = None
+    team_score: int
+    opponent_score: int
+    result: str
+
+
+class TeamOverviewStandingEntry(BaseModel):
+    position: int
+    team_id: int
+    team_name: str
+    team_logo: str | None = None
+    games_played: int
+    points: int
+    goal_difference: int
+    goals_scored: int
+    goals_conceded: int
+
+
+class TeamOverviewLeaderPlayer(BaseModel):
+    player_id: UUID
+    first_name: str | None = None
+    last_name: str | None = None
+    photo_url: str | None = None
+    team_id: int | None = None
+    team_name: str | None = None
+    team_logo: str | None = None
+    position: str | None = None
+    games_played: int = 0
+    goals: int = 0
+    assists: int = 0
+    passes: int = 0
+    save_shot: int = 0
+    dry_match: int = 0
+    red_cards: int = 0
+
+
+class TeamOverviewMiniLeaders(BaseModel):
+    passes: TeamOverviewLeaderPlayer | None = None
+    appearances: TeamOverviewLeaderPlayer | None = None
+    saves: TeamOverviewLeaderPlayer | None = None
+    clean_sheets: TeamOverviewLeaderPlayer | None = None
+    red_cards: TeamOverviewLeaderPlayer | None = None
+
+
+class TeamOverviewLeaders(BaseModel):
+    top_scorer: TeamOverviewLeaderPlayer | None = None
+    top_assister: TeamOverviewLeaderPlayer | None = None
+    goals_table: list[TeamOverviewLeaderPlayer]
+    assists_table: list[TeamOverviewLeaderPlayer]
+    mini_leaders: TeamOverviewMiniLeaders
+
+
+class TeamOverviewCoachPreview(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    photo_url: str | None = None
+    role: str
+    country_name: str | None = None
+
+
+class TeamOverviewResponse(BaseModel):
+    team: TeamOverviewTeam
+    season: TeamOverviewSeason | None = None
+    summary: TeamOverviewSummary
+    form_last5: list[TeamOverviewFormEntry]
+    recent_match: TeamOverviewMatch | None = None
+    upcoming_matches: list[TeamOverviewMatch]
+    standings_window: list[TeamOverviewStandingEntry]
+    leaders: TeamOverviewLeaders
+    staff_preview: list[TeamOverviewCoachPreview]
