@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.schemas.team import TeamInGame
+from app.utils.file_urls import FileUrl
 
 
 class GameBase(BaseModel):
@@ -83,7 +84,7 @@ class TeamInMatchCenter(BaseModel):
     name: str
     name_kz: str | None = None
     name_en: str | None = None
-    logo_url: str | None = None
+    logo_url: FileUrl = None
 
     class Config:
         from_attributes = True

@@ -145,7 +145,7 @@ async def upload_country_flag(
         content_type=file.content_type or "image/webp",
     )
 
-    country.flag_url = upload_result["url"]
+    country.flag_url = upload_result["object_name"]
     await db.commit()
     await db.refresh(country)
 

@@ -211,7 +211,7 @@ class ReferenceSyncService(BaseSyncService):
 
         # Get all logos from MinIO
         logos = await FileStorageService.list_team_logos()
-        logo_map = {logo["team_name"].lower(): logo["url"] for logo in logos}
+        logo_map = {logo["team_name"].lower(): logo["object_name"] for logo in logos}
 
         # Get all teams from DB
         result = await self.db.execute(select(Team))
