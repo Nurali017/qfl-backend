@@ -66,5 +66,7 @@ async def init_minio():
 
 def get_public_url(object_name: str) -> str:
     """Get public URL for an object (for browser access)."""
-    protocol = "https" if settings.minio_secure else "http"
-    return f"{protocol}://{settings.minio_public_endpoint}/{settings.minio_bucket}/{object_name}"
+    endpoint = settings.minio_public_endpoint
+    if endpoint.startswith("http://") or endpoint.startswith("https://"):
+        return f"{endpoint}/{settings.minio_bucket}/{object_name}"
+    return f"https://{endpoint}/{settings.minio_bucket}/{object_name}"
