@@ -1,0 +1,2 @@
+game_id,tour,issue_type,endpoint,status,payload_size_or_count,local_state,notes
+3778f903-e343-4101-945b-4942d1f3baed,1,em_events_missing,https://sota.id/em/3778f903-e343-4101-945b-4942d1f3baed-list.json,200,13,local_events=0 score=2:0,SOTA list endpoint returns non-empty payload (needs manual check)

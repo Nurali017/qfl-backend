@@ -121,6 +121,58 @@ async def get_slider_news(
     return result.scalars().all()
 
 
+@router.get("/{news_id}/navigation")
+async def get_news_navigation(
+    news_id: int,
+    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get previous and next news articles for navigation."""
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
+
+    # Get current article
+    current = (await db.execute(
+        select(News.publish_date, News.id).where(News.id == news_id, News.language == lang_enum)
+    )).first()
+
+    if not current:
+        raise HTTPException(status_code=404, detail=get_error_message("news_not_found", lang))
+
+    result = {}
+
+    # Previous article (older: publish_date < current OR same date with smaller id)
+    prev_query = (
+        select(News.id, News.title)
+        .where(News.language == lang_enum)
+        .where(
+            (News.publish_date < current.publish_date)
+            | ((News.publish_date == current.publish_date) & (News.id < current.id))
+        )
+        .order_by(desc(News.publish_date), desc(News.id))
+        .limit(1)
+    )
+    prev_row = (await db.execute(prev_query)).first()
+    if prev_row:
+        result["previous"] = {"id": prev_row.id, "title": prev_row.title}
+
+    # Next article (newer: publish_date > current OR same date with larger id)
+    next_query = (
+        select(News.id, News.title)
+        .where(News.language == lang_enum)
+        .where(
+            (News.publish_date > current.publish_date)
+            | ((News.publish_date == current.publish_date) & (News.id > current.id))
+        )
+        .order_by(asc(News.publish_date), asc(News.id))
+        .limit(1)
+    )
+    next_row = (await db.execute(next_query)).first()
+    if next_row:
+        result["next"] = {"id": next_row.id, "title": next_row.title}
+
+    return result
+
+
 @router.get("/{news_id}")
 async def get_news_item(
     news_id: int,

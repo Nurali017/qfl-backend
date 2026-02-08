@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-02-05T21:26:26.041884+00:00",
+  "season_id": 61,
+  "mode": "apply",
+  "baseline": {
+    "season_id": 61,
+    "games_total": 182,
+    "no_events": 20,
+    "no_team_stats": 1,
+    "no_player_stats": 1,
+    "no_referees": 11,
+    "exact_11_11": 12,
+    "lt_11_any": 43,
+    "gt_11_any": 128,
+    "not_11_11": 170,
+    "zero_starters_any": 21,
+    "duplicate_events": 0,
+    "goal_mismatch_total": 112,
+    "goal_mismatch_positive": 90,
+    "goal_mismatch_negative": 22
+  },
+  "post": {
+    "season_id": 61,
+    "games_total": 182,
+    "no_events": 20,
+    "no_team_stats": 1,
+    "no_player_stats": 1,
+    "no_referees": 11,
+    "exact_11_11": 182,
+    "lt_11_any": 0,
+    "gt_11_any": 0,
+    "not_11_11": 0,
+    "zero_starters_any": 0,
+    "duplicate_events": 0,
+    "goal_mismatch_total": 112,
+    "goal_mismatch_positive": 90,
+    "goal_mismatch_negative": 22
+  },
+  "dedupe_result": {
+    "duplicates_found": 0,
+    "duplicates_deleted": 0
+  },
+  "lineup_result": {
+    "games_total": 182,
+    "games_rebuilt": 182,
+    "games_failed": 0,
+    "errors": []
+  },
+  "report_csv": "/app/docs/incidents/sota_s61_incident_2026-02-05.csv",
+  "report_md": "/app/docs/incidents/sota_s61_incident_2026-02-05.md"
+}

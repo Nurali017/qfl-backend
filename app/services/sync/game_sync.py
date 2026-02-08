@@ -294,9 +294,15 @@ class GameSyncService(BaseSyncService):
         # Create deduplication set
         existing_signatures = set()
         for e in existing_events:
-            player_key = str(e.player_id) if e.player_id else e.player_name
-            sig = (e.half, e.minute, e.event_type.value, player_key)
-            existing_signatures.add(sig)
+            normalized_name = e.player_name.strip().lower() if e.player_name else ""
+
+            if e.player_id:
+                sig_by_id = (e.half, e.minute, e.event_type.value, str(e.player_id))
+                existing_signatures.add(sig_by_id)
+
+            if normalized_name:
+                sig_by_name = (e.half, e.minute, e.event_type.value, normalized_name)
+                existing_signatures.add(sig_by_name)
 
         # Fetch events from SOTA
         events_data = await self.client.get_live_match_events(game_id)
@@ -337,10 +343,21 @@ class GameSyncService(BaseSyncService):
                 game_uuid, first_name1, last_name1, team_id
             )
 
-            # Check for duplicate
-            player_key = str(player_id) if player_id else player_name
-            sig = (half, minute, event_type.value, player_key)
-            if sig in existing_signatures:
+            # Check for duplicate using player_id and normalized name signatures.
+            normalized_name = player_name.strip().lower() if player_name else ""
+
+            is_duplicate = False
+            if player_id:
+                sig_by_id = (half, minute, event_type.value, str(player_id))
+                if sig_by_id in existing_signatures:
+                    is_duplicate = True
+
+            if normalized_name and not is_duplicate:
+                sig_by_name = (half, minute, event_type.value, normalized_name)
+                if sig_by_name in existing_signatures:
+                    is_duplicate = True
+
+            if is_duplicate:
                 continue
 
             # Find player2 ID
@@ -376,7 +393,12 @@ class GameSyncService(BaseSyncService):
             )
 
             self.db.add(event)
-            existing_signatures.add(sig)
+            if player_id:
+                sig_by_id = (half, minute, event_type.value, str(player_id))
+                existing_signatures.add(sig_by_id)
+            if normalized_name:
+                sig_by_name = (half, minute, event_type.value, normalized_name)
+                existing_signatures.add(sig_by_name)
             events_added += 1
 
         if events_added > 0:

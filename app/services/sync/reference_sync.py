@@ -206,9 +206,16 @@ class ReferenceSyncService(BaseSyncService):
 
         def normalize_name(name: str) -> str:
             """Normalize team name for matching."""
-            # Remove suffixes like -M, -W, M, W, Zhastar
-            name = re.sub(r'\s*[-]?\s*(M|W|Zhastar)$', '', name, flags=re.IGNORECASE)
-            return name.lower().strip()
+            # Keep in sync with FileStorageService.upload_team_logo() naming:
+            # - lowercase
+            # - spaces -> hyphens
+            # - strip common suffixes for reserve/youth teams
+            #
+            # NOTE: SOTA / legacy sources sometimes use Cyrillic "М" for reserve teams.
+            name = name.strip()
+            name = re.sub(r"\s*[-]?\s*(M|М|W|Zhastar|Жастар)$", "", name, flags=re.IGNORECASE)
+            name = re.sub(r"\s+", "-", name.lower()).strip("-")
+            return name
 
         # Get all logos from MinIO
         logos = await FileStorageService.list_team_logos()
