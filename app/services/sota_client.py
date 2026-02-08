@@ -59,14 +59,17 @@ class SotaClient:
         Retries up to 3 times with exponential backoff (2s, 4s, 8s...)
         on connection timeouts, read timeouts, and connection errors.
         """
+        method_upper = method.upper()
+        request_kwargs: dict[str, Any] = {
+            "headers": headers,
+            "params": params,
+            "timeout": timeout,
+        }
+        if method_upper in {"POST", "PUT", "PATCH"} and json is not None:
+            request_kwargs["json"] = json
+
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await getattr(client, method)(
-                url,
-                headers=headers,
-                params=params,
-                json=json,
-                timeout=timeout,
-            )
+            response = await client.request(method_upper, url, **request_kwargs)
             response.raise_for_status()
             return response
 

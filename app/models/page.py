@@ -19,7 +19,9 @@ class Page(Base):
     __tablename__ = "pages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    translation_group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), default=uuid.uuid4, index=True)
+    translation_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), default=uuid.uuid4, index=True, nullable=False
+    )
     slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     language: Mapped[Language] = mapped_column(SQLEnum(Language), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)

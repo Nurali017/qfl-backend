@@ -11,7 +11,7 @@ services:
       - CURRENT_SEASON_ID=61
       # MinIO
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_PUBLIC_ENDPOINT=localhost:9000
+      - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET=qfl-files
@@ -77,7 +77,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CURRENT_SEASON_ID=61
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_PUBLIC_ENDPOINT=localhost:9000
+      - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET=qfl-files
@@ -99,7 +99,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CURRENT_SEASON_ID=61
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_PUBLIC_ENDPOINT=localhost:9000
+      - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET=qfl-files

@@ -10,6 +10,7 @@ from app.api.pages import router as pages_router
 from app.api.news import router as news_router
 from app.api.files import router as files_router
 from app.api.countries import router as countries_router
+from app.api.admin.router import router as admin_router
 
 api_router = APIRouter()
 
@@ -30,3 +31,6 @@ api_router.include_router(files_router)
 
 # Reference data
 api_router.include_router(countries_router)
+
+# Admin API
+api_router.include_router(admin_router)

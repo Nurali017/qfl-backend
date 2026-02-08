@@ -420,6 +420,30 @@ curl "http://localhost:8000/api/v1/pages/leadership/ru"
 curl "http://localhost:8000/api/v1/news?language=ru&category=ПРЕМЬЕР-ЛИГА"
 ```
 
+## Admin API
+
+Защищённый контур админки доступен по префиксу:
+
+- `/api/v1/admin/auth/*`
+- `/api/v1/admin/users/*`
+- `/api/v1/admin/news/materials/*`
+- `/api/v1/admin/pages/materials/*`
+- `/api/v1/admin/files/*`
+- `/api/v1/admin/ops/*`
+
+### Bootstrap superadmin
+
+Перед первым входом создайте bootstrap-пользователя:
+
+```bash
+python scripts/bootstrap_admin.py
+```
+
+Данные берутся из `.env`:
+
+- `ADMIN_BOOTSTRAP_EMAIL`
+- `ADMIN_BOOTSTRAP_PASSWORD`
+
 ## Лицензия
 
 MIT

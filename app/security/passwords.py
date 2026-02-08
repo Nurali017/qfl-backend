@@ -1,12 +1,35 @@
-from passlib.context import CryptContext
+import hashlib
+import hmac
+import os
 
 
-_password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_ITERATIONS = 200_000
 
 
 def hash_password(plain_password: str) -> str:
-    return _password_context.hash(plain_password)
+    salt = os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        plain_password.encode("utf-8"),
+        bytes.fromhex(salt),
+        _ITERATIONS,
+    ).hex()
+    return f"pbkdf2_sha256${_ITERATIONS}${salt}${digest}"
 
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
-    return _password_context.verify(plain_password, password_hash)
+    try:
+        algorithm, iterations_raw, salt, expected_digest = password_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = int(iterations_raw)
+    except ValueError:
+        return False
+
+    computed = hashlib.pbkdf2_hmac(
+        "sha256",
+        plain_password.encode("utf-8"),
+        bytes.fromhex(salt),
+        iterations,
+    ).hex()
+    return hmac.compare_digest(computed, expected_digest)
