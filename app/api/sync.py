@@ -22,6 +22,12 @@ async def sync_full(
 
     try:
         orchestrator = SyncOrchestrator(db)
+        if not await orchestrator.is_sync_enabled(season_id):
+            return SyncResponse(
+                status=SyncStatus.SUCCESS,
+                message=f"Season {season_id}: sync disabled, skipped",
+                details={"skipped": True, "season_id": season_id},
+            )
         results = await orchestrator.full_sync(season_id)
 
         return SyncResponse(
@@ -48,6 +54,12 @@ async def sync_games(
 
     try:
         orchestrator = SyncOrchestrator(db)
+        if not await orchestrator.is_sync_enabled(season_id):
+            return SyncResponse(
+                status=SyncStatus.SUCCESS,
+                message=f"Season {season_id}: sync disabled, skipped",
+                details={"skipped": True, "season_id": season_id},
+            )
         count = await orchestrator.sync_games(season_id)
 
         return SyncResponse(
@@ -114,6 +126,12 @@ async def sync_players(
 
     try:
         orchestrator = SyncOrchestrator(db)
+        if not await orchestrator.is_sync_enabled(season_id):
+            return SyncResponse(
+                status=SyncStatus.SUCCESS,
+                message=f"Season {season_id}: sync disabled, skipped",
+                details={"skipped": True, "season_id": season_id},
+            )
         count = await orchestrator.sync_players(season_id)
 
         return SyncResponse(
@@ -140,6 +158,12 @@ async def sync_score_table(
 
     try:
         orchestrator = SyncOrchestrator(db)
+        if not await orchestrator.is_sync_enabled(season_id):
+            return SyncResponse(
+                status=SyncStatus.SUCCESS,
+                message=f"Season {season_id}: sync disabled, skipped",
+                details={"skipped": True, "season_id": season_id},
+            )
         count = await orchestrator.sync_score_table(season_id)
 
         return SyncResponse(
@@ -206,6 +230,12 @@ async def sync_team_season_stats(
 
     try:
         orchestrator = SyncOrchestrator(db)
+        if not await orchestrator.is_sync_enabled(season_id):
+            return SyncResponse(
+                status=SyncStatus.SUCCESS,
+                message=f"Season {season_id}: sync disabled, skipped",
+                details={"skipped": True, "season_id": season_id},
+            )
         count = await orchestrator.sync_team_season_stats(season_id)
 
         return SyncResponse(
@@ -232,6 +262,12 @@ async def sync_player_season_stats(
 
     try:
         orchestrator = SyncOrchestrator(db)
+        if not await orchestrator.is_sync_enabled(season_id):
+            return SyncResponse(
+                status=SyncStatus.SUCCESS,
+                message=f"Season {season_id}: sync disabled, skipped",
+                details={"skipped": True, "season_id": season_id},
+            )
         count = await orchestrator.sync_player_stats(season_id)
 
         return SyncResponse(
@@ -278,6 +314,12 @@ async def sync_all_game_events(
 
     try:
         orchestrator = SyncOrchestrator(db)
+        if not await orchestrator.is_sync_enabled(season_id):
+            return SyncResponse(
+                status=SyncStatus.SUCCESS,
+                message=f"Season {season_id}: sync disabled, skipped",
+                details={"skipped": True, "season_id": season_id},
+            )
         results = await orchestrator.sync_all_game_events(season_id)
 
         return SyncResponse(

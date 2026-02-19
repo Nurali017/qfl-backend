@@ -28,6 +28,7 @@ from app.schemas.season import (
     SeasonListResponse,
     SeasonResponse,
     SeasonStatisticsResponse,
+    SeasonSyncUpdate,
 )
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.stats import (
@@ -108,11 +109,41 @@ async def get_seasons(db: AsyncSession = Depends(get_db)):
                 tournament_id=s.tournament_id,
                 date_start=s.date_start,
                 date_end=s.date_end,
+                sync_enabled=s.sync_enabled,
                 tournament_name=tournament_name,
             )
         )
 
     return SeasonListResponse(items=items, total=len(items))
+
+
+@router.patch("/{season_id}/sync", response_model=SeasonResponse)
+async def update_season_sync(
+    season_id: int,
+    body: SeasonSyncUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Enable or disable SOTA sync for a season. When disabled, local data is source of truth."""
+    result = await db.execute(
+        select(Season).where(Season.id == season_id).options(selectinload(Season.tournament))
+    )
+    season = result.scalar_one_or_none()
+    if not season:
+        raise HTTPException(status_code=404, detail="Season not found")
+
+    season.sync_enabled = body.sync_enabled
+    await db.commit()
+    await db.refresh(season)
+
+    return SeasonResponse(
+        id=season.id,
+        name=season.name,
+        tournament_id=season.tournament_id,
+        date_start=season.date_start,
+        date_end=season.date_end,
+        sync_enabled=season.sync_enabled,
+        tournament_name=season.tournament.name if season.tournament else None,
+    )
 
 
 @router.get("/{season_id}", response_model=SeasonResponse)
@@ -132,6 +163,7 @@ async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
         tournament_id=season.tournament_id,
         date_start=season.date_start,
         date_end=season.date_end,
+        sync_enabled=season.sync_enabled,
         tournament_name=season.tournament.name if season.tournament else None,
     )
 
@@ -528,6 +560,7 @@ async def get_player_stats_table(
     sort_by: str = Query(default="goals"),
     team_id: int | None = Query(default=None),
     position_code: str | None = Query(default=None, pattern="^(GK|DEF|MID|FWD)$"),
+    nationality: str | None = Query(default=None, pattern="^(kz|foreign)$"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
@@ -555,6 +588,11 @@ async def get_player_stats_table(
     filters = [PlayerSeasonStats.season_id == season_id]
     if team_id is not None:
         filters.append(PlayerSeasonStats.team_id == team_id)
+    if nationality == "kz":
+        filters.append(func.upper(Country.code) == "KZ")
+    elif nationality == "foreign":
+        filters.append(Country.code.is_not(None))
+        filters.append(func.upper(Country.code) != "KZ")
 
     base_query = (
         select(PlayerSeasonStats, Player, Team, Country)
@@ -621,7 +659,7 @@ async def get_player_stats_table(
         )
 
     if position_code is None:
-        count_query = select(func.count()).select_from(PlayerSeasonStats).where(*filters)
+        count_query = select(func.count()).select_from(base_query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
 

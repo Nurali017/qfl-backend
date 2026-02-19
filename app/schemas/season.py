@@ -8,6 +8,7 @@ class SeasonBase(BaseModel):
     tournament_id: int | None = None
     date_start: date | None = None
     date_end: date | None = None
+    sync_enabled: bool = True
 
 
 class SeasonResponse(SeasonBase):
@@ -15,6 +16,10 @@ class SeasonResponse(SeasonBase):
 
     class Config:
         from_attributes = True
+
+
+class SeasonSyncUpdate(BaseModel):
+    sync_enabled: bool
 
 
 class SeasonListResponse(BaseModel):

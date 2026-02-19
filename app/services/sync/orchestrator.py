@@ -7,8 +7,10 @@ ensuring correct order of operations and handling dependencies.
 import logging
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.season import Season
 from app.services.sota_client import SotaClient, get_sota_client
 from app.services.sync.reference_sync import ReferenceSyncService
 from app.services.sync.player_sync import PlayerSyncService
@@ -49,6 +51,19 @@ class SyncOrchestrator:
         self.lineup = LineupSyncService(db, self.client)
         self.stats = StatsSyncService(db, self.client)
 
+    async def is_sync_enabled(self, season_id: int) -> bool:
+        """
+        Check if sync is enabled for a season.
+
+        When sync_enabled=False, our local data is considered the source of truth
+        and SOTA must not overwrite it.
+        """
+        result = await self.db.execute(
+            select(Season.sync_enabled).where(Season.id == season_id)
+        )
+        val = result.scalar_one_or_none()
+        return val is True
+
     async def sync_references(self) -> dict[str, int]:
         """
         Sync all reference data (tournaments, seasons, teams).
@@ -71,6 +86,9 @@ class SyncOrchestrator:
         Returns:
             Number of players synced
         """
+        if not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping players sync")
+            return 0
         logger.info(f"Syncing players for season {season_id}")
         return await self.player.sync_players(season_id)
 
@@ -84,6 +102,9 @@ class SyncOrchestrator:
         Returns:
             Number of player stats synced
         """
+        if not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping player stats sync")
+            return 0
         logger.info(f"Syncing player stats for season {season_id}")
         return await self.player.sync_player_season_stats(season_id)
 
@@ -99,6 +120,9 @@ class SyncOrchestrator:
         Returns:
             Number of games synced
         """
+        if not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping games sync")
+            return 0
         logger.info(f"Syncing games for season {season_id}")
         return await self.game.sync_games(season_id)
 
@@ -136,6 +160,9 @@ class SyncOrchestrator:
         Returns:
             Dict with sync results
         """
+        if season_id is not None and not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping all game events sync")
+            return {"skipped": True, "reason": "sync disabled for season"}
         return await self.game.sync_all_game_events(season_id)
 
     async def sync_pre_game_lineup(self, game_id: str) -> dict[str, int]:
@@ -162,6 +189,9 @@ class SyncOrchestrator:
         Returns:
             Number of entries synced
         """
+        if not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping score table sync")
+            return 0
         logger.info(f"Syncing score table for season {season_id}")
         return await self.stats.sync_score_table(season_id)
 
@@ -175,6 +205,9 @@ class SyncOrchestrator:
         Returns:
             Number of team stats synced
         """
+        if not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping team season stats sync")
+            return 0
         logger.info(f"Syncing team season stats for season {season_id}")
         return await self.stats.sync_team_season_stats(season_id)
 
@@ -198,6 +231,10 @@ class SyncOrchestrator:
         Returns:
             Dict with sync results for each operation
         """
+        if not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping full sync")
+            return {"skipped": True, "reason": "sync disabled for season"}
+
         logger.info(f"Starting full sync for season {season_id}")
         results = {}
 

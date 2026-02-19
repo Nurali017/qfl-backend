@@ -99,19 +99,7 @@ class PlayerSyncService(BaseSyncService):
                 set_=update_dict,
             )
             await self.db.execute(stmt)
-
-            # Insert player-team associations
-            for team_id in p.get("teams", []):
-                pt_stmt = insert(PlayerTeam).values(
-                    player_id=player_id,
-                    team_id=team_id,
-                    season_id=season_id,
-                )
-                pt_stmt = pt_stmt.on_conflict_do_nothing(
-                    index_elements=["player_id", "team_id", "season_id"]
-                )
-                await self.db.execute(pt_stmt)
-
+            # player_teams (squad composition) is managed locally — not synced from SOTA
             count += 1
 
         await self.db.commit()

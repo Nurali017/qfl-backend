@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from sqlalchemy import Integer, String, Date, DateTime, ForeignKey
+from sqlalchemy import Integer, String, Date, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -17,6 +17,7 @@ class Season(Base):
     )
     date_start: Mapped[date | None] = mapped_column(Date)
     date_end: Mapped[date | None] = mapped_column(Date)
+    sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

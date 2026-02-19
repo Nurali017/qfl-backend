@@ -6,6 +6,7 @@ Handles:
 - Live event sync during match (goals, cards, substitutions)
 - Formation extraction from lineup data
 """
+import logging
 from datetime import datetime, date, time as dt_time, timedelta
 from uuid import UUID
 from typing import Any
@@ -17,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Game, GameEvent, GameEventType, GameLineup, LineupType, Team, Player
 from app.services.sota_client import SotaClient
+from app.utils.team_name_matcher import TeamNameMatcher
 
 
 # Mapping SOTA action names to our event types
@@ -27,6 +29,8 @@ ACTION_TYPE_MAP = {
     "КК": GameEventType.red_card,
     "ЗАМЕНА": GameEventType.substitution,
 }
+
+logger = logging.getLogger(__name__)
 
 
 class LiveSyncService:
@@ -308,6 +312,10 @@ class LiveSyncService:
             return []
 
         new_events = []
+        matcher = TeamNameMatcher.from_game(game)
+        matched_by_name = 0
+        matched_by_player = 0
+        unresolved = 0
         # Track assists by (half, minute, scorer_name) for linking to goals
         assists_map: dict[tuple[int, int, str], dict] = {}
 
@@ -323,15 +331,17 @@ class LiveSyncService:
             last_name1 = event_data.get("last_name1", "")
             player_name = f"{first_name1} {last_name1}".strip()
 
-            # Determine team ID by matching team name (check all language variants)
+            # Determine team ID by matching team name (all language variants + aliases).
             team_name = event_data.get("team1", "")
-            team_name_normalized = team_name.strip().lower() if team_name else ""
-            team_id = None
-            if team_name_normalized:
-                team_id = self._match_team_id(game, team_name_normalized)
+            team_id_from_name = self._match_team_id(game, team_name, matcher=matcher)
+            team_id = team_id_from_name
 
             # Find player ID by name from lineup
             player_id = await self._find_player_id(first_name1, last_name1, game_uuid, team_id)
+            team_id_from_player = None
+            if team_id is None and player_id:
+                team_id_from_player = await self._infer_team_id_from_lineup(game_uuid, player_id)
+                team_id = team_id_from_player
 
             # Check for duplicate using both player_id and normalized player_name
             # This prevents duplicates even if one sync finds player_id and another doesn't
@@ -360,18 +370,34 @@ class LiveSyncService:
             player2_number = None
             player2_name = ""
             player2_team_name = ""
+            team2_id = None
 
             if event_type in (GameEventType.substitution, GameEventType.assist):
                 first_name2 = event_data.get("first_name2", "")
                 last_name2 = event_data.get("last_name2", "")
                 team2_name = event_data.get("team2", "")
-                team2_id = None
-                if team2_name:
-                    team2_id = self._match_team_id(game, team2_name.strip().lower())
+                team2_id = self._match_team_id(game, team2_name, matcher=matcher)
                 player2_id = await self._find_player_id(first_name2, last_name2, game_uuid, team2_id)
                 player2_number = self._parse_number(event_data.get("number2"))
                 player2_name = f"{first_name2} {last_name2}".strip()
                 player2_team_name = team2_name
+
+            if team_id is None:
+                player2_candidate_team_id = None
+                if event_type in (GameEventType.substitution, GameEventType.assist):
+                    player2_candidate_team_id = await self._infer_team_id_from_lineup(game_uuid, player2_id)
+                team_id = self._resolve_unambiguous_team_id(
+                    team_id_from_player,
+                    team2_id,
+                    player2_candidate_team_id,
+                )
+
+            if team_id_from_name is not None:
+                matched_by_name += 1
+            elif team_id is not None:
+                matched_by_player += 1
+            else:
+                unresolved += 1
 
             # Create event
             event = GameEvent(
@@ -421,6 +447,22 @@ class LiveSyncService:
 
         if new_events:
             await self.db.commit()
+            logger.info(
+                "Game %s live events team resolution: by_name=%s by_player=%s unresolved=%s new_events=%s",
+                game_id,
+                matched_by_name,
+                matched_by_player,
+                unresolved,
+                len(new_events),
+            )
+        else:
+            logger.debug(
+                "Game %s live events team resolution: by_name=%s by_player=%s unresolved=%s new_events=0",
+                game_id,
+                matched_by_name,
+                matched_by_player,
+                unresolved,
+            )
 
         return new_events
 
@@ -433,37 +475,38 @@ class LiveSyncService:
         except (ValueError, TypeError):
             return None
 
-    def _match_team_id(self, game: Game, team_name_normalized: str) -> int | None:
-        """
-        Match team name to team ID using all language variants.
+    def _resolve_unambiguous_team_id(self, *team_ids: int | None) -> int | None:
+        candidates = {team_id for team_id in team_ids if team_id is not None}
+        if len(candidates) == 1:
+            return next(iter(candidates))
+        return None
 
-        Checks name, name_kz, and name_en fields.
+    def _match_team_id(
+        self,
+        game: Game,
+        team_name: str | None,
+        matcher: TeamNameMatcher | None = None,
+    ) -> int | None:
         """
-        if not team_name_normalized:
+        Match team name to team ID using all language variants and safe aliases.
+        """
+        team_matcher = matcher or TeamNameMatcher.from_game(game)
+        return team_matcher.match(team_name)
+
+    async def _infer_team_id_from_lineup(self, game_id: UUID, player_id: UUID | None) -> int | None:
+        """Infer event team_id by player lineup entry in this game."""
+        if not player_id:
             return None
 
-        # Check home team (all language variants)
-        if game.home_team:
-            if (game.home_team.name and game.home_team.name.strip().lower() == team_name_normalized):
-                return game.home_team_id
-            if hasattr(game.home_team, 'name_kz') and game.home_team.name_kz:
-                if game.home_team.name_kz.strip().lower() == team_name_normalized:
-                    return game.home_team_id
-            if hasattr(game.home_team, 'name_en') and game.home_team.name_en:
-                if game.home_team.name_en.strip().lower() == team_name_normalized:
-                    return game.home_team_id
-
-        # Check away team (all language variants)
-        if game.away_team:
-            if (game.away_team.name and game.away_team.name.strip().lower() == team_name_normalized):
-                return game.away_team_id
-            if hasattr(game.away_team, 'name_kz') and game.away_team.name_kz:
-                if game.away_team.name_kz.strip().lower() == team_name_normalized:
-                    return game.away_team_id
-            if hasattr(game.away_team, 'name_en') and game.away_team.name_en:
-                if game.away_team.name_en.strip().lower() == team_name_normalized:
-                    return game.away_team_id
-
+        result = await self.db.execute(
+            select(GameLineup.team_id).where(
+                GameLineup.game_id == game_id,
+                GameLineup.player_id == player_id,
+            )
+        )
+        team_ids = {team_id for team_id in result.scalars().all() if team_id is not None}
+        if len(team_ids) == 1:
+            return next(iter(team_ids))
         return None
 
     async def _find_player_id(
@@ -498,7 +541,10 @@ class LiveSyncService:
             query = query.where(GameLineup.team_id == team_id)
 
         result = await self.db.execute(query)
-        return result.scalar_one_or_none()
+        player_ids = {player_id for player_id in result.scalars().all() if player_id is not None}
+        if len(player_ids) == 1:
+            return next(iter(player_ids))
+        return None
 
     async def start_live_tracking(self, game_id: str) -> dict:
         """
