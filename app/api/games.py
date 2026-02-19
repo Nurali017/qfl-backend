@@ -145,6 +145,7 @@ def group_games_by_date(
                 "has_score": game.home_score is not None and game.away_score is not None,
                 "ticket_url": getattr(game, "ticket_url", None),
                 "video_url": game.video_url,
+                "protocol_url": game.protocol_url,
                 # Teams and stadium will be added by caller
                 "game_obj": game,  # Keep reference for relationship access
             }
@@ -431,6 +432,7 @@ async def get_games(
             "has_score": g.home_score is not None and g.away_score is not None,
             "ticket_url": getattr(g, "ticket_url", None),
             "video_url": g.video_url,
+            "protocol_url": g.protocol_url,
             "home_team": build_team_dict(g.home_team, g.home_score),
             "away_team": build_team_dict(g.away_team, g.away_score),
             "stadium_info": build_stadium_dict(g.stadium_rel),
@@ -533,6 +535,7 @@ async def get_game(
         "visitors": game.visitors,
         "ticket_url": game.ticket_url,
         "video_url": game.video_url,
+        "protocol_url": game.protocol_url,
         "status": game_status,
         "has_score": game.home_score is not None and game.away_score is not None,
         "home_team": home_team,

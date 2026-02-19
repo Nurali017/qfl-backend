@@ -18,7 +18,8 @@ class GameBase(BaseModel):
     has_stats: bool = False
     stadium: str | None = None
     visitors: int | None = None
-    video_url: str | None = None
+    video_url: FileUrl = None
+    protocol_url: FileUrl = None
 
 
 class GameResponse(GameBase):
@@ -119,7 +120,10 @@ class MatchCenterGame(BaseModel):
     ticket_url: str | None = None
 
     # Optional video replay URL
-    video_url: str | None = None
+    video_url: FileUrl = None
+
+    # Optional match protocol URL (PDF)
+    protocol_url: FileUrl = None
 
     class Config:
         from_attributes = True

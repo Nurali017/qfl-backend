@@ -161,6 +161,148 @@ class TestSeasonsAPI:
         assert data["items"][0]["team_id"] == sample_teams[0].id
         assert data["items"][0]["player_id"] == str(sample_player.id)
 
+    async def test_get_player_stats_nationality_filter_kz(
+        self, client: AsyncClient, test_session, sample_season, sample_teams
+    ):
+        """Player stats table supports filtering by Kazakhstan citizenship."""
+        from app.models import Country, Player, PlayerSeasonStats
+
+        kz_country = Country(code="KZ", name="Казахстан")
+        foreign_country = Country(code="BR", name="Бразилия")
+        test_session.add_all([kz_country, foreign_country])
+        await test_session.commit()
+
+        kz_player = Player(
+            id=uuid4(),
+            first_name="Local",
+            last_name="Player",
+            player_type="midfielder",
+            top_role="CM",
+            country_id=kz_country.id,
+        )
+        foreign_player = Player(
+            id=uuid4(),
+            first_name="Foreign",
+            last_name="Player",
+            player_type="forward",
+            top_role="FW",
+            country_id=foreign_country.id,
+        )
+        test_session.add_all([kz_player, foreign_player])
+        await test_session.commit()
+
+        test_session.add_all(
+            [
+                PlayerSeasonStats(
+                    player_id=kz_player.id,
+                    season_id=sample_season.id,
+                    team_id=sample_teams[0].id,
+                    games_played=1,
+                    minutes_played=90,
+                    goals=2,
+                ),
+                PlayerSeasonStats(
+                    player_id=foreign_player.id,
+                    season_id=sample_season.id,
+                    team_id=sample_teams[1].id,
+                    games_played=1,
+                    minutes_played=90,
+                    goals=3,
+                ),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get(
+            f"/api/v1/seasons/{sample_season.id}/player-stats?lang=ru&nationality=kz&limit=10"
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["player_id"] == str(kz_player.id)
+        assert data["items"][0]["country"]["code"] == "KZ"
+
+    async def test_get_player_stats_nationality_filter_foreign(
+        self, client: AsyncClient, test_session, sample_season, sample_teams
+    ):
+        """Player stats table supports filtering by foreign players."""
+        from app.models import Country, Player, PlayerSeasonStats
+
+        kz_country = Country(code="KZ", name="Казахстан")
+        foreign_country = Country(code="RS", name="Сербия")
+        test_session.add_all([kz_country, foreign_country])
+        await test_session.commit()
+
+        kz_player = Player(
+            id=uuid4(),
+            first_name="Local",
+            last_name="One",
+            player_type="midfielder",
+            top_role="CM",
+            country_id=kz_country.id,
+        )
+        foreign_player = Player(
+            id=uuid4(),
+            first_name="Foreign",
+            last_name="One",
+            player_type="forward",
+            top_role="FW",
+            country_id=foreign_country.id,
+        )
+        no_country_player = Player(
+            id=uuid4(),
+            first_name="Unknown",
+            last_name="Country",
+            player_type="defender",
+            top_role="CB",
+            country_id=None,
+        )
+        test_session.add_all([kz_player, foreign_player, no_country_player])
+        await test_session.commit()
+
+        test_session.add_all(
+            [
+                PlayerSeasonStats(
+                    player_id=kz_player.id,
+                    season_id=sample_season.id,
+                    team_id=sample_teams[0].id,
+                    games_played=1,
+                    minutes_played=90,
+                    goals=1,
+                ),
+                PlayerSeasonStats(
+                    player_id=foreign_player.id,
+                    season_id=sample_season.id,
+                    team_id=sample_teams[1].id,
+                    games_played=1,
+                    minutes_played=90,
+                    goals=2,
+                ),
+                PlayerSeasonStats(
+                    player_id=no_country_player.id,
+                    season_id=sample_season.id,
+                    team_id=sample_teams[2].id,
+                    games_played=1,
+                    minutes_played=90,
+                    goals=3,
+                ),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get(
+            f"/api/v1/seasons/{sample_season.id}/player-stats?lang=ru&nationality=foreign&limit=10"
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["player_id"] == str(foreign_player.id)
+        assert data["items"][0]["country"]["code"] == "RS"
+
     async def test_get_player_stats_position_code_filter_gk(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_player
     ):

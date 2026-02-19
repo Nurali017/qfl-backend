@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.file_urls import FileUrlType
 
 
 class Game(Base):
@@ -34,6 +35,7 @@ class Game(Base):
     visitors: Mapped[int | None] = mapped_column(Integer)
     ticket_url: Mapped[str | None] = mapped_column(String(500))  # URL for ticket purchase
     video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
+    protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

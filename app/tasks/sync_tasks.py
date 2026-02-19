@@ -1,3 +1,4 @@
+import logging
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -8,6 +9,8 @@ from app.services.sync import SyncOrchestrator
 from app.models import Game
 from app.config import get_settings
 from app.utils.async_celery import run_async
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -25,6 +28,10 @@ async def _sync_games():
         orchestrator = SyncOrchestrator(db)
         results = {}
         for season_id in settings.sync_season_ids:
+            if not await orchestrator.is_sync_enabled(season_id):
+                logger.info("Season %d: sync disabled, skipping games task", season_id)
+                results[f"season_{season_id}"] = "skipped"
+                continue
             count = await orchestrator.sync_games(season_id)
             results[f"season_{season_id}"] = count
         return {"games_synced": results}
@@ -40,6 +47,11 @@ async def _sync_live_stats():
         results_by_season = {}
 
         for season_id in settings.sync_season_ids:
+            if not await orchestrator.is_sync_enabled(season_id):
+                logger.info("Season %d: sync disabled, skipping live stats task", season_id)
+                results_by_season[f"season_{season_id}"] = "skipped"
+                continue
+
             result = await db.execute(
                 select(Game.id).where(
                     Game.season_id == season_id,
@@ -66,6 +78,10 @@ async def _full_sync():
         orchestrator = SyncOrchestrator(db)
         results = {}
         for season_id in settings.sync_season_ids:
+            if not await orchestrator.is_sync_enabled(season_id):
+                logger.info("Season %d: sync disabled, skipping full sync task", season_id)
+                results[f"season_{season_id}"] = "skipped"
+                continue
             results[f"season_{season_id}"] = await orchestrator.full_sync(season_id)
         return results
 

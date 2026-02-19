@@ -37,13 +37,17 @@ class GameSyncService(BaseSyncService):
 
     async def sync_games(self, season_id: int) -> int:
         """
-        Sync games for a specific season.
+        Game schedule is managed locally — SOTA sync is disabled.
 
-        Args:
-            season_id: Season ID to sync games for
+        Games are created and updated manually via the admin panel.
+        SOTA is not the source of truth for game schedule or scores.
+        """
+        logger.info("sync_games is disabled: games are managed locally, not from SOTA")
+        return 0
 
-        Returns:
-            Number of games synced
+    async def _sync_games_from_sota(self, season_id: int) -> int:
+        """
+        Original SOTA game sync — kept for reference but not called.
         """
         games_data = await self.client.get_games(season_id)
         count = 0
