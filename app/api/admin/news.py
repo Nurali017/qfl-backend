@@ -56,7 +56,7 @@ def _apply_payload(item: News, payload: AdminNewsTranslationPayload, admin_id: i
     item.image_url = payload.image_url
     item.video_url = payload.video_url
     item.category = payload.category
-    item.tournament_id = payload.tournament_id
+    item.championship_code = payload.championship_code
     item.article_type = _article_type_from_str(payload.article_type)
     item.is_slider = payload.is_slider
     item.slider_order = payload.slider_order
@@ -76,7 +76,7 @@ def _to_translation_response(item: News) -> AdminNewsTranslationResponse:
         image_url=item.image_url,
         video_url=item.video_url,
         category=item.category,
-        tournament_id=item.tournament_id,
+        championship_code=item.championship_code,
         article_type=item.article_type.value if item.article_type else None,
         is_slider=item.is_slider,
         slider_order=item.slider_order,

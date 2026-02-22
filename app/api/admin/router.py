@@ -13,7 +13,9 @@ from app.api.admin.clubs import router as clubs_router
 from app.api.admin.cities import router as cities_router
 from app.api.admin.partners import router as partners_router
 from app.api.admin.playoff_brackets import router as playoff_brackets_router
-from app.api.admin.team_tournaments import router as team_tournaments_router
+from app.api.admin.season_participants import router as season_participants_router
+from app.api.admin.team_of_week import router as team_of_week_router
+from app.api.admin.seasons import router as seasons_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(auth_router)
@@ -29,4 +31,6 @@ router.include_router(clubs_router)
 router.include_router(cities_router)
 router.include_router(partners_router)
 router.include_router(playoff_brackets_router)
-router.include_router(team_tournaments_router)
+router.include_router(season_participants_router)
+router.include_router(team_of_week_router)
+router.include_router(seasons_router)

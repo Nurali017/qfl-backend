@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from app.utils.file_urls import FileUrl
 
 
-class TeamTournamentResponse(BaseModel):
+class SeasonParticipantResponse(BaseModel):
     id: int
     team_id: int
     team_name: str | None = None
@@ -18,11 +18,11 @@ class TeamTournamentResponse(BaseModel):
         from_attributes = True
 
 
-class TeamTournamentListResponse(BaseModel):
-    items: list[TeamTournamentResponse]
+class SeasonParticipantListResponse(BaseModel):
+    items: list[SeasonParticipantResponse]
     total: int
 
 
 class SeasonGroupsResponse(BaseModel):
     season_id: int
-    groups: dict[str, list[TeamTournamentResponse]]
+    groups: dict[str, list[SeasonParticipantResponse]]

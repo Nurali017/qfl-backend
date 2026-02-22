@@ -1,7 +1,7 @@
 """
 Reference data sync service.
 
-Handles synchronization of tournaments, seasons, and teams from SOTA API.
+Handles synchronization of seasons and teams from SOTA API.
 """
 import logging
 import re
@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import Tournament, Season, Team
+from app.models import Season, Team, Championship
 from app.services.file_storage import FileStorageService
 from app.services.sync.base import BaseSyncService, parse_date
 from app.utils.file_urls import to_object_name
@@ -20,71 +20,43 @@ logger = logging.getLogger(__name__)
 
 class ReferenceSyncService(BaseSyncService):
     """
-    Service for syncing reference data: tournaments, seasons, teams.
+    Service for syncing reference data: seasons, teams.
 
     These are the foundational entities that other data depends on.
     """
 
-    async def sync_tournaments(self) -> int:
+    async def _build_sota_tournament_to_championship_map(self) -> dict[int, int]:
         """
-        Sync tournaments from SOTA API with all 3 languages.
+        Build a mapping from SOTA tournament_id to local championship.id.
 
-        Returns:
-            Number of tournaments synced
+        Uses Championship.sota_ids field which stores SOTA tournament IDs
+        as semicolon-separated values (e.g. "7" or "74;75;139").
         """
-        # Fetch data in all 3 languages
-        tournaments_ru = await self.client.get_tournaments(language="ru")
-        tournaments_kz = await self.client.get_tournaments(language="kk")
-        tournaments_en = await self.client.get_tournaments(language="en")
+        result = await self.db.execute(
+            select(Championship).where(Championship.sota_ids.isnot(None))
+        )
+        championships = result.scalars().all()
 
-        # Build lookup dicts
-        kz_by_id = {t["id"]: t for t in tournaments_kz}
-        en_by_id = {t["id"]: t for t in tournaments_en}
-
-        count = 0
-        for t in tournaments_ru:
-            t_id = t["id"]
-            t_kz = kz_by_id.get(t_id, {})
-            t_en = en_by_id.get(t_id, {})
-
-            stmt = insert(Tournament).values(
-                id=t_id,
-                name=t["name"],  # Russian as default
-                name_kz=t_kz.get("name"),
-                name_en=t_en.get("name"),
-                country_code=t.get("country_code"),
-                country_name=t.get("country_name"),  # Russian as default
-                country_name_kz=t_kz.get("country_name"),
-                country_name_en=t_en.get("country_name"),
-                updated_at=datetime.utcnow(),
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["id"],
-                set_={
-                    "name": stmt.excluded.name,
-                    "name_kz": stmt.excluded.name_kz,
-                    "name_en": stmt.excluded.name_en,
-                    "country_code": stmt.excluded.country_code,
-                    "country_name": stmt.excluded.country_name,
-                    "country_name_kz": stmt.excluded.country_name_kz,
-                    "country_name_en": stmt.excluded.country_name_en,
-                    "updated_at": stmt.excluded.updated_at,
-                },
-            )
-            await self.db.execute(stmt)
-            count += 1
-
-        await self.db.commit()
-        logger.info(f"Synced {count} tournaments")
-        return count
+        mapping: dict[int, int] = {}
+        for champ in championships:
+            for raw_id in champ.sota_ids.split(";"):
+                raw_id = raw_id.strip()
+                if raw_id.isdigit():
+                    mapping[int(raw_id)] = champ.id
+        return mapping
 
     async def sync_seasons(self) -> int:
         """
         Sync seasons from SOTA API with all 3 languages.
 
+        Maps SOTA tournament_id to local championship_id via Championship.sota_ids.
+
         Returns:
             Number of seasons synced
         """
+        # Build SOTA tournament_id → championship_id mapping
+        tournament_to_championship = await self._build_sota_tournament_to_championship_map()
+
         # Fetch data in all 3 languages
         seasons_ru = await self.client.get_seasons(language="ru")
         seasons_kz = await self.client.get_seasons(language="kk")
@@ -100,12 +72,28 @@ class ReferenceSyncService(BaseSyncService):
             s_kz = kz_by_id.get(s_id, {})
             s_en = en_by_id.get(s_id, {})
 
+            # Resolve championship_id from SOTA tournament_id
+            sota_tournament_id = s.get("tournament_id")
+            championship_id = (
+                tournament_to_championship.get(sota_tournament_id)
+                if sota_tournament_id is not None
+                else None
+            )
+
+            if championship_id is None:
+                logger.warning(
+                    "Season %d: SOTA tournament_id=%s has no matching championship, skipping",
+                    s_id,
+                    sota_tournament_id,
+                )
+                continue
+
             stmt = insert(Season).values(
                 id=s_id,
                 name=s["name"],  # Russian as default
                 name_kz=s_kz.get("name"),
                 name_en=s_en.get("name"),
-                tournament_id=s.get("tournament_id"),
+                championship_id=championship_id,
                 date_start=parse_date(s.get("date_start")),
                 date_end=parse_date(s.get("date_end")),
                 updated_at=datetime.utcnow(),
@@ -116,7 +104,7 @@ class ReferenceSyncService(BaseSyncService):
                     "name": stmt.excluded.name,
                     "name_kz": stmt.excluded.name_kz,
                     "name_en": stmt.excluded.name_en,
-                    "tournament_id": stmt.excluded.tournament_id,
+                    "championship_id": stmt.excluded.championship_id,
                     "date_start": stmt.excluded.date_start,
                     "date_end": stmt.excluded.date_end,
                     "updated_at": stmt.excluded.updated_at,
@@ -206,12 +194,6 @@ class ReferenceSyncService(BaseSyncService):
 
         def normalize_name(name: str) -> str:
             """Normalize team name for matching."""
-            # Keep in sync with FileStorageService.upload_team_logo() naming:
-            # - lowercase
-            # - spaces -> hyphens
-            # - strip common suffixes for reserve/youth teams
-            #
-            # NOTE: SOTA / legacy sources sometimes use Cyrillic "М" for reserve teams.
             name = name.strip()
             name = re.sub(r"\s*[-]?\s*(M|М|W|Zhastar|Жастар)$", "", name, flags=re.IGNORECASE)
             name = re.sub(r"\s+", "-", name.lower()).strip("-")
@@ -251,7 +233,6 @@ class ReferenceSyncService(BaseSyncService):
             Dict with counts for each entity type
         """
         results = {
-            "tournaments": await self.sync_tournaments(),
             "seasons": await self.sync_seasons(),
             "teams": await self.sync_teams(),
         }

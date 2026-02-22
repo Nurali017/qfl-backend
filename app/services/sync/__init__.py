@@ -5,7 +5,7 @@ This module contains specialized services for synchronizing data
 from SOTA API to the local database.
 
 Services:
-- ReferenceSyncService: Tournaments, seasons, teams
+- ReferenceSyncService: Seasons, teams
 - PlayerSyncService: Players and player statistics
 - GameSyncService: Games, events, lineups, formations
 - StatsSyncService: Score table, team season statistics

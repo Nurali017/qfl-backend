@@ -564,7 +564,7 @@ async def get_team_overview(
         TeamOverviewSeason(
             id=season.id,
             name=get_localized_field(season, "name", lang),
-            tournament_id=season.tournament_id,
+            championship_id=season.championship_id,
         ) if season else None
     )
 

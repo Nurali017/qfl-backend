@@ -40,9 +40,8 @@ class Settings(BaseSettings):
     # Seasons to sync automatically (Celery tasks)
     # IDs from SOTA API database:
     # 61=Premier League, 85=First League, 71=Cup,
-    # 80=Second League SW, 81=Second League NE, 157=Second League Final,
-    # 84=Women's League
-    sync_season_ids: list[int] = [61, 85, 71, 80, 81, 84, 157]
+    # 80=Second League (merged), 84=Women's League
+    sync_season_ids: list[int] = [61, 85, 71, 80, 84]
 
     # CORS
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kff.1sportkz.com"

@@ -20,7 +20,7 @@ class ChampionshipListResponse(BaseModel):
     total: int
 
 
-# Tree response: Championship → Tournaments → Seasons
+# Tree response: Championship → Seasons
 
 class SeasonBrief(BaseModel):
     id: int
@@ -28,15 +28,8 @@ class SeasonBrief(BaseModel):
     date_start: date | None = None
     date_end: date | None = None
     sync_enabled: bool = True
-
-    class Config:
-        from_attributes = True
-
-
-class TournamentInChampionship(BaseModel):
-    id: int
-    name: str
-    seasons: list[SeasonBrief] = []
+    frontend_code: str | None = None
+    tournament_type: str | None = None
 
     class Config:
         from_attributes = True
@@ -47,7 +40,7 @@ class ChampionshipTreeResponse(BaseModel):
     name: str
     short_name: str | None = None
     slug: str | None = None
-    tournaments: list[TournamentInChampionship] = []
+    seasons: list[SeasonBrief] = []
 
     class Config:
         from_attributes = True

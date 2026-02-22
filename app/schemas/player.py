@@ -174,7 +174,7 @@ class PlayerTournamentHistoryEntry(BaseModel):
 
     season_id: int
     season_name: str | None = None
-    tournament_name: str | None = None
+    championship_name: str | None = None
     team_id: int | None = None
     team_name: str | None = None
     position: str | None = None

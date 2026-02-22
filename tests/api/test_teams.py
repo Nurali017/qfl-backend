@@ -14,7 +14,7 @@ from app.models import (
     ScoreTable,
     TeamCoach,
     TeamSeasonStats,
-    TeamTournament,
+    SeasonParticipant,
 )
 from app.utils.error_messages import get_error_message
 
@@ -47,11 +47,11 @@ class TestTeamsAPI:
         sample_season,
         sample_player,
     ):
-        """Season filter should use team_tournaments, not player_teams."""
+        """Season filter should use season_participants, not player_teams."""
         test_session.add_all(
             [
-                TeamTournament(team_id=sample_teams[0].id, season_id=sample_season.id),
-                TeamTournament(team_id=sample_teams[1].id, season_id=sample_season.id),
+                SeasonParticipant(team_id=sample_teams[0].id, season_id=sample_season.id),
+                SeasonParticipant(team_id=sample_teams[1].id, season_id=sample_season.id),
                 PlayerTeam(
                     player_id=sample_player.id,
                     team_id=sample_teams[2].id,
@@ -74,7 +74,7 @@ class TestTeamsAPI:
     async def test_get_teams_by_season_without_team_tournament_returns_409(
         self, client: AsyncClient, sample_season
     ):
-        """Season filter should fail fast when team_tournaments are missing."""
+        """Season filter should fail fast when season_participants are missing."""
         response = await client.get(f"/api/v1/teams?season_id={sample_season.id}&lang=ru")
         assert response.status_code == 409
         assert response.json()["detail"] == get_error_message(
@@ -88,7 +88,7 @@ class TestTeamsAPI:
         sample_teams,
         sample_season,
     ):
-        """Season teams should resolve from score table when TeamTournament is empty."""
+        """Season teams should resolve from score table when SeasonParticipant is empty."""
         test_session.add_all(
             [
                 ScoreTable(
@@ -135,9 +135,9 @@ class TestTeamsAPI:
         sample_teams,
         sample_season,
     ):
-        """Missing TeamTournament teams should be backfilled from fallback sources."""
+        """Missing SeasonParticipant teams should be backfilled from fallback sources."""
         test_session.add(
-            TeamTournament(team_id=sample_teams[0].id, season_id=sample_season.id)
+            SeasonParticipant(team_id=sample_teams[0].id, season_id=sample_season.id)
         )
         test_session.add_all(
             [

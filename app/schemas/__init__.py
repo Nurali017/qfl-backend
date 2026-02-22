@@ -1,4 +1,3 @@
-from app.schemas.tournament import TournamentResponse
 from app.schemas.season import (
     SeasonResponse,
     SeasonListResponse,
@@ -23,7 +22,6 @@ from app.schemas.page import PageResponse, PageListResponse
 from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse
 
 __all__ = [
-    "TournamentResponse",
     "SeasonResponse",
     "SeasonListResponse",
     "GoalPeriodItem",

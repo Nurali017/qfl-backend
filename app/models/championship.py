@@ -6,7 +6,7 @@ from app.database import Base
 
 
 class Championship(Base):
-    """Championship/League — top-level grouping for tournaments.
+    """Championship/League — top-level grouping for seasons.
 
     Examples: Премьер-Лига, Первая Лига, Кубок РК, Вторая Лига, etc.
     Maps to legacy MySQL `championships` table.
@@ -31,8 +31,8 @@ class Championship(Base):
     )
 
     # Relationships
-    tournaments: Mapped[list["Tournament"]] = relationship(
-        "Tournament", back_populates="championship"
+    seasons: Mapped[list["Season"]] = relationship(
+        "Season", back_populates="championship"
     )
     partners: Mapped[list["Partner"]] = relationship(
         "Partner", back_populates="championship"

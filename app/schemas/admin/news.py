@@ -15,7 +15,7 @@ class AdminNewsTranslationPayload(BaseModel):
     image_url: str | None = None
     video_url: str | None = None
     category: str | None = None
-    tournament_id: str | None = None
+    championship_code: str | None = None
     article_type: str | None = None
     is_slider: bool = False
     slider_order: int | None = None
@@ -47,7 +47,7 @@ class AdminNewsTranslationResponse(BaseModel):
     image_url: FileUrl = None
     video_url: str | None = None
     category: str | None = None
-    tournament_id: str | None = None
+    championship_code: str | None = None
     article_type: str | None = None
     is_slider: bool = False
     slider_order: int | None = None

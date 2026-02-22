@@ -9,7 +9,6 @@ from app.utils.localization import (
     get_localized_country_name,
     localize_team,
     localize_player,
-    localize_tournament,
     localize_season,
 )
 
@@ -22,6 +21,5 @@ __all__ = [
     "get_localized_country_name",
     "localize_team",
     "localize_player",
-    "localize_tournament",
     "localize_season",
 ]

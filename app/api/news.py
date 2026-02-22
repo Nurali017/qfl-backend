@@ -24,7 +24,7 @@ router = APIRouter(prefix="/news", tags=["news"])
 @router.get("", response_model=NewsListResponse)
 async def get_news_list(
     lang: str = Query("ru", pattern="^(kz|ru|en)$"),
-    tournament_id: str | None = Query(None, description="Filter by tournament ID (pl, 1l, cup, 2l, el)"),
+    championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
     article_type: str | None = Query(None, description="Filter by type: news or analytics"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -36,9 +36,9 @@ async def get_news_list(
     # Base query
     query = select(News).where(News.language == lang_enum)
 
-    # Filter by tournament_id
-    if tournament_id:
-        query = query.where(News.tournament_id == tournament_id)
+    # Filter by championship_code
+    if championship_code:
+        query = query.where(News.championship_code == championship_code)
 
     # Filter by article_type
     if article_type:
@@ -90,7 +90,7 @@ async def get_article_types(
 @router.get("/latest", response_model=list[NewsListItem])
 async def get_latest_news(
     lang: str = Query("ru", pattern="^(kz|ru|en)$"),
-    tournament_id: str | None = Query(None, description="Filter by tournament ID (pl, 1l, cup, 2l, el)"),
+    championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
     limit: int = Query(10, ge=1, le=50, description="Number of news items"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -99,9 +99,9 @@ async def get_latest_news(
 
     query = select(News).where(News.language == lang_enum)
 
-    # Filter by tournament_id
-    if tournament_id:
-        query = query.where(News.tournament_id == tournament_id)
+    # Filter by championship_code
+    if championship_code:
+        query = query.where(News.championship_code == championship_code)
 
     query = query.order_by(desc(News.publish_date), desc(News.id)).limit(limit)
 
@@ -112,7 +112,7 @@ async def get_latest_news(
 @router.get("/slider", response_model=list[NewsListItem])
 async def get_slider_news(
     lang: str = Query("ru", pattern="^(kz|ru|en)$"),
-    tournament_id: str | None = Query(None, description="Filter by tournament ID (pl, 1l, cup, 2l, el)"),
+    championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get news for slider."""
@@ -120,9 +120,9 @@ async def get_slider_news(
 
     query = select(News).where(News.language == lang_enum, News.is_slider == True)
 
-    # Filter by tournament_id
-    if tournament_id:
-        query = query.where(News.tournament_id == tournament_id)
+    # Filter by championship_code
+    if championship_code:
+        query = query.where(News.championship_code == championship_code)
 
     query = query.order_by(asc(News.slider_order), desc(News.publish_date))
 

@@ -14,9 +14,9 @@ from app.main import app
 from app.database import Base
 from app.api.deps import get_db  # Import from where routes actually use it
 from app.models import (
-    Tournament, Season, Team, Player, PlayerTeam,
+    Season, Team, Player, PlayerTeam,
     Game, GameTeamStats, GamePlayerStats, ScoreTable,
-    Page, News, Language
+    Page, News, Language, Championship
 )
 
 
@@ -96,22 +96,22 @@ async def client(test_session) -> AsyncGenerator[AsyncClient, None]:
 # --- Data Fixtures ---
 
 @pytest.fixture
-async def sample_tournament(test_session) -> Tournament:
-    """Create a sample tournament."""
-    tournament = Tournament(id=7, name="Premier League")
-    test_session.add(tournament)
+async def sample_championship(test_session) -> Championship:
+    """Create a sample championship."""
+    championship = Championship(id=1, name="Premier League")
+    test_session.add(championship)
     await test_session.commit()
-    await test_session.refresh(tournament)
-    return tournament
+    await test_session.refresh(championship)
+    return championship
 
 
 @pytest.fixture
-async def sample_season(test_session, sample_tournament) -> Season:
+async def sample_season(test_session, sample_championship) -> Season:
     """Create a sample season."""
     season = Season(
         id=61,
         name="2025",
-        tournament_id=sample_tournament.id,
+        championship_id=sample_championship.id,
         date_start=date(2025, 3, 1),
         date_end=date(2025, 11, 30),
     )
@@ -229,7 +229,7 @@ async def sample_news(test_session) -> list[News]:
             excerpt="Excerpt 1",
             content="<p>Content 1</p>",
             category="PREMIER-LIGA",
-            tournament_id="pl",
+            championship_code="pl",
             publish_date=date(2025, 5, 1),
         ),
         News(
@@ -239,7 +239,7 @@ async def sample_news(test_session) -> list[News]:
             excerpt="Excerpt 2",
             content="<p>Content 2</p>",
             category="CUP",
-            tournament_id="cup",
+            championship_code="cup",
             publish_date=date(2025, 5, 2),
         ),
     ]

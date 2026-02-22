@@ -20,7 +20,7 @@ from app.models import (
     GameEventType,
     Stage,
     PlayoffBracket,
-    TeamTournament,
+    SeasonParticipant,
 )
 from app.services.season_participants import resolve_season_participants
 from app.utils.localization import get_localized_field
@@ -45,9 +45,9 @@ from app.schemas.playoff_bracket import (
     BracketGameTeam,
     ROUND_LABELS,
 )
-from app.schemas.team_tournament import (
-    TeamTournamentResponse,
-    TeamTournamentListResponse,
+from app.schemas.season_participant import (
+    SeasonParticipantResponse,
+    SeasonParticipantListResponse,
     SeasonGroupsResponse,
 )
 from app.schemas.stats import (
@@ -63,6 +63,31 @@ from app.schemas.player import PlayerStatsTableEntry, PlayerStatsTableResponse
 from app.schemas.country import CountryInPlayer
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
+
+
+def _build_season_response(s: Season) -> SeasonResponse:
+    """Build a SeasonResponse from a Season ORM object (with championship loaded)."""
+    return SeasonResponse(
+        id=s.id,
+        name=s.name,
+        championship_id=s.championship_id,
+        date_start=s.date_start,
+        date_end=s.date_end,
+        sync_enabled=s.sync_enabled,
+        championship_name=s.championship.name if s.championship else None,
+        frontend_code=s.frontend_code,
+        tournament_type=s.tournament_type,
+        tournament_format=s.tournament_format,
+        has_table=s.has_table,
+        has_bracket=s.has_bracket,
+        sponsor_name=s.sponsor_name,
+        sponsor_name_kz=s.sponsor_name_kz,
+        logo=s.logo,
+        current_round=s.current_round,
+        total_rounds=s.total_rounds,
+        sort_order=s.sort_order,
+        colors=s.colors,
+    )
 
 
 GOAL_PERIOD_LABELS = ("0-15", "16-30", "31-45+", "46-60", "61-75", "76-90+")
@@ -111,27 +136,14 @@ async def get_seasons(db: AsyncSession = Depends(get_db)):
     """Get all seasons."""
     result = await db.execute(
         select(Season)
-        .options(selectinload(Season.tournament))
+        .options(selectinload(Season.championship))
         .order_by(Season.date_start.desc())
     )
     seasons = result.scalars().all()
 
     items = []
     for s in seasons:
-        tournament_name = None
-        if s.tournament:
-            tournament_name = s.tournament.name
-        items.append(
-            SeasonResponse(
-                id=s.id,
-                name=s.name,
-                tournament_id=s.tournament_id,
-                date_start=s.date_start,
-                date_end=s.date_end,
-                sync_enabled=s.sync_enabled,
-                tournament_name=tournament_name,
-            )
-        )
+        items.append(_build_season_response(s))
 
     return SeasonListResponse(items=items, total=len(items))
 
@@ -144,7 +156,7 @@ async def update_season_sync(
 ):
     """Enable or disable SOTA sync for a season. When disabled, local data is source of truth."""
     result = await db.execute(
-        select(Season).where(Season.id == season_id).options(selectinload(Season.tournament))
+        select(Season).where(Season.id == season_id).options(selectinload(Season.championship))
     )
     season = result.scalar_one_or_none()
     if not season:
@@ -154,37 +166,21 @@ async def update_season_sync(
     await db.commit()
     await db.refresh(season)
 
-    return SeasonResponse(
-        id=season.id,
-        name=season.name,
-        tournament_id=season.tournament_id,
-        date_start=season.date_start,
-        date_end=season.date_end,
-        sync_enabled=season.sync_enabled,
-        tournament_name=season.tournament.name if season.tournament else None,
-    )
+    return _build_season_response(season)
 
 
 @router.get("/{season_id}", response_model=SeasonResponse)
 async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
     """Get season by ID."""
     result = await db.execute(
-        select(Season).where(Season.id == season_id).options(selectinload(Season.tournament))
+        select(Season).where(Season.id == season_id).options(selectinload(Season.championship))
     )
     season = result.scalar_one_or_none()
 
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
-    return SeasonResponse(
-        id=season.id,
-        name=season.name,
-        tournament_id=season.tournament_id,
-        date_start=season.date_start,
-        date_end=season.date_end,
-        sync_enabled=season.sync_enabled,
-        tournament_name=season.tournament.name if season.tournament else None,
-    )
+    return _build_season_response(season)
 
 
 async def get_next_games_for_teams(
@@ -242,9 +238,9 @@ async def get_group_team_ids(
 ) -> list[int]:
     """Return team_ids belonging to a specific group within a season."""
     result = await db.execute(
-        select(TeamTournament.team_id).where(
-            TeamTournament.season_id == season_id,
-            TeamTournament.group_name == group,
+        select(SeasonParticipant.team_id).where(
+            SeasonParticipant.season_id == season_id,
+            SeasonParticipant.group_name == group,
         )
     )
     return [row[0] for row in result.all()]
@@ -376,7 +372,7 @@ async def get_season_table(
     Get league table for a season.
 
     Filters:
-    - group: Filter by group name (from TeamTournament.group_name)
+    - group: Filter by group name (from SeasonParticipant.group_name)
     - tour_from: Starting matchweek (inclusive)
     - tour_to: Ending matchweek (inclusive)
     - home_away: "home" for home games only, "away" for away games only
@@ -1443,7 +1439,7 @@ async def get_season_bracket(
     return PlayoffBracketResponse(season_id=season_id, rounds=rounds)
 
 
-@router.get("/{season_id}/teams", response_model=TeamTournamentListResponse)
+@router.get("/{season_id}/teams", response_model=SeasonParticipantListResponse)
 async def get_season_teams(
     season_id: int,
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
@@ -1452,7 +1448,7 @@ async def get_season_teams(
     """Get all teams participating in a season."""
     participants = await resolve_season_participants(db, season_id, lang)
     items = [
-        TeamTournamentResponse(
+        SeasonParticipantResponse(
             id=p.entry_id if p.entry_id is not None else -p.team_id,
             team_id=p.team_id,
             team_name=get_localized_field(p.team, "name", lang),
@@ -1466,7 +1462,7 @@ async def get_season_teams(
         for p in participants
     ]
 
-    return TeamTournamentListResponse(items=items, total=len(items))
+    return SeasonParticipantListResponse(items=items, total=len(items))
 
 
 @router.get("/{season_id}/groups", response_model=SeasonGroupsResponse)
@@ -1477,17 +1473,17 @@ async def get_season_groups(
 ):
     """Get teams grouped by group_name for a season."""
     result = await db.execute(
-        select(TeamTournament)
-        .where(TeamTournament.season_id == season_id)
-        .options(selectinload(TeamTournament.team))
-        .order_by(TeamTournament.group_name, TeamTournament.sort_order, TeamTournament.id)
+        select(SeasonParticipant)
+        .where(SeasonParticipant.season_id == season_id)
+        .options(selectinload(SeasonParticipant.team))
+        .order_by(SeasonParticipant.group_name, SeasonParticipant.sort_order, SeasonParticipant.id)
     )
     entries = result.scalars().all()
 
-    groups: dict[str, list[TeamTournamentResponse]] = {}
+    groups: dict[str, list[SeasonParticipantResponse]] = {}
     for tt in entries:
         group_key = tt.group_name or "default"
-        item = TeamTournamentResponse(
+        item = SeasonParticipantResponse(
             id=tt.id,
             team_id=tt.team_id,
             team_name=get_localized_field(tt.team, "name", lang) if tt.team else None,

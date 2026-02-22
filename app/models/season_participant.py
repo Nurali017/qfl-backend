@@ -5,16 +5,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
-class TeamTournament(Base):
-    """Team-to-tournament/season assignment.
+class SeasonParticipant(Base):
+    """Season participant -- team assignment to a season.
 
     Tracks which teams participate in which season, with group assignments
     and disciplinary data (disqualifications, fine points).
     Maps to legacy MySQL `commands_by_tournaments` table.
     """
-    __tablename__ = "team_tournaments"
+    __tablename__ = "season_participants"
     __table_args__ = (
-        UniqueConstraint("team_id", "season_id", name="uq_team_tournament_season"),
+        UniqueConstraint("team_id", "season_id", name="uq_season_participant_season"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

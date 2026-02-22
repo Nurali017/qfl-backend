@@ -32,12 +32,12 @@ class TestNewsAPI:
         assert data["pages"] == 2
 
     async def test_get_news_by_tournament(self, client: AsyncClient, sample_news):
-        """Test filtering news by tournament_id."""
-        response = await client.get("/api/v1/news?language=ru&tournament_id=pl")
+        """Test filtering news by championship_code."""
+        response = await client.get("/api/v1/news?language=ru&championship_code=pl")
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
-        assert data["items"][0]["tournament_id"] == "pl"
+        assert data["items"][0]["championship_code"] == "pl"
 
     async def test_get_latest_news(self, client: AsyncClient, sample_news):
         """Test getting latest news."""

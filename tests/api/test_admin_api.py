@@ -288,7 +288,7 @@ async def test_admin_players_create_and_patch_team_bindings_replace_all(
     client: AsyncClient,
     superadmin_user: AdminUser,
     test_session,
-    sample_tournament,
+    sample_championship,
     sample_season,
     sample_teams,
 ):
@@ -297,7 +297,7 @@ async def test_admin_players_create_and_patch_team_bindings_replace_all(
     season_two = Season(
         id=62,
         name="2026",
-        tournament_id=sample_tournament.id,
+        championship_id=sample_championship.id,
         date_start=date(2026, 3, 1),
         date_end=date(2026, 11, 30),
     )
