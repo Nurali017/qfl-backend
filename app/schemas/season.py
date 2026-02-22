@@ -28,6 +28,7 @@ class SeasonResponse(SeasonBase):
     total_rounds: int | None = None
     sort_order: int = 0
     colors: dict | None = None
+    final_stage_ids: list[int] | None = None
 
     class Config:
         from_attributes = True

@@ -87,6 +87,7 @@ def _build_season_response(s: Season) -> SeasonResponse:
         total_rounds=s.total_rounds,
         sort_order=s.sort_order,
         colors=s.colors,
+        final_stage_ids=s.final_stage_ids,
     )
 
 
@@ -246,6 +247,31 @@ async def get_group_team_ids(
     return [row[0] for row in result.all()]
 
 
+def _normalize_stage_ids(raw: object) -> list[int]:
+    """Normalize JSON payload to list[int] stage IDs."""
+    if not isinstance(raw, list):
+        return []
+
+    stage_ids: list[int] = []
+    for value in raw:
+        try:
+            stage_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return stage_ids
+
+
+async def get_final_stage_ids(db: AsyncSession, season_id: int) -> list[int]:
+    """Return configured final stage IDs for a season."""
+    result = await db.execute(
+        select(Season.final_stage_ids).where(Season.id == season_id)
+    )
+    row = result.first()
+    if row is None:
+        return []
+    return _normalize_stage_ids(row[0])
+
+
 async def calculate_dynamic_table(
     db: AsyncSession,
     season_id: int,
@@ -254,6 +280,7 @@ async def calculate_dynamic_table(
     home_away: str | None,
     lang: str = "ru",
     group_team_ids: list[int] | None = None,
+    final_stage_ids: list[int] | None = None,
 ) -> list[dict]:
     """Calculate league table dynamically from games with filters."""
     query = (
@@ -276,6 +303,8 @@ async def calculate_dynamic_table(
             Game.home_team_id.in_(group_team_ids),
             Game.away_team_id.in_(group_team_ids),
         )
+    if final_stage_ids is not None:
+        query = query.where(Game.stage_id.in_(final_stage_ids))
 
     result = await db.execute(query)
     games = result.scalars().all()
@@ -362,6 +391,7 @@ async def calculate_dynamic_table(
 async def get_season_table(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
+    final: bool = Query(default=False, description="Show only final stage matches"),
     tour_from: int | None = Query(default=None, description="From matchweek (inclusive)"),
     tour_to: int | None = Query(default=None, description="To matchweek (inclusive)"),
     home_away: str | None = Query(default=None, pattern="^(home|away)$", description="Filter home/away games"),
@@ -377,6 +407,9 @@ async def get_season_table(
     - tour_to: Ending matchweek (inclusive)
     - home_away: "home" for home games only, "away" for away games only
     """
+    if group and final:
+        raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
+
     # Resolve group team_ids if group filter is specified
     group_team_ids: list[int] | None = None
     if group:
@@ -385,13 +418,27 @@ async def get_season_table(
             filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
             return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
 
-    has_filters = tour_from is not None or tour_to is not None or home_away is not None
+    final_stage_ids: list[int] | None = None
+    if final:
+        final_stage_ids = await get_final_stage_ids(db, season_id)
+        if not final_stage_ids:
+            filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
+            return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
+
+    has_filters = (
+        tour_from is not None
+        or tour_to is not None
+        or home_away is not None
+        or group_team_ids is not None
+        or final_stage_ids is not None
+    )
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
     if has_filters:
         table_data = await calculate_dynamic_table(
             db, season_id, tour_from, tour_to, home_away, lang,
             group_team_ids=group_team_ids,
+            final_stage_ids=final_stage_ids,
         )
     else:
         query = (
@@ -455,6 +502,7 @@ async def get_season_table(
 async def get_results_grid(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
+    final: bool = Query(default=False, description="Show only final stage matches"),
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -463,6 +511,9 @@ async def get_results_grid(
 
     Returns a matrix where each team has an array of results for each matchweek.
     """
+    if group and final:
+        raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
+
     # Resolve group team_ids if group filter is specified
     group_team_ids: list[int] | None = None
     if group:
@@ -470,7 +521,13 @@ async def get_results_grid(
         if not group_team_ids:
             return ResultsGridResponse(season_id=season_id, total_tours=0, teams=[])
 
-    # Get teams from score_table (sorted by position)
+    final_stage_ids: list[int] | None = None
+    if final:
+        final_stage_ids = await get_final_stage_ids(db, season_id)
+        if not final_stage_ids:
+            return ResultsGridResponse(season_id=season_id, total_tours=0, teams=[])
+
+    # Get teams from score_table (sorted by position) for stable ordering
     score_query = (
         select(ScoreTable)
         .where(ScoreTable.season_id == season_id)
@@ -483,10 +540,7 @@ async def get_results_grid(
     score_result = await db.execute(score_query)
     score_entries = score_result.scalars().all()
 
-    if not score_entries:
-        return ResultsGridResponse(season_id=season_id, total_tours=0, teams=[])
-
-    # Get all played games for the season
+    # Get all played games for the selected phase
     games_query = (
         select(Game)
         .where(
@@ -501,18 +555,46 @@ async def get_results_grid(
             Game.home_team_id.in_(group_team_ids),
             Game.away_team_id.in_(group_team_ids),
         )
+    if final_stage_ids is not None:
+        games_query = games_query.where(Game.stage_id.in_(final_stage_ids))
     games_query = games_query.order_by(Game.tour)
 
     games_result = await db.execute(games_query)
     games = games_result.scalars().all()
 
+    if not score_entries and not games:
+        return ResultsGridResponse(season_id=season_id, total_tours=0, teams=[])
+
     # Find max tour
     max_tour = max((g.tour for g in games), default=0)
 
+    score_by_team_id: dict[int, ScoreTable] = {
+        entry.team_id: entry for entry in score_entries
+    }
+    played_team_ids: set[int] = {
+        team_id
+        for game in games
+        for team_id in (game.home_team_id, game.away_team_id)
+        if team_id is not None
+    }
+
+    if final_stage_ids is not None:
+        ordered_team_ids = [entry.team_id for entry in score_entries if entry.team_id in played_team_ids]
+        remaining_ids = sorted(played_team_ids - set(ordered_team_ids))
+        ordered_team_ids.extend(remaining_ids)
+    elif score_entries:
+        ordered_team_ids = [entry.team_id for entry in score_entries]
+    else:
+        ordered_team_ids = sorted(played_team_ids)
+
+    if not ordered_team_ids:
+        return ResultsGridResponse(season_id=season_id, total_tours=max_tour, teams=[])
+
     # Build results dict: team_id -> [result for each tour]
-    team_results: dict[int, list[str | None]] = {}
-    for entry in score_entries:
-        team_results[entry.team_id] = [None] * max_tour
+    team_results: dict[int, list[str | None]] = {
+        team_id: [None] * max_tour
+        for team_id in ordered_team_ids
+    }
 
     # Fill in results from games
     for game in games:
@@ -532,16 +614,36 @@ async def get_results_grid(
         if away_id in team_results and tour_idx < len(team_results[away_id]):
             team_results[away_id][tour_idx] = away_result
 
+    missing_team_ids = [
+        team_id
+        for team_id in ordered_team_ids
+        if score_by_team_id.get(team_id) is None or score_by_team_id[team_id].team is None
+    ]
+    teams_lookup: dict[int, Team] = {}
+    if missing_team_ids:
+        teams_result = await db.execute(
+            select(Team).where(Team.id.in_(missing_team_ids))
+        )
+        teams_lookup = {team.id: team for team in teams_result.scalars().all()}
+
     # Build response
+    phase_filtered = group_team_ids is not None or final_stage_ids is not None
     teams = []
-    for entry in score_entries:
+    for idx, team_id in enumerate(ordered_team_ids, 1):
+        score_entry = score_by_team_id.get(team_id)
+        team = score_entry.team if score_entry and score_entry.team else teams_lookup.get(team_id)
+        position = (
+            idx
+            if phase_filtered
+            else (score_entry.position if score_entry and score_entry.position is not None else idx)
+        )
         teams.append(
             TeamResultsGridEntry(
-                position=entry.position,
-                team_id=entry.team_id,
-                team_name=get_localized_field(entry.team, "name", lang) if entry.team else None,
-                team_logo=entry.team.logo_url if entry.team else None,
-                results=team_results.get(entry.team_id, []),
+                position=position,
+                team_id=team_id,
+                team_name=get_localized_field(team, "name", lang) if team else None,
+                team_logo=team.logo_url if team else None,
+                results=team_results.get(team_id, []),
             )
         )
 

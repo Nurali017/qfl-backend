@@ -11,7 +11,6 @@ from app.models import (
     Player,
     PlayerSeasonStats,
     PlayerTeam,
-    ScoreTable,
     TeamCoach,
     TeamSeasonStats,
     SeasonParticipant,
@@ -81,103 +80,57 @@ class TestTeamsAPI:
             "season_teams_not_configured", "ru"
         )
 
-    async def test_get_teams_by_season_falls_back_to_score_table_when_team_tournament_missing(
+    async def test_get_teams_by_season_requires_season_participants_even_with_score_table(
         self,
         client: AsyncClient,
         test_session,
         sample_teams,
         sample_season,
     ):
-        """Season teams should resolve from score table when SeasonParticipant is empty."""
-        test_session.add_all(
-            [
-                ScoreTable(
-                    season_id=sample_season.id,
-                    team_id=sample_teams[0].id,
-                    position=1,
-                    games_played=1,
-                    wins=1,
-                    draws=0,
-                    losses=0,
-                    goals_scored=2,
-                    goals_conceded=0,
-                    points=3,
-                ),
-                ScoreTable(
-                    season_id=sample_season.id,
-                    team_id=sample_teams[1].id,
-                    position=2,
-                    games_played=1,
-                    wins=0,
-                    draws=0,
-                    losses=1,
-                    goals_scored=0,
-                    goals_conceded=2,
-                    points=0,
-                ),
-            ]
+        """Season teams endpoint should stay strict and ignore score_table fallback."""
+        # Keep at least one non-participant data source populated.
+        from app.models import ScoreTable
+
+        test_session.add(
+            ScoreTable(
+                season_id=sample_season.id,
+                team_id=sample_teams[0].id,
+                position=1,
+                games_played=1,
+                wins=1,
+                draws=0,
+                losses=0,
+                goals_scored=2,
+                goals_conceded=0,
+                points=3,
+            )
         )
         await test_session.commit()
 
         response = await client.get(f"/api/v1/teams?season_id={sample_season.id}&lang=ru")
-        assert response.status_code == 200
-        data = response.json()
-        assert {item["id"] for item in data["items"]} == {
-            sample_teams[0].id,
-            sample_teams[1].id,
-        }
-        assert data["total"] == 2
+        assert response.status_code == 409
+        assert response.json()["detail"] == get_error_message(
+            "season_teams_not_configured", "ru"
+        )
 
-    async def test_get_teams_by_season_backfills_partial_team_tournament(
+    async def test_get_teams_by_season_does_not_backfill_partial_season_participants(
         self,
         client: AsyncClient,
         test_session,
         sample_teams,
         sample_season,
     ):
-        """Missing SeasonParticipant teams should be backfilled from fallback sources."""
+        """Only explicitly configured season_participants should be returned."""
         test_session.add(
             SeasonParticipant(team_id=sample_teams[0].id, season_id=sample_season.id)
         )
-        test_session.add_all(
-            [
-                ScoreTable(
-                    season_id=sample_season.id,
-                    team_id=sample_teams[1].id,
-                    position=2,
-                    games_played=1,
-                    wins=0,
-                    draws=1,
-                    losses=0,
-                    goals_scored=1,
-                    goals_conceded=1,
-                    points=1,
-                ),
-                ScoreTable(
-                    season_id=sample_season.id,
-                    team_id=sample_teams[2].id,
-                    position=3,
-                    games_played=1,
-                    wins=0,
-                    draws=0,
-                    losses=1,
-                    goals_scored=0,
-                    goals_conceded=1,
-                    points=0,
-                ),
-            ]
-        )
         await test_session.commit()
 
         response = await client.get(f"/api/v1/teams?season_id={sample_season.id}&lang=ru")
         assert response.status_code == 200
         data = response.json()
-        assert {item["id"] for item in data["items"]} == {
-            sample_teams[0].id,
-            sample_teams[1].id,
-            sample_teams[2].id,
-        }
-        assert data["total"] == 3
+        assert {item["id"] for item in data["items"]} == {sample_teams[0].id}
+        assert data["total"] == 1
 
     async def test_get_team_by_id(self, client: AsyncClient, sample_teams):
         """Test getting team by ID."""
