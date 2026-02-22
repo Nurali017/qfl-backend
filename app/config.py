@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     minio_secure: bool = False  # True for HTTPS
 
     # SOTA API
+    sota_enabled: bool = True
     sota_api_email: str
     sota_api_password: str
     sota_api_base_url: str = "https://sota.id/api"
