@@ -150,6 +150,7 @@ def group_games_by_date(
                 "is_live": game.is_live,
                 "has_stats": game.has_stats,
                 "has_lineup": game.has_lineup,
+                "is_technical": game.is_technical,
                 "visitors": game.visitors,
                 "status": compute_game_status(game, today),
                 "has_score": game.home_score is not None and game.away_score is not None,
@@ -644,6 +645,7 @@ async def get_games(
             "has_stats": g.has_stats,
             "has_lineup": g.has_lineup,
             "is_live": g.is_live,
+            "is_technical": g.is_technical,
             "stadium": g.stadium,  # Legacy field
             "visitors": g.visitors,
             "status": game_status,
@@ -755,6 +757,7 @@ async def get_game(
         "has_stats": game.has_stats,
         "has_lineup": game.has_lineup,
         "is_live": game.is_live,
+        "is_technical": game.is_technical,
         "stadium": stadium_dict,
         "referee": referee_name,
         "visitors": game.visitors,
@@ -904,8 +907,15 @@ async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
             "player2_number": e.player2_number,
         })
 
+    # Get is_technical flag
+    game_result_for_flag = await db.execute(
+        select(Game.is_technical).where(Game.id == game_id)
+    )
+    is_technical = game_result_for_flag.scalar() or False
+
     return {
         "game_id": game_id,
+        "is_technical": is_technical,
         "team_stats": team_stats_response,
         "player_stats": player_stats_response,
         "events": events_response,

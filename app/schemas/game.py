@@ -18,6 +18,7 @@ class GameBase(BaseModel):
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
     has_stats: bool = False
+    is_technical: bool = False
     stadium: str | None = None
     visitors: int | None = None
     video_url: FileUrl = None
@@ -123,6 +124,7 @@ class MatchCenterGame(BaseModel):
     is_live: bool = False
     has_stats: bool = False
     has_lineup: bool = False
+    is_technical: bool = False
 
     # Computed status field
     status: str  # "upcoming", "live", or "finished"
