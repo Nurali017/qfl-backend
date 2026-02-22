@@ -2,9 +2,10 @@
 Fix duplicate players and resolve NULL player_id events for season 80.
 
 Problems fixed:
-1. Merge 9 duplicate player groups (same person, different player_ids due to
+1. Merge 19 duplicate player groups (same person, different player_ids due to
    Kazakh vs Russian name spellings)
-2. Merge Молдабаев (pid=2323 → pid=1725)
+2. Round 2: Fix top-scorer photos in season 80 (10 duplicates with goals on
+   wrong pid while photos are on the canonical pid)
 3. Resolve NULL player_id in game_events using player_number + team
 4. For players without player_teams records, match by name and create records
 
@@ -23,15 +24,27 @@ from app.database import AsyncSessionLocal
 # Canonical is the one with player_teams records / more history
 DUPLICATE_MERGES = {
     # duplicate_pid: canonical_pid
+    # --- Round 1 (previous merges) ---
     7: 517,      # Амангельдинов: pid=7 → pid=517 (has player_teams num=78)
     2477: 792,   # Валихан: pid=2477 → pid=792 (has player_teams num=82)
     2472: 2321,  # Масан: pid=2472 → pid=2321
     2474: 913,   # Кундаков: pid=2474 → pid=913 (has player_teams num=53)
     2428: 976,   # Камарадинов: pid=2428 → pid=976 (has player_teams across seasons)
-    2425: 426,   # Кайратов: pid=2425 → pid=426 (has player_teams)
+    2425: 437,   # Кайратов: pid=2425 → pid=437 (cascaded: was →426, now 426→437)
     2433: 630,   # Сердалы: pid=2433 → pid=630 (has player_teams num=55)
     2352: 940,   # Халдар: pid=2352 → pid=940 (has player_teams across seasons)
     2323: 1725,  # Молдабаев: pid=2323 → pid=1725 (has player_teams num=18)
+    # --- Round 2 (season 80 top-scorer photo fixes) ---
+    2401: 1665,  # Нурадилов Нурали: 15 голов, фото у 1665
+    2410: 392,   # Алихан Амир: 7 голов, фото у 392
+    426: 437,    # Кайратов Мирас: 5 голов, фото у 437 (cascade from 2425→426)
+    2354: 684,   # Кубашев Чингиз: 5 голов, фото у 684
+    2389: 132,   # Кабиев Хакназар: 4 голов, фото у 132
+    2385: 619,   # Бердеш Нурсейт: 4 голов, фото у 619
+    2320: 1835,  # Талгат Айбар: 2 голов, фото у 1835
+    2368: 1468,  # Молдагалиев Арафат: 2 голов, фото у 1468
+    2355: 838,   # Бердаулетов Самат: 2 голов, фото у 838
+    1927: 213,   # Саидалиев Юсуф: 1 гол, фото у 213
 }
 
 # Event team_name (Kazakh) → team_id
