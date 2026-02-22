@@ -44,6 +44,7 @@ class PlayoffBracketEntry(BaseModel):
 
 
 ROUND_LABELS = {
+    "1_32": "1/32 финала",
     "1_16": "1/16 финала",
     "1_8": "1/8 финала",
     "1_4": "Четвертьфинал",

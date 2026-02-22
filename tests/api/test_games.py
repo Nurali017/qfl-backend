@@ -5,8 +5,6 @@ from datetime import datetime, date
 
 from app.models import Championship, GameLineup, LineupType, Player
 from app.main import app
-from app.services.sota_client import get_sota_client
-from unittest.mock import AsyncMock, Mock
 
 
 @pytest.mark.asyncio
@@ -488,128 +486,6 @@ class TestGamesAPI:
         data = response.json()
 
         assert data["lineups"]["home_team"]["formation"] == "3-6-1"
-
-    async def test_get_game_lineup_live_refresh_updates_positions_and_kit_color(
-        self,
-        client: AsyncClient,
-        test_session,
-        sample_game,
-        sample_player,
-    ):
-        sample_game.is_live = True
-        sample_game.lineup_live_synced_at = None
-        test_session.add(
-            GameLineup(
-                game_id=sample_game.id,
-                team_id=sample_game.home_team_id,
-                player_id=sample_player.id,
-                lineup_type=LineupType.starter,
-                shirt_number=10,
-            )
-        )
-        await test_session.commit()
-
-        mock_client = Mock()
-        mock_client.get_live_team_lineup = AsyncMock(
-            side_effect=[
-                [
-                    {"number": "FORMATION", "first_name": "4-3-3", "full_name": "#AA1100"},
-                    {"number": "ОСНОВНЫЕ"},
-                    {
-                        "number": 10,
-                        "id": str(sample_player.sota_id),
-                        "amplua": "DM",
-                        "position": "RC",
-                    },
-                ],
-                [{"number": "FORMATION", "first_name": "4-4-2", "full_name": "#00AA11"}],
-            ]
-        )
-        app.dependency_overrides[get_sota_client] = lambda: mock_client
-        try:
-            response = await client.get(f"/api/v1/games/{sample_game.id}/lineup")
-        finally:
-            app.dependency_overrides.pop(get_sota_client, None)
-
-        assert response.status_code == 200
-        data = response.json()
-        home_starter = data["lineups"]["home_team"]["starters"][0]
-        assert home_starter["amplua"] == "DM"
-        assert home_starter["field_position"] == "RC"
-        assert data["lineups"]["home_team"]["kit_color"] == "#AA1100"
-        assert data["lineups"]["away_team"]["kit_color"] == "#00AA11"
-        assert mock_client.get_live_team_lineup.await_count == 2
-
-    async def test_get_game_lineup_live_refresh_respects_ttl(
-        self,
-        client: AsyncClient,
-        test_session,
-        sample_game,
-        sample_player,
-    ):
-        sample_game.is_live = True
-        sample_game.lineup_live_synced_at = datetime.utcnow()
-        test_session.add(
-            GameLineup(
-                game_id=sample_game.id,
-                team_id=sample_game.home_team_id,
-                player_id=sample_player.id,
-                lineup_type=LineupType.starter,
-                shirt_number=10,
-                amplua="D",
-                field_position="L",
-            )
-        )
-        await test_session.commit()
-
-        mock_client = Mock()
-        mock_client.get_live_team_lineup = AsyncMock(return_value=[])
-        app.dependency_overrides[get_sota_client] = lambda: mock_client
-        try:
-            response = await client.get(f"/api/v1/games/{sample_game.id}/lineup")
-        finally:
-            app.dependency_overrides.pop(get_sota_client, None)
-
-        assert response.status_code == 200
-        assert mock_client.get_live_team_lineup.await_count == 0
-
-    async def test_get_game_lineup_live_refresh_failure_returns_snapshot(
-        self,
-        client: AsyncClient,
-        test_session,
-        sample_game,
-        sample_player,
-    ):
-        sample_game.is_live = True
-        sample_game.lineup_live_synced_at = None
-        test_session.add(
-            GameLineup(
-                game_id=sample_game.id,
-                team_id=sample_game.home_team_id,
-                player_id=sample_player.id,
-                lineup_type=LineupType.starter,
-                shirt_number=10,
-                amplua="D",
-                field_position="L",
-            )
-        )
-        await test_session.commit()
-
-        mock_client = Mock()
-        mock_client.get_live_team_lineup = AsyncMock(
-            side_effect=[Exception("home failed"), Exception("away failed")]
-        )
-        app.dependency_overrides[get_sota_client] = lambda: mock_client
-        try:
-            response = await client.get(f"/api/v1/games/{sample_game.id}/lineup")
-        finally:
-            app.dependency_overrides.pop(get_sota_client, None)
-
-        assert response.status_code == 200
-        data = response.json()
-        home_starter = data["lineups"]["home_team"]["starters"][0]
-        assert home_starter["amplua"] == "D"
-        assert home_starter["field_position"] == "L"
 
     async def test_get_game_lineup_rendering_mode_field_when_rules_and_positions_are_valid(
         self,

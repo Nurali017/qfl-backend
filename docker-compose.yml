@@ -5,8 +5,6 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/qfl_db
-      - SOTA_API_EMAIL=kazachenko.galina@gmail.com
-      - "SOTA_API_PASSWORD=afd#@$$afsad"
       - REDIS_URL=redis://redis:6379/0
       - CURRENT_SEASON_ID=61
       # MinIO
@@ -72,8 +70,6 @@ services:
     command: celery -A app.tasks worker -l info
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/qfl_db
-      - SOTA_API_EMAIL=kazachenko.galina@gmail.com
-      - "SOTA_API_PASSWORD=afd#@$$afsad"
       - REDIS_URL=redis://redis:6379/0
       - CURRENT_SEASON_ID=61
       - MINIO_ENDPOINT=minio:9000
@@ -94,8 +90,6 @@ services:
     command: celery -A app.tasks beat -l info
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/qfl_db
-      - SOTA_API_EMAIL=kazachenko.galina@gmail.com
-      - "SOTA_API_PASSWORD=afd#@$$afsad"
       - REDIS_URL=redis://redis:6379/0
       - CURRENT_SEASON_ID=61
       - MINIO_ENDPOINT=minio:9000
