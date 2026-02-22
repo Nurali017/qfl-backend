@@ -1,6 +1,7 @@
-from uuid import UUID
-from datetime import date as date_type, datetime
+import logging
+from datetime import date as date_type, datetime, timedelta
 from collections import defaultdict
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
@@ -38,19 +39,23 @@ from app.schemas.stats import (
     GamePlayerStatsResponse,
 )
 from app.schemas.team import TeamInGame
+from app.services.sota_client import SotaClient, get_sota_client
+from app.services.sync.lineup_sync import LineupSyncService
 from app.utils.date_helpers import format_match_date, get_localized_field
+from app.utils.numbers import to_finite_float
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/games", tags=["games"])
 
 
 async def get_player_names_fallback(
     db: AsyncSession,
-    game_id: UUID,
-    player_ids: list[UUID]
-) -> dict[UUID, tuple[str | None, str | None]]:
+    game_id: int,
+    player_ids: list[int]
+) -> dict[int, tuple[str | None, str | None]]:
     """
     Get player names with fallback to GameEvent.player_name.
 
@@ -135,8 +140,11 @@ def group_games_by_date(
                 "time": game.time,
                 "tour": game.tour,
                 "season_id": game.season_id,
+                "stage_id": game.stage_id,
                 "home_score": game.home_score,
                 "away_score": game.away_score,
+                "home_penalty_score": game.home_penalty_score,
+                "away_penalty_score": game.away_penalty_score,
                 "is_live": game.is_live,
                 "has_stats": game.has_stats,
                 "has_lineup": game.has_lineup,
@@ -168,6 +176,158 @@ SUPPORTED_FORMATIONS = {
     "4-1-4-1", "4-4-1-1", "3-4-1-2", "5-4-1", "4-3-2-1"
 }
 
+VALID_AMPLUA_VALUES = {"Gk", "D", "DM", "M", "AM", "F"}
+VALID_FIELD_POSITION_VALUES = {"L", "LC", "C", "RC", "R"}
+
+POSITION_CODE_TO_AMPLUA = {
+    # Goalkeepers
+    "GK": "Gk",
+    "G": "Gk",
+    "ВР": "Gk",
+    "ГК": "Gk",
+    "ВРТ": "Gk",
+    # Defenders
+    "CD": "D",
+    "LD": "D",
+    "RD": "D",
+    "LB": "D",
+    "RB": "D",
+    "CB": "D",
+    "D": "D",
+    "ЛЗ": "D",
+    "ПЗ": "D",
+    "ЦЗ": "D",
+    "ЗЩ": "D",
+    "ЗАЩ": "D",
+    # Defensive mid
+    "DM": "DM",
+    "ОП": "DM",
+    # Midfield
+    "CM": "M",
+    "M": "M",
+    "LM": "M",
+    "RM": "M",
+    "LW": "M",
+    "RW": "M",
+    "ЦП": "M",
+    "ЛП": "M",
+    "ПП": "M",
+    # Attacking mid
+    "AM": "AM",
+    "АП": "AM",
+    # Forwards
+    "CF": "F",
+    "ST": "F",
+    "FW": "F",
+    "F": "F",
+    "ЦН": "F",
+    "НП": "F",
+    "ЦФ": "F",
+    "НАП": "F",
+    "ЛН": "F",
+    "ПН": "F",
+}
+
+
+def normalize_amplua_value(amplua: str | None) -> str | None:
+    if not isinstance(amplua, str):
+        return None
+    value = amplua.strip()
+    return value if value in VALID_AMPLUA_VALUES else None
+
+
+def normalize_field_position_value(field_position: str | None) -> str | None:
+    if not isinstance(field_position, str):
+        return None
+    value = field_position.strip().upper()
+    return value if value in VALID_FIELD_POSITION_VALUES else None
+
+
+def infer_amplua_from_role_hint(role_hint: str | None) -> str | None:
+    if not isinstance(role_hint, str) or not role_hint.strip():
+        return None
+
+    normalized = role_hint.strip().upper()
+    token = (normalized.split(maxsplit=1)[0] if normalized else "").strip()
+    code = re.sub(r"[^A-ZА-ЯЁ0-9]", "", token)
+
+    mapped = POSITION_CODE_TO_AMPLUA.get(code)
+    if mapped:
+        return mapped
+
+    if "ВРАТ" in normalized:
+        return "Gk"
+    if "ОПОР" in normalized:
+        return "DM"
+    if "ПОЛУЗАЩ" in normalized:
+        return "M"
+    if "ЗАЩИТ" in normalized or "ЗАЩ" in normalized:
+        return "D"
+    if "НАПАД" in normalized or "НАП" in normalized:
+        return "F"
+
+    return None
+
+
+def infer_field_position_from_role_hint(role_hint: str | None) -> str | None:
+    if not isinstance(role_hint, str) or not role_hint.strip():
+        return None
+
+    normalized = role_hint.strip().upper()
+    token = (normalized.split(maxsplit=1)[0] if normalized else "").strip()
+    code = re.sub(r"[^A-ZА-ЯЁ0-9]", "", token)
+
+    if code in {"L", "LB", "LD", "LM", "LW", "ЛЗ", "ЛП", "ЛН"}:
+        return "L"
+    if code in {"R", "RB", "RD", "RM", "RW", "ПЗ", "ПП", "ПН"}:
+        return "R"
+    if code in {"LC", "ЛЦ", "ЛЦЗ"}:
+        return "LC"
+    if code in {"RC", "ПЦ", "ПЦЗ"}:
+        return "RC"
+    if code in {"C", "CB", "CD", "CM", "CF", "ST", "DM", "AM", "ЦЗ", "ЦП", "ЦН", "ЦФ", "ОП"}:
+        return "C"
+
+    has_left = "ЛЕВ" in normalized
+    has_right = "ПРАВ" in normalized
+    has_center = "ЦЕНТР" in normalized or "CENTER" in normalized
+    if has_left and has_center:
+        return "LC"
+    if has_right and has_center:
+        return "RC"
+    if has_left:
+        return "L"
+    if has_right:
+        return "R"
+    if has_center:
+        return "C"
+
+    return None
+
+
+def resolve_lineup_position_fallback(
+    amplua: str | None,
+    field_position: str | None,
+    role_hint: str | None,
+) -> tuple[str | None, str | None]:
+    resolved_amplua = normalize_amplua_value(amplua) or infer_amplua_from_role_hint(role_hint)
+    resolved_field_position = normalize_field_position_value(field_position) or infer_field_position_from_role_hint(role_hint)
+
+    if resolved_amplua == "Gk" and resolved_field_position is None:
+        resolved_field_position = "C"
+
+    if resolved_amplua is not None and resolved_field_position is None:
+        resolved_field_position = "C"
+
+    if resolved_amplua is None and resolved_field_position is not None:
+        resolved_amplua = "M"
+
+    if resolved_amplua is None and resolved_field_position is None:
+        resolved_amplua = "M"
+        resolved_field_position = "C"
+
+    return resolved_amplua, resolved_field_position
+
 
 def normalize_formation(formation: str | None) -> str | None:
     """
@@ -182,7 +342,6 @@ def normalize_formation(formation: str | None) -> str | None:
     cleaned = formation.lower().replace(" down", "").replace(" up", "").strip()
 
     # Extract just the numbers with dashes (e.g., "4-3-3")
-    import re
     match = re.match(r'^[\d]+-[\d]+(?:-[\d]+)*', cleaned)
     if match:
         return match.group(0)
@@ -360,6 +519,7 @@ async def get_games(
             selectinload(Game.away_team),
             selectinload(Game.season),
             selectinload(Game.stadium_rel),
+            selectinload(Game.stage),
         )
         .order_by(Game.date.asc(), Game.time.asc())
         .offset(offset)
@@ -394,6 +554,8 @@ async def get_games(
             "name": get_localized_field(stadium, "name", lang),
             "city": get_localized_field(stadium, "city", lang),
             "capacity": stadium.capacity,
+            "address": get_localized_field(stadium, "address", lang),
+            "photo_url": stadium.photo_url,
         }
 
     # Return grouped format if requested
@@ -416,13 +578,17 @@ async def get_games(
         game_status = compute_game_status(g, today)
 
         items.append({
-            "id": str(g.id),
+            "id": g.id,
             "date": g.date.isoformat() if g.date else None,
             "time": g.time.isoformat() if g.time else None,
             "tour": g.tour,
             "season_id": g.season_id,
+            "stage_id": g.stage_id,
+            "stage_name": get_localized_field(g.stage, "name", lang) if g.stage else None,
             "home_score": g.home_score,
             "away_score": g.away_score,
+            "home_penalty_score": g.home_penalty_score,
+            "away_penalty_score": g.away_penalty_score,
             "has_stats": g.has_stats,
             "has_lineup": g.has_lineup,
             "is_live": g.is_live,
@@ -444,7 +610,7 @@ async def get_games(
 
 @router.get("/{game_id}")
 async def get_game(
-    game_id: UUID,
+    game_id: int,
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -457,6 +623,7 @@ async def get_game(
             selectinload(Game.away_team),
             selectinload(Game.season),
             selectinload(Game.stadium_rel),
+            selectinload(Game.stage),
             selectinload(Game.referees).selectinload(GameReferee.referee),
         )
     )
@@ -496,6 +663,8 @@ async def get_game(
             "name": get_localized_field(game.stadium_rel, "name", lang),
             "city": get_localized_field(game.stadium_rel, "city", lang),
             "capacity": game.stadium_rel.capacity,
+            "address": get_localized_field(game.stadium_rel, "address", lang),
+            "photo_url": game.stadium_rel.photo_url,
         }
 
     # Get main referee name
@@ -520,13 +689,17 @@ async def get_game(
     game_status = compute_game_status(game, today)
 
     return {
-        "id": str(game.id),
+        "id": game.id,
         "date": game.date.isoformat() if game.date else None,
         "time": game.time.isoformat() if game.time else None,
         "tour": game.tour,
         "season_id": game.season_id,
+        "stage_id": game.stage_id,
+        "stage_name": get_localized_field(game.stage, "name", lang) if game.stage else None,
         "home_score": game.home_score,
         "away_score": game.away_score,
+        "home_penalty_score": game.home_penalty_score,
+        "away_penalty_score": game.away_penalty_score,
         "has_stats": game.has_stats,
         "has_lineup": game.has_lineup,
         "is_live": game.is_live,
@@ -545,7 +718,7 @@ async def get_game(
 
 
 @router.get("/{game_id}/stats")
-async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
     """Get statistics for a game."""
     # Get team stats
     team_stats_result = await db.execute(
@@ -564,12 +737,12 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
             "primary_color": ts.team.primary_color if ts.team else None,
             "secondary_color": ts.team.secondary_color if ts.team else None,
             "accent_color": ts.team.accent_color if ts.team else None,
-            "possession": float(ts.possession) if ts.possession else None,
+            "possession": to_finite_float(ts.possession),
             "possession_percent": ts.possession_percent,
             "shots": ts.shots,
             "shots_on_goal": ts.shots_on_goal,
             "passes": ts.passes,
-            "pass_accuracy": float(ts.pass_accuracy) if ts.pass_accuracy else None,
+            "pass_accuracy": to_finite_float(ts.pass_accuracy),
             "fouls": ts.fouls,
             "yellow_cards": ts.yellow_cards,
             "red_cards": ts.red_cards,
@@ -648,7 +821,7 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
             "assists": player_assists.get(ps.player_id, 0),
             "shots": ps.shots,
             "passes": ps.passes,
-            "pass_accuracy": float(ps.pass_accuracy) if ps.pass_accuracy else None,
+            "pass_accuracy": to_finite_float(ps.pass_accuracy),
             "yellow_cards": ps.yellow_cards,
             "red_cards": ps.red_cards,
             "extra_stats": ps.extra_stats,
@@ -671,16 +844,16 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
             "event_type": e.event_type.value,
             "team_id": e.team_id,
             "team_name": e.team_name,
-            "player_id": str(e.player_id) if e.player_id else None,
+            "player_id": e.player_id,
             "player_name": e.player_name,
             "player_number": e.player_number,
-            "player2_id": str(e.player2_id) if e.player2_id else None,
+            "player2_id": e.player2_id,
             "player2_name": e.player2_name,
             "player2_number": e.player2_number,
         })
 
     return {
-        "game_id": str(game_id),
+        "game_id": game_id,
         "team_stats": team_stats_response,
         "player_stats": player_stats_response,
         "events": events_response,
@@ -689,9 +862,10 @@ async def get_game_stats(game_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{game_id}/lineup")
 async def get_game_lineup(
-    game_id: UUID,
+    game_id: int,
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
+    client: SotaClient = Depends(get_sota_client),
 ):
     """
     Get pre-game lineup data for a game.
@@ -710,6 +884,36 @@ async def get_game_lineup(
 
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+
+    # Read-through refresh from live feed for active games.
+    if game.is_live:
+        ttl_seconds = max(0, settings.lineup_live_refresh_ttl_seconds)
+        last_sync = game.lineup_live_synced_at
+        is_stale = (
+            last_sync is None
+            or (datetime.utcnow() - last_sync) >= timedelta(seconds=ttl_seconds)
+        )
+        if is_stale:
+            try:
+                await LineupSyncService(db, client).sync_live_positions_and_kits(
+                    game_id,
+                    mode="live_read",
+                    timeout_seconds=settings.lineup_live_refresh_timeout_seconds,
+                )
+                refreshed_game_result = await db.execute(
+                    select(Game)
+                    .where(Game.id == game_id)
+                    .options(
+                        selectinload(Game.home_team),
+                        selectinload(Game.away_team),
+                    )
+                )
+                refreshed_game = refreshed_game_result.scalar_one_or_none()
+                if refreshed_game is not None:
+                    game = refreshed_game
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Live lineup read-refresh failed for game %s: %s", game_id, exc)
+                await db.rollback()
 
     # Get referees for this game
     referees_result = await db.execute(
@@ -826,7 +1030,12 @@ async def get_game_lineup(
         return POSITION_ORDER.get((amplua, field_pos), POSITION_ORDER.get((amplua, None), 99))
 
     # Get lineups for home and away teams
-    async def get_team_lineup(team_id: int, formation: str | None) -> dict:
+    async def get_team_lineup(
+        team_id: int,
+        team_name: str | None,
+        formation: str | None,
+        kit_color: str | None,
+    ) -> dict:
         lineup_result = await db.execute(
             select(GameLineup)
             .where(GameLineup.game_id == game_id, GameLineup.team_id == team_id)
@@ -841,7 +1050,13 @@ async def get_game_lineup(
         for entry in lineup_entries:
             player = entry.player
             # Use match-specific position from GameLineup, fallback to player's general position
-            position = entry.amplua or (player.top_role if player else None)
+            role_hint = player.top_role if player else None
+            position = entry.amplua or role_hint
+            resolved_amplua, resolved_field_position = resolve_lineup_position_fallback(
+                entry.amplua,
+                entry.field_position,
+                role_hint,
+            )
 
             # Build country data
             country_data = None
@@ -854,17 +1069,17 @@ async def get_game_lineup(
                 }
 
             player_data = {
-                "player_id": str(entry.player_id),
+                "player_id": entry.player_id,
                 "first_name": player.first_name if player else None,
                 "last_name": player.last_name if player else None,
                 "country": country_data,
                 "shirt_number": entry.shirt_number,
                 "is_captain": entry.is_captain,
                 "position": position,
-                "amplua": entry.amplua,
-                "field_position": entry.field_position,
+                "amplua": resolved_amplua,
+                "field_position": resolved_field_position,
                 "photo_url": player.photo_url if player else None,
-                "_sort_order": get_position_order(entry.amplua, entry.field_position),
+                "_sort_order": get_position_order(resolved_amplua, resolved_field_position),
             }
 
             if entry.lineup_type.value == "starter":
@@ -881,22 +1096,47 @@ async def get_game_lineup(
         for p in substitutes:
             p.pop("_sort_order", None)
 
-        # Detect formation from actual player positions (most reliable)
-        positions = [p.get("amplua") for p in starters]
-        detected = detect_formation(positions)
+        # Prefer formation synced from SOTA /em feed and persisted in Game.
+        raw_formation = formation.strip() if isinstance(formation, str) and formation.strip() else None
+        if raw_formation is not None:
+            final_formation = raw_formation
+        else:
+            positions = [p.get("amplua") for p in starters]
+            final_formation = detect_formation(positions)
 
-        # Use detected formation, fallback to normalized SOTA
-        normalized = normalize_formation(formation)
-        final_formation = detected or normalized or formation
-
-        return {"formation": final_formation, "starters": starters, "substitutes": substitutes}
+        return {
+            "team_id": team_id,
+            "team_name": team_name,
+            "formation": final_formation,
+            "kit_color": kit_color,
+            "starters": starters,
+            "substitutes": substitutes,
+        }
 
     # Use formations from game (synced from SOTA)
-    home_lineup = await get_team_lineup(game.home_team_id, game.home_formation) if game.home_team_id else {"formation": None, "starters": [], "substitutes": []}
-    away_lineup = await get_team_lineup(game.away_team_id, game.away_formation) if game.away_team_id else {"formation": None, "starters": [], "substitutes": []}
+    home_lineup = (
+        await get_team_lineup(
+            game.home_team_id,
+            game.home_team.name if game.home_team else None,
+            game.home_formation,
+            game.home_kit_color,
+        )
+        if game.home_team_id
+        else {"team_id": None, "team_name": None, "formation": None, "kit_color": None, "starters": [], "substitutes": []}
+    )
+    away_lineup = (
+        await get_team_lineup(
+            game.away_team_id,
+            game.away_team.name if game.away_team else None,
+            game.away_formation,
+            game.away_kit_color,
+        )
+        if game.away_team_id
+        else {"team_id": None, "team_name": None, "formation": None, "kit_color": None, "starters": [], "substitutes": []}
+    )
 
     return {
-        "game_id": str(game_id),
+        "game_id": game_id,
         "has_lineup": game.has_lineup,
         "referees": referees_response,
         "coaches": {

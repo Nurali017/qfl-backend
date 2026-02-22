@@ -11,7 +11,7 @@ from app.models.score_table import ScoreTable
 from app.models.team_season_stats import TeamSeasonStats
 from app.models.player_season_stats import PlayerSeasonStats
 from app.models.page import Page, Language
-from app.models.news import News
+from app.models.news import News, NewsLike
 from app.models.admin_user import AdminUser
 from app.models.admin_session import AdminSession
 
@@ -22,6 +22,15 @@ from app.models.coach import Coach, TeamCoach, CoachRole
 from app.models.game_referee import GameReferee, RefereeRole
 from app.models.game_lineup import GameLineup, LineupType
 from app.models.game_event import GameEvent, GameEventType
+
+# Legacy migration models
+from app.models.championship import Championship
+from app.models.city import City
+from app.models.club import Club
+from app.models.stage import Stage
+from app.models.playoff_bracket import PlayoffBracket
+from app.models.team_tournament import TeamTournament
+from app.models.partner import Partner
 
 __all__ = [
     "Tournament",
@@ -38,6 +47,7 @@ __all__ = [
     "PlayerSeasonStats",
     "Page",
     "News",
+    "NewsLike",
     "AdminUser",
     "AdminSession",
     "Language",
@@ -53,4 +63,12 @@ __all__ = [
     "LineupType",
     "GameEvent",
     "GameEventType",
+    # Legacy migration models
+    "Championship",
+    "City",
+    "Club",
+    "Stage",
+    "PlayoffBracket",
+    "TeamTournament",
+    "Partner",
 ]

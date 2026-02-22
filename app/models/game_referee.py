@@ -1,10 +1,9 @@
-from uuid import UUID
 import enum
 from sqlalchemy import Integer, ForeignKey, Enum as SQLEnum, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.sql_types import GAME_ID_SQL_TYPE
 
 
 class RefereeRole(str, enum.Enum):
@@ -26,8 +25,8 @@ class GameReferee(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    game_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("games.id"), nullable=False, index=True
+    game_id: Mapped[int] = mapped_column(
+        GAME_ID_SQL_TYPE, ForeignKey("games.id"), nullable=False, index=True
     )
     referee_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("referees.id"), nullable=False, index=True

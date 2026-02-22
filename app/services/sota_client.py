@@ -339,6 +339,26 @@ class SotaClient:
         )
         return response.json()
 
+    # ==================== VSporte endpoints ====================
+
+    async def get_vsporte_team_lineup(
+        self, vsporte_id: str, side: str
+    ) -> list[dict[str, Any]]:
+        """
+        Get team lineup from VSporte broadcast API.
+
+        Args:
+            vsporte_id: VSporte match ID (from legacy matches.vsporte_id)
+            side: 'host' or 'guest' (VSporte naming convention)
+
+        Returns list of players with same structure as SOTA /em/ endpoint:
+            - number, first_name, last_name, full_name
+            - gk, capitan, amplua, position, id
+        """
+        url = f"https://broadcast.vsporte.ru/api/v2/qfl/files/{vsporte_id}_team_{side}.json"
+        response = await self._make_request("get", url, timeout=10.0)
+        return response.json()
+
     # ==================== Live match endpoints (/em/) ====================
 
     async def get_live_team_lineup(self, game_id: str, side: str) -> list[dict[str, Any]]:

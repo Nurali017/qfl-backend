@@ -4,7 +4,6 @@ These tests require the server to be running at http://localhost:8000
 """
 import pytest
 import httpx
-from uuid import UUID
 
 
 BASE_URL = "http://localhost:8000"
@@ -129,8 +128,7 @@ class TestPlayersAPI:
             assert player["id"] == player_id
 
     def test_get_player_not_found(self, live_client):
-        fake_uuid = "00000000-0000-0000-0000-000000000000"
-        response = live_client.get(f"/api/v1/players/{fake_uuid}")
+        response = live_client.get("/api/v1/players/999999999")
         assert response.status_code == 404
 
 

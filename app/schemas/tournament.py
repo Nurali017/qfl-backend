@@ -9,6 +9,9 @@ class TournamentBase(BaseModel):
 
 
 class TournamentResponse(TournamentBase):
+    championship_id: int | None = None
+    championship_name: str | None = None
+
     class Config:
         from_attributes = True
 

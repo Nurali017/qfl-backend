@@ -11,6 +11,7 @@ class Country(Base):
     __tablename__ = "countries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    legacy_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
     code: Mapped[str] = mapped_column(String(2), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)  # Russian (default)
     name_kz: Mapped[str | None] = mapped_column(String(100))

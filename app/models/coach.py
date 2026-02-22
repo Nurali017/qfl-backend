@@ -21,6 +21,7 @@ class Coach(Base):
     __tablename__ = "coaches"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    legacy_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
     first_name_kz: Mapped[str | None] = mapped_column(String(100))

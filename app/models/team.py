@@ -10,6 +10,8 @@ class Team(Base):
     __tablename__ = "teams"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    legacy_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
+    club_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("clubs.id"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # Russian (default)
     name_kz: Mapped[str | None] = mapped_column(String(255))
     name_en: Mapped[str | None] = mapped_column(String(255))
@@ -60,3 +62,4 @@ class Team(Base):
         "TeamCoach", back_populates="team"
     )
     stadium: Mapped["Stadium"] = relationship("Stadium", backref="teams")
+    club: Mapped["Club"] = relationship("Club", back_populates="teams")

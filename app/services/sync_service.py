@@ -229,6 +229,35 @@ class SyncService:
 
         return self._team_stadium_cache.get(team_id)
 
+    async def _get_or_create_player_by_sota(
+        self,
+        sota_id_raw: str | None,
+        first_name: str | None,
+        last_name: str | None,
+    ) -> int | None:
+        if not sota_id_raw:
+            return None
+
+        try:
+            sota_id = UUID(str(sota_id_raw))
+        except (ValueError, TypeError):
+            return None
+
+        result = await self.db.execute(select(Player).where(Player.sota_id == sota_id))
+        player = result.scalar_one_or_none()
+        if player is not None:
+            return player.id
+
+        player = Player(
+            sota_id=sota_id,
+            first_name=first_name or "",
+            last_name=last_name or "",
+            updated_at=datetime.utcnow(),
+        )
+        self.db.add(player)
+        await self.db.flush()
+        return player.id
+
     async def sync_tournaments(self) -> int:
         """Sync tournaments from SOTA API with all 3 languages."""
         # Fetch data in all 3 languages
@@ -430,7 +459,11 @@ class SyncService:
 
         count = 0
         for p in players_ru:
-            player_id = UUID(p["id"])
+            try:
+                sota_id = UUID(p["id"])
+            except (ValueError, TypeError):
+                logger.warning("Skipping player with invalid SOTA id: %s", p.get("id"))
+                continue
             p_kz = kz_by_id.get(p["id"], {})
             p_en = en_by_id.get(p["id"], {})
 
@@ -440,7 +473,7 @@ class SyncService:
                 country_id = await self._find_country_id(p_en.get("country_name"))
 
             stmt = insert(Player).values(
-                id=player_id,
+                sota_id=sota_id,
                 first_name=p.get("first_name"),  # Russian as default
                 first_name_kz=p_kz.get("first_name"),
                 first_name_en=p_en.get("first_name"),
@@ -450,7 +483,6 @@ class SyncService:
                 birthday=parse_date(p.get("birthday")),
                 player_type=p.get("type"),
                 country_id=country_id,
-                photo_url=p.get("photo"),
                 age=p.get("age"),
                 top_role=p.get("top_role"),  # Russian as default
                 # top_role_kz not synced - SOTA returns English for kk
@@ -474,14 +506,12 @@ class SyncService:
                 "updated_at": stmt.excluded.updated_at,
             }
 
-            if p.get("photo"):
-                update_dict["photo_url"] = stmt.excluded.photo_url
-
             stmt = stmt.on_conflict_do_update(
-                index_elements=["id"],
+                index_elements=["sota_id"],
                 set_=update_dict,
-            )
-            await self.db.execute(stmt)
+            ).returning(Player.id)
+            result = await self.db.execute(stmt)
+            player_id = result.scalar_one()
 
             # Insert player-team associations
             for team_id in p.get("teams", []):
@@ -506,7 +536,7 @@ class SyncService:
         count = 0
 
         for g in games_data:
-            game_id = UUID(g["id"])
+            sota_id = UUID(g["id"])
             home_team = g.get("home_team", {})
             away_team = g.get("away_team", {})
 
@@ -519,7 +549,7 @@ class SyncService:
                 stadium_id = await self._get_home_stadium_for_team(home_team["id"])
 
             stmt = insert(Game).values(
-                id=game_id,
+                sota_id=sota_id,
                 date=parse_date(g["date"]),
                 time=parse_time(g.get("time")),
                 tour=g.get("tour"),
@@ -535,7 +565,7 @@ class SyncService:
                 updated_at=datetime.utcnow(),
             )
             stmt = stmt.on_conflict_do_update(
-                index_elements=["id"],
+                index_elements=["sota_id"],
                 set_={
                     "date": stmt.excluded.date,
                     "time": stmt.excluded.time,
@@ -555,10 +585,13 @@ class SyncService:
         await self.db.commit()
         return count
 
-    async def sync_game_stats(self, game_id: str) -> dict:
+    async def sync_game_stats(self, game_id: int) -> dict:
         """Sync statistics for a specific game."""
-        stats_data = await self.client.get_game_stats(game_id)
-        game_uuid = UUID(game_id)
+        game = await self.db.get(Game, game_id)
+        if not game or not game.sota_id:
+            return {"teams": 0, "players": 0}
+        sota_uuid = str(game.sota_id)
+        stats_data = await self.client.get_game_stats(sota_uuid)
 
         # Build team name to ID mapping from team stats
         team_name_to_id = {}
@@ -575,7 +608,7 @@ class SyncService:
             extra_stats = {k: v for k, v in stats.items() if k not in GAME_TEAM_STATS_FIELDS}
 
             stmt = insert(GameTeamStats).values(
-                game_id=game_uuid,
+                game_id=game_id,
                 team_id=ts["id"],
                 possession=stats.get("possession"),
                 possession_percent=stats.get("possession_percent"),
@@ -615,35 +648,14 @@ class SyncService:
         # Sync player stats
         player_count = 0
         for ps in stats_data.get("players", []):
-            player_id = UUID(ps["id"])
-            stats = ps.get("stats", {})
-
-            # Ensure player exists (don't update photo_url here - preserve scraped photos)
-            # Prepare values - only include non-null names to avoid overwriting existing data
-            values_dict = {
-                "id": player_id,
-                "updated_at": datetime.utcnow(),
-            }
-            if ps.get("first_name"):
-                values_dict["first_name"] = ps.get("first_name")
-            if ps.get("last_name"):
-                values_dict["last_name"] = ps.get("last_name")
-
-            player_stmt = insert(Player).values(**values_dict)
-
-            # Only update fields that are non-null in the incoming data
-            update_dict = {"updated_at": player_stmt.excluded.updated_at}
-            if ps.get("first_name"):
-                update_dict["first_name"] = player_stmt.excluded.first_name
-            if ps.get("last_name"):
-                update_dict["last_name"] = player_stmt.excluded.last_name
-            # NOTE: We don't update photo_url here to preserve photos from kffleague.kz scraper
-
-            player_stmt = player_stmt.on_conflict_do_update(
-                index_elements=["id"],
-                set_=update_dict,
+            player_id = await self._get_or_create_player_by_sota(
+                ps.get("id"),
+                ps.get("first_name"),
+                ps.get("last_name"),
             )
-            await self.db.execute(player_stmt)
+            if player_id is None:
+                continue
+            stats = ps.get("stats", {})
 
             # Get team_id from mapping or directly from player stats
             team_id = ps.get("team_id") or team_name_to_id.get(ps.get("team"))
@@ -654,7 +666,7 @@ class SyncService:
             extra_stats = {k: v for k, v in stats.items() if k not in GAME_PLAYER_STATS_FIELDS}
 
             stmt = insert(GamePlayerStats).values(
-                game_id=game_uuid,
+                game_id=game_id,
                 player_id=player_id,
                 team_id=team_id,
                 minutes_played=ps.get("minutes_played"),
@@ -703,21 +715,18 @@ class SyncService:
         await self.db.commit()
         return {"teams": team_count, "players": player_count}
 
-    async def sync_game_events(self, game_id: str) -> dict:
+    async def sync_game_events(self, game_id: int) -> dict:
         """
         Sync events for a specific game from SOTA /em/ endpoint.
 
         Works for both live and completed games.
         """
-        game_uuid = UUID(game_id)
-
-        # Get game with team info
-        result = await self.db.execute(
-            select(Game).where(Game.id == game_uuid)
-        )
-        game = result.scalar_one_or_none()
+        game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found", "events_added": 0}
+        sota_uuid = str(game.sota_id) if game.sota_id else None
+        if not sota_uuid:
+            return {"error": f"Game {game_id} has no sota_id", "events_added": 0}
 
         # Load teams
         home_team = None
@@ -731,7 +740,7 @@ class SyncService:
 
         # Get existing events
         result = await self.db.execute(
-            select(GameEvent).where(GameEvent.game_id == game_uuid)
+            select(GameEvent).where(GameEvent.game_id == game_id)
         )
         existing_events = list(result.scalars().all())
 
@@ -749,7 +758,7 @@ class SyncService:
                 existing_signatures.add(sig_by_name)
 
         # Fetch events from SOTA
-        events_data = await self.client.get_live_match_events(game_id)
+        events_data = await self.client.get_live_match_events(sota_uuid)
 
         # Action type mapping
         ACTION_TYPE_MAP = {
@@ -784,7 +793,7 @@ class SyncService:
 
             # Find player ID from lineup
             player_id = await self._find_player_id_from_lineup(
-                game_uuid, first_name1, last_name1, team_id
+                game_id, first_name1, last_name1, team_id
             )
 
             # Check for duplicate using player_id and normalized name signatures.
@@ -816,12 +825,12 @@ class SyncService:
                 elif away_team and away_team.name and away_team.name.strip().lower() == team2_normalized:
                     team2_id = game.away_team_id
             player2_id = await self._find_player_id_from_lineup(
-                game_uuid, first_name2, last_name2, team2_id
+                game_id, first_name2, last_name2, team2_id
             )
 
             # Create event
             event = GameEvent(
-                game_id=game_uuid,
+                game_id=game_id,
                 half=half,
                 minute=minute,
                 event_type=event_type,
@@ -852,8 +861,8 @@ class SyncService:
         return {"game_id": game_id, "events_added": events_added}
 
     async def _find_player_id_from_lineup(
-        self, game_id: UUID, first_name: str, last_name: str, team_id: int | None
-    ) -> UUID | None:
+        self, game_id: int, first_name: str, last_name: str, team_id: int | None
+    ) -> int | None:
         """Find player ID by name from game lineup."""
         if not first_name and not last_name:
             return None
@@ -903,15 +912,15 @@ class SyncService:
 
         for game in games:
             try:
-                result = await self.sync_game_events(str(game.id))
+                result = await self.sync_game_events(game.id)
                 if "error" not in result:
                     total_events += result.get("events_added", 0)
                     games_synced += 1
                 else:
-                    errors.append({"game_id": str(game.id), "error": result["error"]})
+                    errors.append({"game_id": game.id, "error": result["error"]})
             except Exception as e:
                 logger.error(f"Failed to sync events for game {game.id}: {e}")
-                errors.append({"game_id": str(game.id), "error": str(e)})
+                errors.append({"game_id": game.id, "error": str(e)})
 
         return {
             "games_synced": games_synced,
@@ -944,7 +953,10 @@ class SyncService:
         for game in games:
             try:
                 # Try to get live lineup data (may contain stadium and time)
-                home_data = await self.client.get_live_team_lineup(str(game.id), "home")
+                if not game.sota_id:
+                    continue
+                sota_uuid = str(game.sota_id)
+                home_data = await self.client.get_live_team_lineup(sota_uuid, "home")
 
                 # Extract stadium and time from special markers
                 stadium_name = None
@@ -984,7 +996,7 @@ class SyncService:
                 # Many games won't have live endpoints - this is expected
                 if "404" not in str(e):
                     logger.warning(f"Failed to sync metadata for game {game.id}: {e}")
-                errors.append({"game_id": str(game.id), "error": str(e)})
+                errors.append({"game_id": game.id, "error": str(e)})
 
         await self.db.commit()
 
@@ -1018,9 +1030,12 @@ class SyncService:
 
         for game in games:
             try:
+                if not game.sota_id:
+                    continue
+                sota_uuid = str(game.sota_id)
                 # Try to get live lineup data (contains formations)
-                home_data = await self.client.get_live_team_lineup(str(game.id), "home")
-                away_data = await self.client.get_live_team_lineup(str(game.id), "away")
+                home_data = await self.client.get_live_team_lineup(sota_uuid, "home")
+                away_data = await self.client.get_live_team_lineup(sota_uuid, "away")
 
                 # Extract formations
                 home_formation = None
@@ -1045,7 +1060,7 @@ class SyncService:
                 # Many games won't have live endpoints - this is expected
                 if "404" not in str(e):
                     logger.warning(f"Failed to sync formations for game {game.id}: {e}")
-                errors.append({"game_id": str(game.id), "error": str(e)})
+                errors.append({"game_id": game.id, "error": str(e)})
 
         await self.db.commit()
 
@@ -1404,19 +1419,23 @@ class SyncService:
         """
         # Get all players in this season with their team
         player_teams_result = await self.db.execute(
-            select(PlayerTeam.player_id, PlayerTeam.team_id)
-            .where(PlayerTeam.season_id == season_id)
+            select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
+            .join(Player, Player.id == PlayerTeam.player_id)
+            .where(
+                PlayerTeam.season_id == season_id,
+                Player.sota_id.is_not(None),
+            )
         )
-        player_teams = {pt.player_id: pt.team_id for pt in player_teams_result.fetchall()}
+        player_teams = list(player_teams_result.fetchall())
 
         if not player_teams:
             return 0
 
         count = 0
-        for player_id, team_id in player_teams.items():
+        for player_id, team_id, sota_id in player_teams:
             try:
                 # Get all metrics from SOTA v2 API
-                stats = await self.client.get_player_season_stats(str(player_id), season_id)
+                stats = await self.client.get_player_season_stats(str(sota_id), season_id)
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}
@@ -1584,40 +1603,31 @@ class SyncService:
 
     async def sync_pre_game_lineup(
         self,
-        game_id: str,
+        game_id: int,
         sync_positions_from_live: bool = False,
     ) -> dict:
         """
         Sync pre-game lineup data for a specific game.
         Includes referees, coaches, and player lineups.
 
-        SOTA API response format:
-        {
-            "referees": {"main": "Name", "1st_assistant": "Name", ...},
-            "home_team": {"id": "123", "lineup": [...], "substitutes": [...], "coach": {...}},
-            "away_team": {"id": "123", "lineup": [...], "substitutes": [...], "coach": {...}}
-        }
-
         Args:
-            game_id: Game UUID string.
+            game_id: Game int ID.
             sync_positions_from_live: If True, enrich lineup with live amplua/field position.
                 Disabled by default to avoid historical lineup degradation from incomplete live data.
         """
-        try:
-            lineup_data = await self.client.get_pre_game_lineup(game_id)
-        except Exception as e:
-            logger.warning(f"Failed to fetch pre-game lineup for game {game_id}: {e}")
-            return {"referees": 0, "coaches": 0, "lineups": 0}
-
-        game_uuid = UUID(game_id)
         result = {"referees": 0, "coaches": 0, "lineups": 0}
 
-        # Get game to know home/away team IDs
-        game_result = await self.db.execute(
-            select(Game).where(Game.id == game_uuid)
-        )
-        game = game_result.scalar_one_or_none()
+        game = await self.db.get(Game, game_id)
         if not game:
+            return result
+        sota_uuid = str(game.sota_id) if game.sota_id else None
+        if not sota_uuid:
+            return result
+
+        try:
+            lineup_data = await self.client.get_pre_game_lineup(sota_uuid)
+        except Exception as e:
+            logger.warning(f"Failed to fetch pre-game lineup for game {game_id}: {e}")
             return result
 
         # Map SOTA referee keys to our enum values
@@ -1698,7 +1708,7 @@ class SyncService:
 
                 # Create game-referee association
                 gr_stmt = insert(GameReferee).values(
-                    game_id=game_uuid,
+                    game_id=game_id,
                     referee_id=ref_id,
                     role=role,
                 )
@@ -1782,30 +1792,38 @@ class SyncService:
         async def ensure_player_exists(player_data: dict, team_id: int):
             pid_str = player_data.get("id")
             if not pid_str:
-                return
+                return None
             try:
-                pid = UUID(pid_str)
+                sota_id = UUID(pid_str)
             except (ValueError, TypeError):
-                return
-            existing = await self.db.execute(select(Player.id).where(Player.id == pid))
-            if existing.scalar_one_or_none() is None:
-                first_name = player_data.get("first_name", "")
-                last_name_raw = player_data.get("last_name", [])
-                last_name = last_name_raw[0] if isinstance(last_name_raw, list) and last_name_raw else str(last_name_raw) if last_name_raw else ""
-                stmt = insert(Player).values(
-                    id=pid,
-                    first_name=first_name,
-                    last_name=last_name,
-                ).on_conflict_do_nothing()
-                await self.db.execute(stmt)
-                # Also link to team
-                pt_stmt = insert(PlayerTeam).values(
-                    player_id=pid,
-                    team_id=team_id,
-                    season_id=game.season_id,
-                ).on_conflict_do_nothing()
-                await self.db.execute(pt_stmt)
-                logger.info(f"Auto-created missing player {first_name} {last_name} ({pid})")
+                return None
+
+            existing = await self.db.execute(select(Player).where(Player.sota_id == sota_id))
+            existing_player = existing.scalar_one_or_none()
+            if existing_player is not None:
+                return existing_player.id
+
+            first_name = player_data.get("first_name", "")
+            last_name_raw = player_data.get("last_name", [])
+            last_name = last_name_raw[0] if isinstance(last_name_raw, list) and last_name_raw else str(last_name_raw) if last_name_raw else ""
+
+            new_player = Player(
+                sota_id=sota_id,
+                first_name=first_name,
+                last_name=last_name,
+            )
+            self.db.add(new_player)
+            await self.db.flush()
+
+            # Also link to team
+            pt_stmt = insert(PlayerTeam).values(
+                player_id=new_player.id,
+                team_id=team_id,
+                season_id=game.season_id,
+            ).on_conflict_do_nothing()
+            await self.db.execute(pt_stmt)
+            logger.info(f"Auto-created missing player {first_name} {last_name} ({sota_id})")
+            return new_player.id
 
         # Sync lineups for home and away teams
         # SOTA API returns all players in "lineup" field, with substitutes field empty
@@ -1842,19 +1860,12 @@ class SyncService:
 
             # Process starters
             for player in starters:
-                player_id_str = player.get("id")
-                if not player_id_str:
+                player_id = await ensure_player_exists(player, team_id)
+                if player_id is None:
                     continue
-
-                try:
-                    player_id = UUID(player_id_str)
-                except (ValueError, TypeError):
-                    continue
-
-                await ensure_player_exists(player, team_id)
 
                 gl_stmt = insert(GameLineup).values(
-                    game_id=game_uuid,
+                    game_id=game_id,
                     team_id=team_id,
                     player_id=player_id,
                     lineup_type=LineupType.starter,
@@ -1874,19 +1885,12 @@ class SyncService:
 
             # Process substitutes
             for player in substitutes:
-                player_id_str = player.get("id")
-                if not player_id_str:
+                player_id = await ensure_player_exists(player, team_id)
+                if player_id is None:
                     continue
-
-                try:
-                    player_id = UUID(player_id_str)
-                except (ValueError, TypeError):
-                    continue
-
-                await ensure_player_exists(player, team_id)
 
                 gl_stmt = insert(GameLineup).values(
-                    game_id=game_uuid,
+                    game_id=game_id,
                     team_id=team_id,
                     player_id=player_id,
                     lineup_type=LineupType.substitute,
@@ -1908,7 +1912,7 @@ class SyncService:
         if result["lineups"] > 0:
             await self.db.execute(
                 Game.__table__.update()
-                .where(Game.id == game_uuid)
+                .where(Game.id == game_id)
                 .values(has_lineup=True)
             )
 
@@ -1920,7 +1924,7 @@ class SyncService:
 
         return result
 
-    async def sync_live_lineup_positions(self, game_id: str) -> dict:
+    async def sync_live_lineup_positions(self, game_id: int) -> dict:
         """
         Sync player positions from live endpoint for a specific game.
         Updates amplua and field_position fields in GameLineup.
@@ -1931,15 +1935,13 @@ class SyncService:
         - position: field side (C, L, R, LC, RC) - only for starters
         - Players without amplua are substitutes
         """
-        game_uuid = UUID(game_id)
         result = {"positions_updated": 0, "players_added": 0}
 
-        # Get game to know home/away team IDs
-        game_result = await self.db.execute(
-            select(Game).where(Game.id == game_uuid)
-        )
-        game = game_result.scalar_one_or_none()
+        game = await self.db.get(Game, game_id)
         if not game:
+            return result
+        sota_uuid = str(game.sota_id) if game.sota_id else None
+        if not sota_uuid:
             return result
 
         for side, team_id in [("home", game.home_team_id), ("away", game.away_team_id)]:
@@ -1947,7 +1949,7 @@ class SyncService:
                 continue
 
             try:
-                live_data = await self.client.get_live_team_lineup(game_id, side)
+                live_data = await self.client.get_live_team_lineup(sota_uuid, side)
             except Exception as e:
                 logger.warning(f"Failed to fetch live lineup for game {game_id} {side}: {e}")
                 continue
@@ -1997,7 +1999,7 @@ class SyncService:
                 update_result = await self.db.execute(
                     GameLineup.__table__.update()
                     .where(
-                        GameLineup.game_id == game_uuid,
+                        GameLineup.game_id == game_id,
                         GameLineup.team_id == team_id,
                         GameLineup.shirt_number == shirt_number,
                     )
@@ -2013,23 +2015,19 @@ class SyncService:
                 if not player_id_str or lineup_type_hint is None:
                     continue
 
-                try:
-                    player_uuid = UUID(player_id_str)
-                except (ValueError, TypeError):
-                    continue
-
-                # Check if player exists in our database.
-                player_exists = await self.db.execute(
-                    select(Player.id).where(Player.id == player_uuid)
+                player_internal_id = await self._get_or_create_player_by_sota(
+                    player_id_str,
+                    player.get("first_name"),
+                    player.get("last_name"),
                 )
-                if not player_exists.scalar_one_or_none():
+                if player_internal_id is None:
                     continue
 
                 await self.db.execute(
                     GameLineup.__table__.insert().values(
-                        game_id=game_uuid,
+                        game_id=game_id,
                         team_id=team_id,
-                        player_id=player_uuid,
+                        player_id=player_internal_id,
                         shirt_number=shirt_number,
                         lineup_type=lineup_type_hint,
                         amplua=amplua,
@@ -2064,24 +2062,24 @@ class SyncService:
         games_with_stats = await self.db.execute(
             select(Game.id).where(Game.season_id == season_id, Game.has_stats == True)
         )
-        game_ids = [str(g[0]) for g in games_with_stats.fetchall()]
+        game_ids = [g[0] for g in games_with_stats.fetchall()]
 
         stats_synced = 0
         lineups_synced = 0
-        for game_id in game_ids:
+        for gid in game_ids:
             try:
-                await self.sync_game_stats(game_id)
+                await self.sync_game_stats(gid)
                 stats_synced += 1
             except Exception as e:
-                logger.warning(f"Failed to sync stats for game {game_id}: {e}")
+                logger.warning(f"Failed to sync stats for game {gid}: {e}")
 
             try:
                 # Sync pre-game lineup (referees, coaches, lineups)
-                lineup_result = await self.sync_pre_game_lineup(game_id)
+                lineup_result = await self.sync_pre_game_lineup(gid)
                 if lineup_result["lineups"] > 0:
                     lineups_synced += 1
             except Exception as e:
-                logger.warning(f"Failed to sync lineup for game {game_id}: {e}")
+                logger.warning(f"Failed to sync lineup for game {gid}: {e}")
 
         results["game_stats_synced"] = stats_synced
         results["game_lineups_synced"] = lineups_synced

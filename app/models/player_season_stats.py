@@ -1,11 +1,11 @@
 from datetime import datetime
-from uuid import UUID
 
 from sqlalchemy import Integer, Numeric, DateTime, ForeignKey, UniqueConstraint, Index
-from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.sql_types import PLAYER_ID_SQL_TYPE
 
 
 class PlayerSeasonStats(Base):
@@ -25,9 +25,7 @@ class PlayerSeasonStats(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    player_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("players.id"), index=True
-    )
+    player_id: Mapped[int] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"), index=True)
     season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"), index=True)
     team_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("teams.id"), index=True)
 

@@ -50,15 +50,13 @@ from app.schemas.head_to_head import (
     PreviousMeeting,
 )
 from app.config import get_settings
+from app.services.season_participants import resolve_season_participants
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
 from app.utils.error_messages import get_error_message
 
 settings = get_settings()
 
 router = APIRouter(prefix="/teams", tags=["teams"])
-
-# Teams excluded from the teams list page
-EXCLUDED_TEAM_IDS = [46]  # Шахтёр
 
 
 def _safe_int(value: int | float | None) -> int:
@@ -168,32 +166,38 @@ async def get_teams(
 ):
     """Get all teams, optionally filtered by season."""
     if season_id:
-        # Get teams that have players in this season
-        subquery = (
-            select(PlayerTeam.team_id)
-            .where(PlayerTeam.season_id == season_id)
-            .distinct()
-        )
-        query = select(Team).where(Team.id.in_(subquery))
-    else:
-        query = select(Team)
+        participants = await resolve_season_participants(db, season_id, lang)
+        if not participants:
+            raise HTTPException(
+                status_code=409,
+                detail=get_error_message("season_teams_not_configured", lang),
+            )
+        items = []
+        for participant in participants:
+            team = participant.team
+            items.append({
+                "id": team.id,
+                "name": get_localized_name(team, lang),
+                "logo_url": team.logo_url,
+                "primary_color": team.primary_color,
+                "secondary_color": team.secondary_color,
+                "accent_color": team.accent_color,
+            })
+        return {"items": items, "total": len(items)}
 
-    query = query.where(Team.id.notin_(EXCLUDED_TEAM_IDS))
-    query = query.order_by(Team.name)
-    result = await db.execute(query)
+    result = await db.execute(select(Team).order_by(Team.name))
     teams = result.scalars().all()
-
-    items = []
-    for t in teams:
-        items.append({
+    items = [
+        {
             "id": t.id,
             "name": get_localized_name(t, lang),
             "logo_url": t.logo_url,
             "primary_color": t.primary_color,
             "secondary_color": t.secondary_color,
             "accent_color": t.accent_color,
-        })
-
+        }
+        for t in teams
+    ]
     return {"items": items, "total": len(items)}
 
 
@@ -207,7 +211,10 @@ async def get_team(
     result = await db.execute(
         select(Team)
         .where(Team.id == team_id)
-        .options(selectinload(Team.stadium))
+        .options(
+            selectinload(Team.stadium),
+            selectinload(Team.club),
+        )
     )
     team = result.scalar_one_or_none()
 
@@ -231,6 +238,8 @@ async def get_team(
         "accent_color": team.accent_color,
         "website": team.website,
         "stadium": stadium_data,
+        "club_id": team.club_id,
+        "club_name": get_localized_field(team.club, "name", lang) if team.club else None,
     }
 
 

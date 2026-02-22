@@ -1,5 +1,8 @@
 from datetime import date
+
 from pydantic import BaseModel
+
+from app.schemas.stage import StageResponse
 
 
 class SeasonBase(BaseModel):
@@ -13,6 +16,14 @@ class SeasonBase(BaseModel):
 
 class SeasonResponse(SeasonBase):
     tournament_name: str | None = None
+    championship_name: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class SeasonDetailResponse(SeasonResponse):
+    stages: list[StageResponse] = []
 
     class Config:
         from_attributes = True

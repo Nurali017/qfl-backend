@@ -8,7 +8,6 @@ Handles:
 """
 import logging
 from datetime import datetime, date, time as dt_time, timedelta
-from uuid import UUID
 from typing import Any
 
 from sqlalchemy import select, and_, or_, func
@@ -18,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Game, GameEvent, GameEventType, GameLineup, LineupType, Team, Player
 from app.services.sota_client import SotaClient
+from app.services.sync.lineup_sync import LineupSyncService
 from app.utils.team_name_matcher import TeamNameMatcher
 
 
@@ -144,87 +144,39 @@ class LiveSyncService:
         row = result.scalar_one_or_none()
         return row
 
-    async def sync_pregame_lineup(self, game_id: str) -> dict:
+    async def sync_pregame_lineup(self, game_id: int) -> dict:
         """
         Sync pre-game lineup data for a match.
 
-        Fetches lineup from /em/ endpoints and saves to database.
-        Updates game with formation info.
+        Delegates lineup persistence/enrichment to LineupSyncService.
         """
-        game_uuid = UUID(game_id)
-
-        # Get game to find team IDs
-        result = await self.db.execute(
-            select(Game).where(Game.id == game_uuid)
-        )
-        game = result.scalar_one_or_none()
+        sync_result = await LineupSyncService(self.db, self.client).sync_pre_game_lineup(game_id)
+        game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found"}
-
-        # Fetch lineup data from SOTA
-        home_data = await self.client.get_live_team_lineup(game_id, "home")
-        away_data = await self.client.get_live_team_lineup(game_id, "away")
-
-        # Extract formations
-        home_formation = self._extract_formation(home_data)
-        away_formation = self._extract_formation(away_data)
-
-        # Extract players
-        home_starters, home_subs = self._extract_players(home_data)
-        away_starters, away_subs = self._extract_players(away_data)
-
-        # Save lineups to database
-        lineup_count = 0
-
-        for player_data in home_starters:
-            lineup_count += await self._save_player_lineup(
-                game_uuid, game.home_team_id, player_data, LineupType.starter
-            )
-
-        for player_data in home_subs:
-            lineup_count += await self._save_player_lineup(
-                game_uuid, game.home_team_id, player_data, LineupType.substitute
-            )
-
-        for player_data in away_starters:
-            lineup_count += await self._save_player_lineup(
-                game_uuid, game.away_team_id, player_data, LineupType.starter
-            )
-
-        for player_data in away_subs:
-            lineup_count += await self._save_player_lineup(
-                game_uuid, game.away_team_id, player_data, LineupType.substitute
-            )
-
-        # Update game with formations and lineup flag
-        game.home_formation = home_formation
-        game.away_formation = away_formation
-        game.has_lineup = True
-
-        await self.db.commit()
-
         return {
             "game_id": game_id,
-            "home_formation": home_formation,
-            "away_formation": away_formation,
-            "lineup_count": lineup_count,
+            "home_formation": game.home_formation,
+            "away_formation": game.away_formation,
+            "lineup_count": int(sync_result.get("lineups", 0)),
+            "positions_updated": int(sync_result.get("positions_updated", 0)),
+            "kit_colors_updated": int(sync_result.get("kit_colors_updated", 0)),
         }
 
     async def _save_player_lineup(
         self,
-        game_id: UUID,
+        game_id: int,
         team_id: int,
         player_data: dict,
         lineup_type: LineupType,
     ) -> int:
         """Save a single player lineup entry."""
-        player_id = player_data.get("id")
-        if not player_id:
-            return 0
-
-        try:
-            player_uuid = UUID(player_id)
-        except ValueError:
+        player_internal_id = await self._get_or_create_player_by_sota(
+            player_data.get("id"),
+            player_data.get("first_name"),
+            player_data.get("last_name"),
+        )
+        if player_internal_id is None:
             return 0
 
         shirt_number = player_data.get("number")
@@ -244,7 +196,7 @@ class LiveSyncService:
         stmt = insert(GameLineup).values(
             game_id=game_id,
             team_id=team_id,
-            player_id=player_uuid,
+            player_id=player_internal_id,
             lineup_type=lineup_type,
             shirt_number=shirt_number,
             is_captain=bool(is_captain),
@@ -265,18 +217,45 @@ class LiveSyncService:
         await self.db.execute(stmt)
         return 1
 
-    async def sync_live_events(self, game_id: str) -> list[GameEvent]:
+    async def _get_or_create_player_by_sota(
+        self,
+        sota_id_raw: str | None,
+        first_name: str | None,
+        last_name: str | None,
+    ) -> int | None:
+        if not sota_id_raw:
+            return None
+
+        try:
+            sota_id = UUID(str(sota_id_raw))
+        except (ValueError, TypeError):
+            return None
+
+        result = await self.db.execute(select(Player).where(Player.sota_id == sota_id))
+        player = result.scalar_one_or_none()
+
+        if player is not None:
+            return player.id
+
+        player = Player(
+            sota_id=sota_id,
+            first_name=first_name or "",
+            last_name=last_name or "",
+        )
+        self.db.add(player)
+        await self.db.flush()
+        return player.id
+
+    async def sync_live_events(self, game_id: int) -> list[GameEvent]:
         """
         Sync live events for a match.
 
         Fetches events from /em/ endpoint and saves new ones to database.
         Returns list of newly added events (for WebSocket broadcast).
         """
-        game_uuid = UUID(game_id)
-
         # Get existing events to avoid duplicates
         result = await self.db.execute(
-            select(GameEvent).where(GameEvent.game_id == game_uuid)
+            select(GameEvent).where(GameEvent.game_id == game_id)
         )
         existing_events = list(result.scalars().all())
 
@@ -298,18 +277,22 @@ class LiveSyncService:
                 sig_by_name = (e.half, e.minute, e.event_type.value, normalized_name)
                 existing_signatures.add(sig_by_name)
 
-        # Fetch events from SOTA
-        events_data = await self.client.get_live_match_events(game_id)
-
         # Get game for team IDs with eager loading of teams
         result = await self.db.execute(
             select(Game)
             .options(selectinload(Game.home_team), selectinload(Game.away_team))
-            .where(Game.id == game_uuid)
+            .where(Game.id == game_id)
         )
         game = result.scalar_one_or_none()
         if not game:
             return []
+
+        # Fetch events from SOTA using sota_id
+        sota_uuid = str(game.sota_id) if game.sota_id else None
+        if not sota_uuid:
+            logger.warning("Game %s has no sota_id, cannot fetch live events", game_id)
+            return []
+        events_data = await self.client.get_live_match_events(sota_uuid)
 
         new_events = []
         matcher = TeamNameMatcher.from_game(game)
@@ -337,10 +320,10 @@ class LiveSyncService:
             team_id = team_id_from_name
 
             # Find player ID by name from lineup
-            player_id = await self._find_player_id(first_name1, last_name1, game_uuid, team_id)
+            player_id = await self._find_player_id(first_name1, last_name1, game_id, team_id)
             team_id_from_player = None
             if team_id is None and player_id:
-                team_id_from_player = await self._infer_team_id_from_lineup(game_uuid, player_id)
+                team_id_from_player = await self._infer_team_id_from_lineup(game_id, player_id)
                 team_id = team_id_from_player
 
             # Check for duplicate using both player_id and normalized player_name
@@ -377,7 +360,7 @@ class LiveSyncService:
                 last_name2 = event_data.get("last_name2", "")
                 team2_name = event_data.get("team2", "")
                 team2_id = self._match_team_id(game, team2_name, matcher=matcher)
-                player2_id = await self._find_player_id(first_name2, last_name2, game_uuid, team2_id)
+                player2_id = await self._find_player_id(first_name2, last_name2, game_id, team2_id)
                 player2_number = self._parse_number(event_data.get("number2"))
                 player2_name = f"{first_name2} {last_name2}".strip()
                 player2_team_name = team2_name
@@ -385,7 +368,7 @@ class LiveSyncService:
             if team_id is None:
                 player2_candidate_team_id = None
                 if event_type in (GameEventType.substitution, GameEventType.assist):
-                    player2_candidate_team_id = await self._infer_team_id_from_lineup(game_uuid, player2_id)
+                    player2_candidate_team_id = await self._infer_team_id_from_lineup(game_id, player2_id)
                 team_id = self._resolve_unambiguous_team_id(
                     team_id_from_player,
                     team2_id,
@@ -401,7 +384,7 @@ class LiveSyncService:
 
             # Create event
             event = GameEvent(
-                game_id=game_uuid,
+                game_id=game_id,
                 half=half,
                 minute=minute,
                 event_type=event_type,
@@ -493,7 +476,7 @@ class LiveSyncService:
         team_matcher = matcher or TeamNameMatcher.from_game(game)
         return team_matcher.match(team_name)
 
-    async def _infer_team_id_from_lineup(self, game_id: UUID, player_id: UUID | None) -> int | None:
+    async def _infer_team_id_from_lineup(self, game_id: int, player_id: int | None) -> int | None:
         """Infer event team_id by player lineup entry in this game."""
         if not player_id:
             return None
@@ -510,8 +493,8 @@ class LiveSyncService:
         return None
 
     async def _find_player_id(
-        self, first_name: str, last_name: str, game_id: UUID, team_id: int | None = None
-    ) -> UUID | None:
+        self, first_name: str, last_name: str, game_id: int, team_id: int | None = None
+    ) -> int | None:
         """
         Find player ID by name from game lineup.
 
@@ -546,18 +529,13 @@ class LiveSyncService:
             return next(iter(player_ids))
         return None
 
-    async def start_live_tracking(self, game_id: str) -> dict:
+    async def start_live_tracking(self, game_id: int) -> dict:
         """
         Start live tracking for a game.
 
         Sets is_live=True and syncs initial data.
         """
-        game_uuid = UUID(game_id)
-
-        result = await self.db.execute(
-            select(Game).where(Game.id == game_uuid)
-        )
-        game = result.scalar_one_or_none()
+        game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found"}
 
@@ -577,18 +555,13 @@ class LiveSyncService:
             "new_events_count": len(events),
         }
 
-    async def stop_live_tracking(self, game_id: str) -> dict:
+    async def stop_live_tracking(self, game_id: int) -> dict:
         """
         Stop live tracking for a game.
 
         Sets is_live=False.
         """
-        game_uuid = UUID(game_id)
-
-        result = await self.db.execute(
-            select(Game).where(Game.id == game_uuid)
-        )
-        game = result.scalar_one_or_none()
+        game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found"}
 
@@ -600,13 +573,11 @@ class LiveSyncService:
             "is_live": False,
         }
 
-    async def get_game_events(self, game_id: str) -> list[GameEvent]:
+    async def get_game_events(self, game_id: int) -> list[GameEvent]:
         """Get all events for a game."""
-        game_uuid = UUID(game_id)
-
         result = await self.db.execute(
             select(GameEvent)
-            .where(GameEvent.game_id == game_uuid)
+            .where(GameEvent.game_id == game_id)
             .order_by(GameEvent.half, GameEvent.minute)
         )
         return list(result.scalars().all())

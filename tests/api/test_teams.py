@@ -4,7 +4,19 @@ from uuid import uuid4
 
 from httpx import AsyncClient
 
-from app.models import Coach, CoachRole, Game, Player, PlayerSeasonStats, TeamCoach, TeamSeasonStats
+from app.models import (
+    Coach,
+    CoachRole,
+    Game,
+    Player,
+    PlayerSeasonStats,
+    PlayerTeam,
+    ScoreTable,
+    TeamCoach,
+    TeamSeasonStats,
+    TeamTournament,
+)
+from app.utils.error_messages import get_error_message
 
 
 @pytest.mark.asyncio
@@ -25,6 +37,146 @@ class TestTeamsAPI:
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 3
+        assert data["total"] == 3
+
+    async def test_get_teams_by_season_uses_team_tournament_membership(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_teams,
+        sample_season,
+        sample_player,
+    ):
+        """Season filter should use team_tournaments, not player_teams."""
+        test_session.add_all(
+            [
+                TeamTournament(team_id=sample_teams[0].id, season_id=sample_season.id),
+                TeamTournament(team_id=sample_teams[1].id, season_id=sample_season.id),
+                PlayerTeam(
+                    player_id=sample_player.id,
+                    team_id=sample_teams[2].id,
+                    season_id=sample_season.id,
+                    number=99,
+                ),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/teams?season_id={sample_season.id}&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        team_ids = [item["id"] for item in data["items"]]
+        assert set(team_ids) == {sample_teams[0].id, sample_teams[1].id}
+        assert sample_teams[2].id not in team_ids
+        assert data["total"] == 2
+
+    async def test_get_teams_by_season_without_team_tournament_returns_409(
+        self, client: AsyncClient, sample_season
+    ):
+        """Season filter should fail fast when team_tournaments are missing."""
+        response = await client.get(f"/api/v1/teams?season_id={sample_season.id}&lang=ru")
+        assert response.status_code == 409
+        assert response.json()["detail"] == get_error_message(
+            "season_teams_not_configured", "ru"
+        )
+
+    async def test_get_teams_by_season_falls_back_to_score_table_when_team_tournament_missing(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_teams,
+        sample_season,
+    ):
+        """Season teams should resolve from score table when TeamTournament is empty."""
+        test_session.add_all(
+            [
+                ScoreTable(
+                    season_id=sample_season.id,
+                    team_id=sample_teams[0].id,
+                    position=1,
+                    games_played=1,
+                    wins=1,
+                    draws=0,
+                    losses=0,
+                    goals_scored=2,
+                    goals_conceded=0,
+                    points=3,
+                ),
+                ScoreTable(
+                    season_id=sample_season.id,
+                    team_id=sample_teams[1].id,
+                    position=2,
+                    games_played=1,
+                    wins=0,
+                    draws=0,
+                    losses=1,
+                    goals_scored=0,
+                    goals_conceded=2,
+                    points=0,
+                ),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/teams?season_id={sample_season.id}&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+        assert {item["id"] for item in data["items"]} == {
+            sample_teams[0].id,
+            sample_teams[1].id,
+        }
+        assert data["total"] == 2
+
+    async def test_get_teams_by_season_backfills_partial_team_tournament(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_teams,
+        sample_season,
+    ):
+        """Missing TeamTournament teams should be backfilled from fallback sources."""
+        test_session.add(
+            TeamTournament(team_id=sample_teams[0].id, season_id=sample_season.id)
+        )
+        test_session.add_all(
+            [
+                ScoreTable(
+                    season_id=sample_season.id,
+                    team_id=sample_teams[1].id,
+                    position=2,
+                    games_played=1,
+                    wins=0,
+                    draws=1,
+                    losses=0,
+                    goals_scored=1,
+                    goals_conceded=1,
+                    points=1,
+                ),
+                ScoreTable(
+                    season_id=sample_season.id,
+                    team_id=sample_teams[2].id,
+                    position=3,
+                    games_played=1,
+                    wins=0,
+                    draws=0,
+                    losses=1,
+                    goals_scored=0,
+                    goals_conceded=1,
+                    points=0,
+                ),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/teams?season_id={sample_season.id}&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+        assert {item["id"] for item in data["items"]} == {
+            sample_teams[0].id,
+            sample_teams[1].id,
+            sample_teams[2].id,
+        }
         assert data["total"] == 3
 
     async def test_get_team_by_id(self, client: AsyncClient, sample_teams):
@@ -129,7 +281,7 @@ class TestTeamsAPI:
         # Upcoming game
         test_session.add(
             Game(
-                id=uuid4(),
+                sota_id=uuid4(),
                 date=date.today() + timedelta(days=5),
                 time=time(18, 30),
                 tour=13,
@@ -144,7 +296,6 @@ class TestTeamsAPI:
 
         # Players + season stats
         player_1 = Player(
-            id=uuid4(),
             first_name="Dastan",
             last_name="Satpayev",
             player_type="forward",
@@ -152,7 +303,6 @@ class TestTeamsAPI:
             top_role="CF",
         )
         player_2 = Player(
-            id=uuid4(),
             first_name="Georgi",
             last_name="Zaria",
             player_type="midfielder",

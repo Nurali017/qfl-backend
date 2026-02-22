@@ -36,20 +36,19 @@ async def _check_upcoming_games():
 
         results = []
         for game in upcoming_games:
-            game_id = str(game.id)
             try:
                 # Sync lineup
-                result = await service.sync_pregame_lineup(game_id)
+                result = await service.sync_pregame_lineup(game.id)
                 results.append(result)
 
                 # Publish lineup update (FastAPI WS process will broadcast)
                 if "error" not in result:
-                    await publish_live_message({"type": "lineup", "game_id": game_id, "data": result})
+                    await publish_live_message({"type": "lineup", "game_id": game.id, "data": result})
 
-                logger.info(f"Pre-game lineup synced for game {game_id}")
+                logger.info(f"Pre-game lineup synced for game {game.id}")
             except Exception as e:
-                logger.error(f"Failed to sync lineup for game {game_id}: {e}")
-                results.append({"game_id": game_id, "error": str(e)})
+                logger.error(f"Failed to sync lineup for game {game.id}: {e}")
+                results.append({"game_id": game.id, "error": str(e)})
 
         return {
             "upcoming_games_found": len(upcoming_games),
@@ -78,28 +77,27 @@ async def _sync_live_game_events():
         total_new_events = 0
 
         for game in active_games:
-            game_id = str(game.id)
             try:
                 # Sync events
-                new_events = await service.sync_live_events(game_id)
+                new_events = await service.sync_live_events(game.id)
                 total_new_events += len(new_events)
 
                 # Broadcast each new event
                 for event in new_events:
                     event_data = GameEventResponse.model_validate(event).model_dump(mode="json")
-                    await publish_live_message({"type": "event", "game_id": game_id, "data": event_data})
+                    await publish_live_message({"type": "event", "game_id": game.id, "data": event_data})
 
                 results.append({
-                    "game_id": game_id,
+                    "game_id": game.id,
                     "new_events": len(new_events),
                 })
 
                 if new_events:
-                    logger.info(f"Synced {len(new_events)} new events for game {game_id}")
+                    logger.info(f"Synced {len(new_events)} new events for game {game.id}")
 
             except Exception as e:
-                logger.error(f"Failed to sync events for game {game_id}: {e}")
-                results.append({"game_id": game_id, "error": str(e)})
+                logger.error(f"Failed to sync events for game {game.id}: {e}")
+                results.append({"game_id": game.id, "error": str(e)})
 
         return {
             "active_games": len(active_games),
@@ -123,15 +121,14 @@ async def _end_finished_games():
 
         results = []
         for game in games_to_end:
-            game_id = str(game.id)
             try:
-                await service.stop_live_tracking(game_id)
-                await publish_live_message({"type": "status", "game_id": game_id, "status": "ended"})
-                results.append({"game_id": game_id, "status": "ended"})
-                logger.info(f"Auto-ended game {game_id}")
+                await service.stop_live_tracking(game.id)
+                await publish_live_message({"type": "status", "game_id": game.id, "status": "ended"})
+                results.append({"game_id": game.id, "status": "ended"})
+                logger.info(f"Auto-ended game {game.id}")
             except Exception as e:
-                logger.error(f"Failed to end game {game_id}: {e}")
-                results.append({"game_id": game_id, "error": str(e)})
+                logger.error(f"Failed to end game {game.id}: {e}")
+                results.append({"game_id": game.id, "error": str(e)})
 
         return {
             "games_ended": len([r for r in results if "status" in r]),
@@ -172,15 +169,14 @@ async def _start_game_by_schedule():
 
         results = []
         for game in games_to_start:
-            game_id = str(game.id)
             try:
-                result = await service.start_live_tracking(game_id)
-                await publish_live_message({"type": "status", "game_id": game_id, "status": "started"})
+                result = await service.start_live_tracking(game.id)
+                await publish_live_message({"type": "status", "game_id": game.id, "status": "started"})
                 results.append(result)
-                logger.info(f"Auto-started live tracking for game {game_id}")
+                logger.info(f"Auto-started live tracking for game {game.id}")
             except Exception as e:
-                logger.error(f"Failed to start game {game_id}: {e}")
-                results.append({"game_id": game_id, "error": str(e)})
+                logger.error(f"Failed to start game {game.id}: {e}")
+                results.append({"game_id": game.id, "error": str(e)})
 
         return {
             "games_started": len([r for r in results if "error" not in r]),

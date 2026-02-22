@@ -9,6 +9,7 @@ class Season(Base):
     __tablename__ = "seasons"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    legacy_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)  # Russian (default)
     name_kz: Mapped[str | None] = mapped_column(String(100))
     name_en: Mapped[str | None] = mapped_column(String(100))
@@ -37,3 +38,4 @@ class Season(Base):
     player_stats: Mapped[list["PlayerSeasonStats"]] = relationship(
         "PlayerSeasonStats", back_populates="season"
     )
+    stages: Mapped[list["Stage"]] = relationship("Stage", back_populates="season")

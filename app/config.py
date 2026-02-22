@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     sota_api_email: str
     sota_api_password: str
     sota_api_base_url: str = "https://sota.id/api"
+    lineup_live_refresh_ttl_seconds: int = 30
+    lineup_live_refresh_timeout_seconds: int = 3
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -28,8 +30,10 @@ class Settings(BaseSettings):
 
     # Seasons to sync automatically (Celery tasks)
     # IDs from SOTA API database:
-    # 61=Premier League, 85=First League, 71=Cup, 80=Second League, 81=Elite League, 84=Women's League
-    sync_season_ids: list[int] = [61, 85, 71, 80, 81, 84]
+    # 61=Premier League, 85=First League, 71=Cup,
+    # 80=Second League SW, 81=Second League NE, 157=Second League Final,
+    # 84=Women's League
+    sync_season_ids: list[int] = [61, 85, 71, 80, 81, 84, 157]
 
     # CORS
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kff.1sportkz.com"

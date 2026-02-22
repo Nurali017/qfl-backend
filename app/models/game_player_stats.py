@@ -1,9 +1,9 @@
-from uuid import UUID
 from sqlalchemy import Integer, String, Boolean, Numeric, ForeignKey, UniqueConstraint, Index
-from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.sql_types import PLAYER_ID_SQL_TYPE, GAME_ID_SQL_TYPE
 
 
 class GamePlayerStats(Base):
@@ -21,10 +21,8 @@ class GamePlayerStats(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    game_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("games.id"), index=True)
-    player_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("players.id"), index=True
-    )
+    game_id: Mapped[int] = mapped_column(GAME_ID_SQL_TYPE, ForeignKey("games.id"), index=True)
+    player_id: Mapped[int] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"), index=True)
     team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
 
     # Basic info

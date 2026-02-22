@@ -47,7 +47,11 @@ class PlayerSyncService(BaseSyncService):
 
         count = 0
         for p in players_ru:
-            player_id = UUID(p["id"])
+            try:
+                sota_id = UUID(p["id"])
+            except (ValueError, TypeError):
+                logger.warning("Skipping player with invalid SOTA id: %s", p.get("id"))
+                continue
             p_kz = kz_by_id.get(p["id"], {})
             p_en = en_by_id.get(p["id"], {})
 
@@ -57,7 +61,7 @@ class PlayerSyncService(BaseSyncService):
                 country_id = await self._find_country_id(p_en.get("country_name"))
 
             stmt = insert(Player).values(
-                id=player_id,
+                sota_id=sota_id,
                 first_name=p.get("first_name"),  # Russian as default
                 first_name_kz=p_kz.get("first_name"),
                 first_name_en=p_en.get("first_name"),
@@ -67,7 +71,6 @@ class PlayerSyncService(BaseSyncService):
                 birthday=parse_date(p.get("birthday")),
                 player_type=p.get("type"),
                 country_id=country_id,
-                photo_url=p.get("photo"),
                 age=p.get("age"),
                 top_role=p.get("top_role"),  # Russian as default
                 # top_role_kz not synced - SOTA returns English for kk
@@ -91,11 +94,8 @@ class PlayerSyncService(BaseSyncService):
                 "updated_at": stmt.excluded.updated_at,
             }
 
-            if p.get("photo"):
-                update_dict["photo_url"] = stmt.excluded.photo_url
-
             stmt = stmt.on_conflict_do_update(
-                index_elements=["id"],
+                index_elements=["sota_id"],
                 set_=update_dict,
             )
             await self.db.execute(stmt)
@@ -124,19 +124,23 @@ class PlayerSyncService(BaseSyncService):
         """
         # Get all players in this season with their team
         player_teams_result = await self.db.execute(
-            select(PlayerTeam.player_id, PlayerTeam.team_id)
-            .where(PlayerTeam.season_id == season_id)
+            select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
+            .join(Player, Player.id == PlayerTeam.player_id)
+            .where(
+                PlayerTeam.season_id == season_id,
+                Player.sota_id.is_not(None),
+            )
         )
-        player_teams = {pt.player_id: pt.team_id for pt in player_teams_result.fetchall()}
+        player_teams = list(player_teams_result.fetchall())
 
         if not player_teams:
             return 0
 
         count = 0
-        for player_id, team_id in player_teams.items():
+        for player_id, team_id, sota_id in player_teams:
             try:
                 # Get all metrics from SOTA v2 API
-                stats = await self.client.get_player_season_stats(str(player_id), season_id)
+                stats = await self.client.get_player_season_stats(str(sota_id), season_id)
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}

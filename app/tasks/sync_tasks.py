@@ -59,11 +59,11 @@ async def _sync_live_stats():
                     Game.has_stats == True,
                 )
             )
-            game_ids = [str(g[0]) for g in result.fetchall()]
+            game_ids = [g[0] for g in result.fetchall()]
 
             season_synced = 0
-            for game_id in game_ids:
-                await orchestrator.sync_game_stats(game_id)
+            for gid in game_ids:
+                await orchestrator.sync_game_stats(gid)
                 season_synced += 1
 
             results_by_season[f"season_{season_id}"] = season_synced

@@ -1,9 +1,8 @@
-from uuid import UUID
 from sqlalchemy import Integer, ForeignKey, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.sql_types import PLAYER_ID_SQL_TYPE
 
 
 class PlayerTeam(Base):
@@ -13,9 +12,7 @@ class PlayerTeam(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    player_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("players.id")
-    )
+    player_id: Mapped[int] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"))
     team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
     season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"))
     number: Mapped[int | None] = mapped_column(Integer)
