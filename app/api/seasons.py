@@ -18,8 +18,13 @@ from app.models import (
     Country,
     GameEvent,
     GameEventType,
+    Stage,
+    PlayoffBracket,
+    TeamTournament,
 )
+from app.services.season_participants import resolve_season_participants
 from app.utils.localization import get_localized_field
+from app.utils.numbers import to_finite_float
 from app.utils.positions import infer_position_code
 from app.schemas.season import (
     GoalPeriodItem,
@@ -31,6 +36,20 @@ from app.schemas.season import (
     SeasonSyncUpdate,
 )
 from app.schemas.game import GameResponse, GameListResponse
+from app.schemas.stage import StageResponse, StageListResponse
+from app.schemas.playoff_bracket import (
+    PlayoffBracketEntry,
+    PlayoffBracketResponse,
+    PlayoffRound,
+    BracketGameBrief,
+    BracketGameTeam,
+    ROUND_LABELS,
+)
+from app.schemas.team_tournament import (
+    TeamTournamentResponse,
+    TeamTournamentListResponse,
+    SeasonGroupsResponse,
+)
 from app.schemas.stats import (
     ScoreTableResponse,
     ScoreTableEntryResponse,
@@ -218,6 +237,19 @@ async def get_next_games_for_teams(
     return next_games
 
 
+async def get_group_team_ids(
+    db: AsyncSession, season_id: int, group: str
+) -> list[int]:
+    """Return team_ids belonging to a specific group within a season."""
+    result = await db.execute(
+        select(TeamTournament.team_id).where(
+            TeamTournament.season_id == season_id,
+            TeamTournament.group_name == group,
+        )
+    )
+    return [row[0] for row in result.all()]
+
+
 async def calculate_dynamic_table(
     db: AsyncSession,
     season_id: int,
@@ -225,6 +257,7 @@ async def calculate_dynamic_table(
     tour_to: int | None,
     home_away: str | None,
     lang: str = "ru",
+    group_team_ids: list[int] | None = None,
 ) -> list[dict]:
     """Calculate league table dynamically from games with filters."""
     query = (
@@ -242,6 +275,11 @@ async def calculate_dynamic_table(
         query = query.where(Game.tour >= tour_from)
     if tour_to is not None:
         query = query.where(Game.tour <= tour_to)
+    if group_team_ids is not None:
+        query = query.where(
+            Game.home_team_id.in_(group_team_ids),
+            Game.away_team_id.in_(group_team_ids),
+        )
 
     result = await db.execute(query)
     games = result.scalars().all()
@@ -327,6 +365,7 @@ async def calculate_dynamic_table(
 @router.get("/{season_id}/table")
 async def get_season_table(
     season_id: int,
+    group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
     tour_from: int | None = Query(default=None, description="From matchweek (inclusive)"),
     tour_to: int | None = Query(default=None, description="To matchweek (inclusive)"),
     home_away: str | None = Query(default=None, pattern="^(home|away)$", description="Filter home/away games"),
@@ -337,28 +376,44 @@ async def get_season_table(
     Get league table for a season.
 
     Filters:
+    - group: Filter by group name (from TeamTournament.group_name)
     - tour_from: Starting matchweek (inclusive)
     - tour_to: Ending matchweek (inclusive)
     - home_away: "home" for home games only, "away" for away games only
     """
+    # Resolve group team_ids if group filter is specified
+    group_team_ids: list[int] | None = None
+    if group:
+        group_team_ids = await get_group_team_ids(db, season_id, group)
+        if not group_team_ids:
+            filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
+            return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
+
     has_filters = tour_from is not None or tour_to is not None or home_away is not None
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
     if has_filters:
-        table_data = await calculate_dynamic_table(db, season_id, tour_from, tour_to, home_away, lang)
+        table_data = await calculate_dynamic_table(
+            db, season_id, tour_from, tour_to, home_away, lang,
+            group_team_ids=group_team_ids,
+        )
     else:
-        result = await db.execute(
+        query = (
             select(ScoreTable)
             .where(ScoreTable.season_id == season_id)
             .options(selectinload(ScoreTable.team))
-            .order_by(ScoreTable.position)
         )
+        if group_team_ids is not None:
+            query = query.where(ScoreTable.team_id.in_(group_team_ids))
+        query = query.order_by(ScoreTable.position)
+
+        result = await db.execute(query)
         entries = result.scalars().all()
 
         table_data = []
-        for e in entries:
+        for i, e in enumerate(entries, 1):
             table_data.append({
-                "position": e.position,
+                "position": i if group_team_ids else e.position,
                 "team_id": e.team_id,
                 "team_name": get_localized_field(e.team, "name", lang) if e.team else None,
                 "team_logo": e.team.logo_url if e.team else None,
@@ -403,6 +458,7 @@ async def get_season_table(
 @router.get("/{season_id}/results-grid", response_model=ResultsGridResponse)
 async def get_results_grid(
     season_id: int,
+    group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -411,20 +467,31 @@ async def get_results_grid(
 
     Returns a matrix where each team has an array of results for each matchweek.
     """
+    # Resolve group team_ids if group filter is specified
+    group_team_ids: list[int] | None = None
+    if group:
+        group_team_ids = await get_group_team_ids(db, season_id, group)
+        if not group_team_ids:
+            return ResultsGridResponse(season_id=season_id, total_tours=0, teams=[])
+
     # Get teams from score_table (sorted by position)
-    score_result = await db.execute(
+    score_query = (
         select(ScoreTable)
         .where(ScoreTable.season_id == season_id)
         .options(selectinload(ScoreTable.team))
-        .order_by(ScoreTable.position)
     )
+    if group_team_ids is not None:
+        score_query = score_query.where(ScoreTable.team_id.in_(group_team_ids))
+    score_query = score_query.order_by(ScoreTable.position)
+
+    score_result = await db.execute(score_query)
     score_entries = score_result.scalars().all()
 
     if not score_entries:
         return ResultsGridResponse(season_id=season_id, total_tours=0, teams=[])
 
     # Get all played games for the season
-    games_result = await db.execute(
+    games_query = (
         select(Game)
         .where(
             Game.season_id == season_id,
@@ -432,8 +499,15 @@ async def get_results_grid(
             Game.away_score.isnot(None),
             Game.tour.isnot(None),
         )
-        .order_by(Game.tour)
     )
+    if group_team_ids is not None:
+        games_query = games_query.where(
+            Game.home_team_id.in_(group_team_ids),
+            Game.away_team_id.in_(group_team_ids),
+        )
+    games_query = games_query.order_by(Game.tour)
+
+    games_result = await db.execute(games_query)
     games = games_result.scalars().all()
 
     # Find max tour
@@ -559,6 +633,7 @@ async def get_player_stats_table(
     season_id: int,
     sort_by: str = Query(default="goals"),
     team_id: int | None = Query(default=None),
+    group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
     position_code: str | None = Query(default=None, pattern="^(GK|DEF|MID|FWD)$"),
     nationality: str | None = Query(default=None, pattern="^(kz|foreign)$"),
     limit: int = Query(default=50, le=100),
@@ -585,9 +660,17 @@ async def get_player_stats_table(
     if sort_column is None:
         raise HTTPException(status_code=400, detail=f"Sort field '{sort_by}' not found")
 
+    # Resolve group filter
+    if group:
+        group_team_ids = await get_group_team_ids(db, season_id, group)
+        if not group_team_ids:
+            return PlayerStatsTableResponse(items=[], total=0)
+
     filters = [PlayerSeasonStats.season_id == season_id]
     if team_id is not None:
         filters.append(PlayerSeasonStats.team_id == team_id)
+    if group and group_team_ids:
+        filters.append(PlayerSeasonStats.team_id.in_(group_team_ids))
     if nationality == "kz":
         filters.append(func.upper(Country.code) == "KZ")
     elif nationality == "foreign":
@@ -637,12 +720,12 @@ async def get_player_stats_table(
             goals=stats.goals,
             assists=stats.assists,
             goal_and_assist=stats.goal_and_assist,
-            xg=float(stats.xg) if stats.xg is not None else None,
+            xg=to_finite_float(stats.xg),
             shots=stats.shots,
             shots_on_goal=stats.shots_on_goal,
             passes=stats.passes,
             key_passes=stats.key_passes,
-            pass_accuracy=float(stats.pass_accuracy) if stats.pass_accuracy is not None else None,
+            pass_accuracy=to_finite_float(stats.pass_accuracy),
             duels=stats.duels,
             duels_won=stats.duels_won,
             aerial_duel=stats.aerial_duel,
@@ -689,15 +772,7 @@ async def get_player_stats_table(
         items.append(entry)
 
     def to_finite_number(value: object) -> float | None:
-        if value is None:
-            return None
-        try:
-            num = float(value)
-        except (TypeError, ValueError):
-            return None
-        if num != num:  # NaN
-            return None
-        return num
+        return to_finite_float(value)
 
     def sort_key(item: PlayerStatsTableEntry) -> tuple:
         primary_val = to_finite_number(getattr(item, sort_by, None))
@@ -886,6 +961,7 @@ TEAM_STATS_SORT_FIELDS = [
 async def get_team_stats_table(
     season_id: int,
     sort_by: str = Query(default="points"),
+    group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
@@ -904,17 +980,20 @@ async def get_team_stats_table(
             detail=f"Invalid sort_by field. Available: {', '.join(TEAM_STATS_SORT_FIELDS)}",
         )
 
-    # Get the sort column
-    sort_column = getattr(TeamSeasonStats, sort_by, None)
-    if sort_column is None:
+    if getattr(TeamSeasonStats, sort_by, None) is None:
         raise HTTPException(status_code=400, detail=f"Sort field '{sort_by}' not found")
 
-    # Count total
-    count_query = select(func.count()).select_from(TeamSeasonStats).where(
-        TeamSeasonStats.season_id == season_id
-    )
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
+    # Resolve group filter
+    group_team_ids: list[int] | None = None
+    if group:
+        group_team_ids = await get_group_team_ids(db, season_id, group)
+        if not group_team_ids:
+            return TeamStatsTableResponse(season_id=season_id, sort_by=sort_by, items=[], total=0)
+
+    participants = await resolve_season_participants(db, season_id, lang)
+    if group_team_ids is not None:
+        allowed = set(group_team_ids)
+        participants = [p for p in participants if p.team_id in allowed]
 
     def to_finite_number(value: object) -> float | None:
         if isinstance(value, (int, float)) and value == value:  # NaN check
@@ -943,13 +1022,40 @@ async def get_team_stats_table(
 
         return sorted(items, key=key)
 
+    def append_missing_participants(items: list[TeamStatsTableEntry]) -> None:
+        existing_team_ids = {item.team_id for item in items}
+        for participant in participants:
+            if participant.team_id in existing_team_ids:
+                continue
+            team = participant.team
+            items.append(
+                TeamStatsTableEntry(
+                    team_id=team.id,
+                    team_name=get_localized_field(team, "name", lang),
+                    team_logo=team.logo_url,
+                )
+            )
+
+    main_filters = [TeamSeasonStats.season_id == season_id]
+    if group_team_ids is not None:
+        main_filters.append(TeamSeasonStats.team_id.in_(group_team_ids))
+
+    main_result = await db.execute(
+        select(TeamSeasonStats, Team)
+        .join(Team, TeamSeasonStats.team_id == Team.id)
+        .where(*main_filters)
+    )
+    rows = main_result.all()
+
     # Fallback: if v2 TeamSeasonStats is empty, build a basic table
-    if total == 0:
+    if not rows:
         score_table_query = (
             select(ScoreTable, Team)
             .join(Team, ScoreTable.team_id == Team.id)
             .where(ScoreTable.season_id == season_id)
         )
+        if group_team_ids is not None:
+            score_table_query = score_table_query.where(ScoreTable.team_id.in_(group_team_ids))
         score_table_result = await db.execute(score_table_query)
         score_table_rows = score_table_result.all()
 
@@ -990,14 +1096,19 @@ async def get_team_stats_table(
                 )
         else:
             # Cup-style seasons may have no score_table; fallback to finished games aggregation
-            games_result = await db.execute(
-                select(Game.home_team_id, Game.away_team_id, Game.home_score, Game.away_score)
-                .where(
-                    Game.season_id == season_id,
-                    Game.home_score.isnot(None),
-                    Game.away_score.isnot(None),
-                )
+            games_fallback_query = select(
+                Game.home_team_id, Game.away_team_id, Game.home_score, Game.away_score
+            ).where(
+                Game.season_id == season_id,
+                Game.home_score.isnot(None),
+                Game.away_score.isnot(None),
             )
+            if group_team_ids is not None:
+                games_fallback_query = games_fallback_query.where(
+                    Game.home_team_id.in_(group_team_ids),
+                    Game.away_team_id.in_(group_team_ids),
+                )
+            games_result = await db.execute(games_fallback_query)
             game_rows = games_result.all()
 
             team_stats: dict[int, dict] = {}
@@ -1071,6 +1182,7 @@ async def get_team_stats_table(
                         )
                     )
 
+        append_missing_participants(fallback_items)
         sorted_items = sort_items(fallback_items)
         paged_items = sorted_items[offset : offset + limit]
         return TeamStatsTableResponse(
@@ -1079,19 +1191,6 @@ async def get_team_stats_table(
             items=paged_items,
             total=len(sorted_items),
         )
-
-    # Main query with JOIN
-    query = (
-        select(TeamSeasonStats, Team)
-        .join(Team, TeamSeasonStats.team_id == Team.id)
-        .where(TeamSeasonStats.season_id == season_id)
-        .order_by(nulls_last(desc(sort_column)))
-        .offset(offset)
-        .limit(limit)
-    )
-
-    result = await db.execute(query)
-    rows = result.all()
 
     items = []
     for stats, team in rows:
@@ -1127,12 +1226,12 @@ async def get_team_stats_table(
                 shot_accuracy=shot_accuracy,
                 shots_per_match=shots_per_match,
                 passes=stats.passes,
-                pass_accuracy=float(stats.pass_accuracy_avg) if stats.pass_accuracy_avg else None,
+                pass_accuracy=to_finite_float(stats.pass_accuracy_avg),
                 key_passes=stats.key_pass,
                 crosses=stats.pass_cross,
-                possession=float(stats.possession_avg) if stats.possession_avg else None,
+                possession=to_finite_float(stats.possession_avg),
                 dribbles=stats.dribble,
-                dribble_success=float(stats.dribble_ratio) if stats.dribble_ratio else None,
+                dribble_success=to_finite_float(stats.dribble_ratio),
                 tackles=stats.tackle,
                 interceptions=stats.interception,
                 recoveries=stats.recovery,
@@ -1143,14 +1242,262 @@ async def get_team_stats_table(
                 red_cards=stats.red_cards,
                 corners=stats.corners,
                 offsides=stats.offsides,
-                xg=float(stats.xg) if stats.xg else None,
-                xg_per_match=float(stats.xg_per_match) if stats.xg_per_match else None,
+                xg=to_finite_float(stats.xg),
+                xg_per_match=to_finite_float(stats.xg_per_match),
             )
         )
+
+    append_missing_participants(items)
+    sorted_items = sort_items(items)
+    paged_items = sorted_items[offset : offset + limit]
 
     return TeamStatsTableResponse(
         season_id=season_id,
         sort_by=sort_by,
-        items=items,
-        total=total,
+        items=paged_items,
+        total=len(sorted_items),
     )
+
+
+# ──────────────────────────────────────────
+#  Season sub-resources: Stages, Bracket, Teams/Groups
+# ──────────────────────────────────────────
+
+
+@router.get("/{season_id}/stages", response_model=StageListResponse)
+async def get_season_stages(
+    season_id: int,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get stages/tours for a season."""
+    result = await db.execute(
+        select(Stage)
+        .where(Stage.season_id == season_id)
+        .order_by(Stage.sort_order, Stage.stage_number, Stage.id)
+    )
+    stages = result.scalars().all()
+
+    items = [
+        StageResponse(
+            id=s.id,
+            season_id=s.season_id,
+            name=get_localized_field(s, "name", lang),
+            stage_number=s.stage_number,
+            sort_order=s.sort_order,
+        )
+        for s in stages
+    ]
+
+    return StageListResponse(items=items, total=len(items))
+
+
+@router.get("/{season_id}/stages/{stage_id}/games")
+async def get_stage_games(
+    season_id: int,
+    stage_id: int,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get games for a specific stage/tour."""
+    result = await db.execute(
+        select(Game)
+        .where(Game.season_id == season_id, Game.stage_id == stage_id)
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.season),
+        )
+        .order_by(Game.date, Game.time)
+    )
+    games = result.scalars().all()
+
+    items = []
+    for g in games:
+        home_team = None
+        away_team = None
+        if g.home_team:
+            home_team = {
+                "id": g.home_team.id,
+                "name": get_localized_field(g.home_team, "name", lang),
+                "logo_url": g.home_team.logo_url,
+                "score": g.home_score,
+            }
+        if g.away_team:
+            away_team = {
+                "id": g.away_team.id,
+                "name": get_localized_field(g.away_team, "name", lang),
+                "logo_url": g.away_team.logo_url,
+                "score": g.away_score,
+            }
+
+        items.append({
+            "id": g.id,
+            "date": g.date.isoformat() if g.date else None,
+            "time": g.time.isoformat() if g.time else None,
+            "tour": g.tour,
+            "season_id": g.season_id,
+            "stage_id": g.stage_id,
+            "home_score": g.home_score,
+            "away_score": g.away_score,
+            "home_penalty_score": g.home_penalty_score,
+            "away_penalty_score": g.away_penalty_score,
+            "has_stats": g.has_stats,
+            "stadium": g.stadium,
+            "visitors": g.visitors,
+            "home_team": home_team,
+            "away_team": away_team,
+            "season_name": g.season.name if g.season else None,
+        })
+
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/{season_id}/bracket", response_model=PlayoffBracketResponse)
+async def get_season_bracket(
+    season_id: int,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get playoff bracket for a season."""
+    result = await db.execute(
+        select(PlayoffBracket)
+        .where(PlayoffBracket.season_id == season_id, PlayoffBracket.is_visible == True)
+        .options(
+            selectinload(PlayoffBracket.game).selectinload(Game.home_team),
+            selectinload(PlayoffBracket.game).selectinload(Game.away_team),
+        )
+        .order_by(PlayoffBracket.sort_order)
+    )
+    brackets = result.scalars().all()
+
+    # Group by round_name
+    rounds_map: dict[str, list[PlayoffBracketEntry]] = {}
+    for b in brackets:
+        game_brief = None
+        if b.game:
+            home_team = None
+            away_team = None
+            if b.game.home_team:
+                home_team = BracketGameTeam(
+                    id=b.game.home_team.id,
+                    name=get_localized_field(b.game.home_team, "name", lang),
+                    logo_url=b.game.home_team.logo_url,
+                )
+            if b.game.away_team:
+                away_team = BracketGameTeam(
+                    id=b.game.away_team.id,
+                    name=get_localized_field(b.game.away_team, "name", lang),
+                    logo_url=b.game.away_team.logo_url,
+                )
+
+            from app.api.games import compute_game_status
+            game_brief = BracketGameBrief(
+                id=b.game.id,
+                date=b.game.date,
+                time=b.game.time,
+                home_team=home_team,
+                away_team=away_team,
+                home_score=b.game.home_score,
+                away_score=b.game.away_score,
+                home_penalty_score=b.game.home_penalty_score,
+                away_penalty_score=b.game.away_penalty_score,
+                status=compute_game_status(b.game),
+            )
+
+        entry = PlayoffBracketEntry(
+            id=b.id,
+            round_name=b.round_name,
+            side=b.side,
+            sort_order=b.sort_order,
+            is_third_place=b.is_third_place,
+            game=game_brief,
+        )
+
+        rounds_map.setdefault(b.round_name, []).append(entry)
+
+    # Build rounds in order
+    round_order = ["1_16", "1_8", "1_4", "1_2", "3rd_place", "final"]
+    rounds = []
+    for round_name in round_order:
+        if round_name in rounds_map:
+            rounds.append(
+                PlayoffRound(
+                    round_name=round_name,
+                    round_label=ROUND_LABELS.get(round_name, round_name),
+                    entries=rounds_map[round_name],
+                )
+            )
+
+    # Add any remaining rounds not in the predefined order
+    for round_name, entries in rounds_map.items():
+        if round_name not in round_order:
+            rounds.append(
+                PlayoffRound(
+                    round_name=round_name,
+                    round_label=ROUND_LABELS.get(round_name, round_name),
+                    entries=entries,
+                )
+            )
+
+    return PlayoffBracketResponse(season_id=season_id, rounds=rounds)
+
+
+@router.get("/{season_id}/teams", response_model=TeamTournamentListResponse)
+async def get_season_teams(
+    season_id: int,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all teams participating in a season."""
+    participants = await resolve_season_participants(db, season_id, lang)
+    items = [
+        TeamTournamentResponse(
+            id=p.entry_id if p.entry_id is not None else -p.team_id,
+            team_id=p.team_id,
+            team_name=get_localized_field(p.team, "name", lang),
+            team_logo=p.team.logo_url,
+            season_id=season_id,
+            group_name=p.group_name,
+            is_disqualified=p.is_disqualified,
+            fine_points=p.fine_points,
+            sort_order=p.sort_order,
+        )
+        for p in participants
+    ]
+
+    return TeamTournamentListResponse(items=items, total=len(items))
+
+
+@router.get("/{season_id}/groups", response_model=SeasonGroupsResponse)
+async def get_season_groups(
+    season_id: int,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get teams grouped by group_name for a season."""
+    result = await db.execute(
+        select(TeamTournament)
+        .where(TeamTournament.season_id == season_id)
+        .options(selectinload(TeamTournament.team))
+        .order_by(TeamTournament.group_name, TeamTournament.sort_order, TeamTournament.id)
+    )
+    entries = result.scalars().all()
+
+    groups: dict[str, list[TeamTournamentResponse]] = {}
+    for tt in entries:
+        group_key = tt.group_name or "default"
+        item = TeamTournamentResponse(
+            id=tt.id,
+            team_id=tt.team_id,
+            team_name=get_localized_field(tt.team, "name", lang) if tt.team else None,
+            team_logo=tt.team.logo_url if tt.team else None,
+            season_id=tt.season_id,
+            group_name=tt.group_name,
+            is_disqualified=tt.is_disqualified,
+            fine_points=tt.fine_points,
+            sort_order=tt.sort_order,
+        )
+        groups.setdefault(group_key, []).append(item)
+
+    return SeasonGroupsResponse(season_id=season_id, groups=groups)

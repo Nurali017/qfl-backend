@@ -1,11 +1,10 @@
 import enum
 from datetime import datetime
-from uuid import UUID
 from sqlalchemy import Integer, String, DateTime, ForeignKey, Enum, Index
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.sql_types import PLAYER_ID_SQL_TYPE, GAME_ID_SQL_TYPE
 
 
 class GameEventType(str, enum.Enum):
@@ -30,8 +29,8 @@ class GameEvent(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    game_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("games.id"), nullable=False
+    game_id: Mapped[int] = mapped_column(
+        GAME_ID_SQL_TYPE, ForeignKey("games.id"), nullable=False
     )
 
     # Event timing
@@ -48,18 +47,18 @@ class GameEvent(Base):
     team_name: Mapped[str | None] = mapped_column(String(255))
 
     # Primary player (scorer, carded player, player coming off)
-    player_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("players.id"))
+    player_id: Mapped[int | None] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"))
     player_number: Mapped[int | None] = mapped_column(Integer)
     player_name: Mapped[str | None] = mapped_column(String(255))
 
     # Secondary player (player coming on for substitutions)
-    player2_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("players.id"))
+    player2_id: Mapped[int | None] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"))
     player2_number: Mapped[int | None] = mapped_column(Integer)
     player2_name: Mapped[str | None] = mapped_column(String(255))
     player2_team_name: Mapped[str | None] = mapped_column(String(255))
 
     # Assist info (only for goal events)
-    assist_player_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("players.id"))
+    assist_player_id: Mapped[int | None] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"))
     assist_player_name: Mapped[str | None] = mapped_column(String(255))
 
     # Timestamps

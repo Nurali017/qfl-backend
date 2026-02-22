@@ -141,7 +141,7 @@ async def sample_player(test_session) -> Player:
     """Create a sample player."""
     from app.models.player import Player
     player = Player(
-        id=uuid4(),
+        sota_id=uuid4(),
         first_name="Test",
         last_name="Player",
         birthday=date(1995, 1, 15),
@@ -159,7 +159,7 @@ async def sample_player(test_session) -> Player:
 async def sample_game(test_session, sample_season, sample_teams) -> Game:
     """Create a sample game."""
     game = Game(
-        id=uuid4(),
+        sota_id=uuid4(),
         date=date(2025, 5, 15),
         time=time(18, 0),
         tour=1,

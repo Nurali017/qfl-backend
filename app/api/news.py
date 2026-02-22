@@ -1,13 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, desc, asc
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select, func, desc, asc, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.models import News, Language
-from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse
+from app.models.news import NewsLike
+from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse, NewsReactionsResponse
 from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
 from app.utils.error_messages import get_error_message
+
+
+def get_client_ip(request: Request) -> str:
+    return (
+        request.headers.get("X-Real-IP")
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
 
 router = APIRouter(prefix="/news", tags=["news"])
 
@@ -171,6 +180,95 @@ async def get_news_navigation(
         result["next"] = {"id": next_row.id, "title": next_row.title}
 
     return result
+
+
+@router.post("/{news_id}/view")
+async def record_news_view(
+    news_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Increment view counter for a news article."""
+    result = await db.execute(
+        update(News)
+        .where(News.id == news_id)
+        .values(views_count=News.views_count + 1)
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="News not found")
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/{news_id}/like")
+async def toggle_news_like(
+    news_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle like for a news article (IP-based)."""
+    # Check news exists (PK is composite (id, language), so use .first())
+    news = (await db.execute(
+        select(News).where(News.id == news_id).limit(1)
+    )).scalar_one_or_none()
+    if not news:
+        raise HTTPException(status_code=404, detail="News not found")
+
+    client_ip = get_client_ip(request)
+
+    # Check if already liked
+    existing = (await db.execute(
+        select(NewsLike).where(NewsLike.news_id == news_id, NewsLike.client_ip == client_ip)
+    )).scalar_one_or_none()
+
+    if existing:
+        # Unlike
+        await db.execute(delete(NewsLike).where(NewsLike.id == existing.id))
+        await db.execute(
+            update(News)
+            .where(News.id == news_id)
+            .values(likes_count=func.greatest(News.likes_count - 1, 0))
+        )
+        await db.commit()
+        # Re-fetch to get updated count
+        news = (await db.execute(
+            select(News).where(News.id == news_id).limit(1)
+        )).scalar_one()
+        return {"likes": news.likes_count, "liked": False}
+    else:
+        # Like
+        db.add(NewsLike(news_id=news_id, client_ip=client_ip))
+        await db.execute(
+            update(News)
+            .where(News.id == news_id)
+            .values(likes_count=News.likes_count + 1)
+        )
+        await db.commit()
+        # Re-fetch to get updated count
+        news = (await db.execute(
+            select(News).where(News.id == news_id).limit(1)
+        )).scalar_one()
+        return {"likes": news.likes_count, "liked": True}
+
+
+@router.get("/{news_id}/reactions", response_model=NewsReactionsResponse)
+async def get_news_reactions(
+    news_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get view/like counts and whether current IP has liked."""
+    news = (await db.execute(
+        select(News).where(News.id == news_id).limit(1)
+    )).scalar_one_or_none()
+    if not news:
+        raise HTTPException(status_code=404, detail="News not found")
+
+    client_ip = get_client_ip(request)
+    liked = (await db.execute(
+        select(NewsLike.id).where(NewsLike.news_id == news_id, NewsLike.client_ip == client_ip)
+    )).scalar_one_or_none() is not None
+
+    return NewsReactionsResponse(views=news.views_count, likes=news.likes_count, liked=liked)
 
 
 @router.get("/{news_id}")

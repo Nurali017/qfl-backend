@@ -1,5 +1,4 @@
 from datetime import date, time as dt_time
-from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -29,6 +28,8 @@ class TeamListResponse(BaseModel):
 class TeamDetailResponse(TeamResponse):
     city: str | None = None
     website: str | None = None
+    club_id: int | None = None
+    club_name: str | None = None
 
 
 class TeamInGame(BaseModel):
@@ -251,7 +252,7 @@ class TeamOverviewMatchTeam(BaseModel):
 
 
 class TeamOverviewMatch(BaseModel):
-    id: str
+    id: int
     date: date
     time: dt_time | None = None
     tour: int | None = None
@@ -266,7 +267,7 @@ class TeamOverviewMatch(BaseModel):
 
 
 class TeamOverviewFormEntry(BaseModel):
-    game_id: str
+    game_id: int
     is_home: bool
     opponent_name: str
     opponent_logo: FileUrl = None
@@ -288,7 +289,7 @@ class TeamOverviewStandingEntry(BaseModel):
 
 
 class TeamOverviewLeaderPlayer(BaseModel):
-    player_id: UUID
+    player_id: int
     first_name: str | None = None
     last_name: str | None = None
     photo_url: FileUrl = None

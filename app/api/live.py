@@ -6,12 +6,13 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPExce
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.database import get_db
+from app.api.deps import get_db
 from app.models import Game
 from app.services.sota_client import get_sota_client, SotaClient
 from app.services.live_sync_service import LiveSyncService
 from app.services.websocket_manager import get_websocket_manager, ConnectionManager
 from app.services.live_event_bus import publish_live_message
+from app.services.sync import SyncOrchestrator
 from app.schemas.live import (
     GameEventsListResponse,
     GameEventResponse,
@@ -37,7 +38,7 @@ def get_live_sync_service(
 
 @router.post("/start/{game_id}", response_model=LiveSyncResponse)
 async def start_live_sync(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
     manager: ConnectionManager = Depends(get_websocket_manager),
 ):
@@ -60,7 +61,7 @@ async def start_live_sync(
 
 @router.post("/stop/{game_id}", response_model=LiveSyncResponse)
 async def stop_live_sync(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
     manager: ConnectionManager = Depends(get_websocket_manager),
 ):
@@ -81,8 +82,9 @@ async def stop_live_sync(
 
 @router.post("/sync-lineup/{game_id}", response_model=LineupSyncResponse)
 async def sync_lineup(
-    game_id: str,
-    service: LiveSyncService = Depends(get_live_sync_service),
+    game_id: int,
+    db: AsyncSession = Depends(get_db),
+    client: SotaClient = Depends(get_sota_client),
     manager: ConnectionManager = Depends(get_websocket_manager),
 ):
     """
@@ -90,18 +92,28 @@ async def sync_lineup(
 
     Fetches lineup from SOTA /em/ endpoints and saves to database.
     """
-    result = await service.sync_pregame_lineup(game_id)
+    try:
+        details = await SyncOrchestrator(db, client).sync_pre_game_lineup(game_id)
+        game_result = await db.execute(select(Game).where(Game.id == game_id))
+        game = game_result.scalar_one_or_none()
 
-    if "error" not in result:
-        await manager.broadcast_lineup(game_id, result)
-        await publish_live_message({"type": "lineup", "game_id": game_id, "data": result})
-
-    return LineupSyncResponse(**result)
+        str_game_id = str(game_id)
+        result = {
+            "game_id": str_game_id,
+            "home_formation": game.home_formation if game else None,
+            "away_formation": game.away_formation if game else None,
+            "lineup_count": int(details.get("lineups", 0)),
+        }
+        await manager.broadcast_lineup(str_game_id, result)
+        await publish_live_message({"type": "lineup", "game_id": str_game_id, "data": result})
+        return LineupSyncResponse(**result)
+    except Exception as exc:
+        return LineupSyncResponse(game_id=str(game_id), lineup_count=0, error=str(exc))
 
 
 @router.post("/sync-events/{game_id}")
 async def sync_events(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
     manager: ConnectionManager = Depends(get_websocket_manager),
 ):
@@ -127,7 +139,7 @@ async def sync_events(
 
 @router.get("/events/{game_id}", response_model=GameEventsListResponse)
 async def get_game_events(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
 ):
     """
@@ -153,7 +165,7 @@ async def get_active_games(
         "count": len(games),
         "games": [
             {
-                "id": str(g.id),
+                "id": g.id,
                 "date": g.date.isoformat(),
                 "time": g.time.isoformat() if g.time else None,
                 "home_team_id": g.home_team_id,
@@ -168,7 +180,7 @@ async def get_active_games(
 
 @router.get("/connections/{game_id}")
 async def get_websocket_connections(
-    game_id: str,
+    game_id: int,
     manager: ConnectionManager = Depends(get_websocket_manager),
 ):
     """

@@ -46,7 +46,7 @@ class TestSyncServices:
         )
 
         service = GameSyncService(test_session, mock_client)
-        result = await service.sync_game_events(str(sample_game.id))
+        result = await service.sync_game_events(sample_game.id)
 
         assert result["events_added"] == 0
 
@@ -80,7 +80,7 @@ class TestSyncServices:
                     {"number": "ОСНОВНЫЕ"},
                     {
                         "number": 10,
-                        "id": str(sample_player.id),
+                        "id": str(sample_player.sota_id),
                         "first_name": sample_player.first_name,
                         "last_name": sample_player.last_name,
                         "amplua": "",
@@ -92,7 +92,7 @@ class TestSyncServices:
             ]
         )
 
-        await service.sync_live_lineup_positions(str(sample_game.id))
+        await service.sync_live_lineup_positions(sample_game.id)
 
         refreshed = await test_session.execute(
             select(GameLineup).where(
@@ -138,7 +138,7 @@ class TestSyncServices:
             ]
         )
 
-        result = await service.sync_game_events(str(sample_game.id))
+        result = await service.sync_game_events(sample_game.id)
         assert result["events_added"] == 0
 
         all_events = await test_session.execute(

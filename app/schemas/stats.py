@@ -1,5 +1,4 @@
 import datetime
-from uuid import UUID
 from pydantic import BaseModel
 
 
@@ -28,7 +27,7 @@ class GameTeamStatsResponse(BaseModel):
 
 
 class GamePlayerStatsResponse(BaseModel):
-    player_id: UUID
+    player_id: int
     first_name: str | None = None
     last_name: str | None = None
     team_id: int
@@ -54,13 +53,13 @@ class GamePlayerStatsResponse(BaseModel):
 
 
 class GameStatsResponse(BaseModel):
-    game_id: UUID
+    game_id: int
     team_stats: list[GameTeamStatsResponse] = []
     player_stats: list[GamePlayerStatsResponse] = []
 
 
 class NextGameInfo(BaseModel):
-    game_id: UUID
+    game_id: int
     date: datetime.date | None = None
     opponent_id: int
     opponent_name: str | None = None
@@ -115,7 +114,7 @@ class ResultsGridResponse(BaseModel):
 
 
 class PlayerSeasonStatsResponse(BaseModel):
-    player_id: UUID
+    player_id: int
     season_id: int
     games_played: int = 0
     minutes_played: int = 0

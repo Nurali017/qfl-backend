@@ -126,24 +126,24 @@ class SyncOrchestrator:
         logger.info(f"Syncing games for season {season_id}")
         return await self.game.sync_games(season_id)
 
-    async def sync_game_stats(self, game_id: str) -> dict:
+    async def sync_game_stats(self, game_id: int) -> dict:
         """
         Sync statistics for a specific game.
 
         Args:
-            game_id: Game UUID string
+            game_id: Game int ID
 
         Returns:
             Dict with team and player counts
         """
         return await self.game.sync_game_stats(game_id)
 
-    async def sync_game_events(self, game_id: str) -> dict:
+    async def sync_game_events(self, game_id: int) -> dict:
         """
         Sync events for a specific game.
 
         Args:
-            game_id: Game UUID string
+            game_id: Game int ID
 
         Returns:
             Dict with game_id and events_added count
@@ -165,17 +165,51 @@ class SyncOrchestrator:
             return {"skipped": True, "reason": "sync disabled for season"}
         return await self.game.sync_all_game_events(season_id)
 
-    async def sync_pre_game_lineup(self, game_id: str) -> dict[str, int]:
+    async def sync_pre_game_lineup(self, game_id: int) -> dict[str, int]:
         """
         Sync pre-game lineup (referees, coaches, lineups) for a game.
 
         Args:
-            game_id: Game UUID string
+            game_id: Game int ID
 
         Returns:
             Dict with synced counts
         """
         return await self.lineup.sync_pre_game_lineup(game_id)
+
+    async def sync_live_positions_and_kits(
+        self,
+        game_id: int,
+        *,
+        mode: str = "live_read",
+        timeout_seconds: float | None = None,
+        auto_commit: bool = True,
+        touch_live_sync_timestamp: bool = True,
+    ) -> dict:
+        return await self.lineup.sync_live_positions_and_kits(
+            game_id,
+            mode=mode,
+            timeout_seconds=timeout_seconds,
+            auto_commit=auto_commit,
+            touch_live_sync_timestamp=touch_live_sync_timestamp,
+        )
+
+    async def backfill_finished_games_positions_and_kits(
+        self,
+        *,
+        season_id: int | None = None,
+        batch_size: int = 100,
+        limit: int | None = None,
+        game_ids: list[str] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict:
+        return await self.lineup.backfill_finished_games_positions_and_kits(
+            season_id=season_id,
+            batch_size=batch_size,
+            limit=limit,
+            game_ids=game_ids,
+            timeout_seconds=timeout_seconds,
+        )
 
     # ==================== Stats sync methods ====================
 
@@ -260,7 +294,7 @@ class SyncOrchestrator:
         logger.info(f"Full sync complete for season {season_id}: {results}")
         return results
 
-    async def sync_live_stats(self, season_id: int, game_ids: list[str]) -> dict[str, int]:
+    async def sync_live_stats(self, season_id: int, game_ids: list[int]) -> dict[str, int]:
         """
         Sync statistics for specific games (used for live/recent games).
 

@@ -180,7 +180,7 @@ async def sync_score_table(
 
 
 @router.post("/game-stats/{game_id}", response_model=SyncResponse)
-async def sync_game_stats(game_id: str, db: AsyncSession = Depends(get_db)):
+async def sync_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
     """Sync statistics for a specific game."""
     try:
         orchestrator = SyncOrchestrator(db)
@@ -200,7 +200,7 @@ async def sync_game_stats(game_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/game-lineup/{game_id}", response_model=SyncResponse)
-async def sync_game_lineup(game_id: str, db: AsyncSession = Depends(get_db)):
+async def sync_game_lineup(game_id: int, db: AsyncSession = Depends(get_db)):
     """Sync pre-game lineup (referees, coaches, lineups) for a specific game."""
     try:
         orchestrator = SyncOrchestrator(db)
@@ -284,7 +284,7 @@ async def sync_player_season_stats(
 
 
 @router.post("/game-events/{game_id}", response_model=SyncResponse)
-async def sync_game_events(game_id: str, db: AsyncSession = Depends(get_db)):
+async def sync_game_events(game_id: int, db: AsyncSession = Depends(get_db)):
     """Sync events (goals, cards, substitutions) for a specific game."""
     try:
         orchestrator = SyncOrchestrator(db)

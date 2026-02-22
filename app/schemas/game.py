@@ -1,6 +1,5 @@
 from datetime import date
 from datetime import time as time_type
-from uuid import UUID
 from pydantic import BaseModel
 
 from app.schemas.team import TeamInGame
@@ -8,13 +7,16 @@ from app.utils.file_urls import FileUrl
 
 
 class GameBase(BaseModel):
-    id: UUID
+    id: int
     date: date
     time: time_type | None = None
     tour: int | None = None
     season_id: int | None = None
+    stage_id: int | None = None
     home_score: int | None = None
     away_score: int | None = None
+    home_penalty_score: int | None = None
+    away_penalty_score: int | None = None
     has_stats: bool = False
     stadium: str | None = None
     visitors: int | None = None
@@ -27,6 +29,7 @@ class GameResponse(GameBase):
     away_team: TeamInGame | None = None
     season_name: str | None = None
     tournament_name: str | None = None
+    stage_name: str | None = None
     status: str | None = None
     has_score: bool = False
 
@@ -74,6 +77,8 @@ class StadiumInfo(BaseModel):
     name: str | None = None
     city: str | None = None
     capacity: int | None = None
+    address: str | None = None
+    photo_url: FileUrl = None
 
     class Config:
         from_attributes = True
@@ -93,7 +98,7 @@ class TeamInMatchCenter(BaseModel):
 
 class MatchCenterGame(BaseModel):
     """Match information for match center display."""
-    id: UUID
+    id: int
     date: date
     time: time_type | None = None
     tour: int | None = None
@@ -104,6 +109,12 @@ class MatchCenterGame(BaseModel):
 
     home_score: int | None = None
     away_score: int | None = None
+    home_penalty_score: int | None = None
+    away_penalty_score: int | None = None
+
+    # Stage info
+    stage_id: int | None = None
+    stage_name: str | None = None
 
     stadium: StadiumInfo | None = None
     visitors: int | None = None

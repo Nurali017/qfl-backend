@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
 from app.config import get_settings
-from app.models import AdminUser
+from app.models import AdminUser, Game
 from app.schemas.live import GameEventResponse, GameEventsListResponse, LineupSyncResponse, LiveSyncResponse
 from app.schemas.sync import SyncResponse, SyncStatus
 from app.services.live_event_bus import publish_live_message
@@ -15,6 +17,10 @@ from app.services.websocket_manager import ConnectionManager, get_websocket_mana
 
 settings = get_settings()
 router = APIRouter(prefix="/ops", tags=["admin-ops"])
+
+
+class FinishedLineupsBackfillRequest(BaseModel):
+    game_ids: list[str] | None = None
 
 
 def get_live_sync_service(
@@ -134,7 +140,7 @@ async def sync_player_season_stats(
 
 @router.post("/sync/game-stats/{game_id}", response_model=SyncResponse)
 async def sync_game_stats(
-    game_id: str,
+    game_id: int,
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
@@ -147,7 +153,7 @@ async def sync_game_stats(
 
 @router.post("/sync/game-lineup/{game_id}", response_model=SyncResponse)
 async def sync_game_lineup(
-    game_id: str,
+    game_id: int,
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
@@ -158,9 +164,35 @@ async def sync_game_lineup(
         return SyncResponse(status=SyncStatus.FAILED, message=f"Game lineup sync failed: {exc}")
 
 
+@router.post("/sync/finished-lineups-positions", response_model=SyncResponse)
+async def sync_finished_lineups_positions(
+    payload: FinishedLineupsBackfillRequest | None = Body(default=None),
+    season_id: int | None = Query(default=None),
+    batch_size: int = Query(default=100, ge=1, le=1000),
+    limit: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    try:
+        details = await SyncOrchestrator(db).backfill_finished_games_positions_and_kits(
+            season_id=season_id,
+            batch_size=batch_size,
+            limit=limit,
+            game_ids=payload.game_ids if payload else None,
+            timeout_seconds=settings.lineup_live_refresh_timeout_seconds,
+        )
+        return SyncResponse(
+            status=SyncStatus.SUCCESS,
+            message="Finished games lineup position repair completed",
+            details=details,
+        )
+    except Exception as exc:
+        return SyncResponse(status=SyncStatus.FAILED, message=f"Finished lineup repair failed: {exc}")
+
+
 @router.post("/sync/game-events/{game_id}", response_model=SyncResponse)
 async def sync_game_events(
-    game_id: str,
+    game_id: int,
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
@@ -187,7 +219,7 @@ async def sync_all_game_events(
 
 @router.post("/live/start/{game_id}", response_model=LiveSyncResponse)
 async def live_start(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
     manager: ConnectionManager = Depends(get_websocket_manager),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
@@ -201,7 +233,7 @@ async def live_start(
 
 @router.post("/live/stop/{game_id}", response_model=LiveSyncResponse)
 async def live_stop(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
     manager: ConnectionManager = Depends(get_websocket_manager),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
@@ -215,21 +247,34 @@ async def live_stop(
 
 @router.post("/live/sync-lineup/{game_id}", response_model=LineupSyncResponse)
 async def live_sync_lineup(
-    game_id: str,
-    service: LiveSyncService = Depends(get_live_sync_service),
+    game_id: int,
+    db: AsyncSession = Depends(get_db),
+    client: SotaClient = Depends(get_sota_client),
     manager: ConnectionManager = Depends(get_websocket_manager),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    result = await service.sync_pregame_lineup(game_id)
-    if "error" not in result:
-        await manager.broadcast_lineup(game_id, result)
-        await publish_live_message({"type": "lineup", "game_id": game_id, "data": result})
-    return LineupSyncResponse(**result)
+    try:
+        details = await SyncOrchestrator(db, client).sync_pre_game_lineup(game_id)
+        game_result = await db.execute(select(Game).where(Game.id == game_id))
+        game = game_result.scalar_one_or_none()
+
+        str_game_id = str(game_id)
+        result = {
+            "game_id": str_game_id,
+            "home_formation": game.home_formation if game else None,
+            "away_formation": game.away_formation if game else None,
+            "lineup_count": int(details.get("lineups", 0)),
+        }
+        await manager.broadcast_lineup(str_game_id, result)
+        await publish_live_message({"type": "lineup", "game_id": str_game_id, "data": result})
+        return LineupSyncResponse(**result)
+    except Exception as exc:
+        return LineupSyncResponse(game_id=str(game_id), lineup_count=0, error=str(exc))
 
 
 @router.post("/live/sync-events/{game_id}")
 async def live_sync_events(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
     manager: ConnectionManager = Depends(get_websocket_manager),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
@@ -249,7 +294,7 @@ async def live_sync_events(
 
 @router.get("/live/events/{game_id}", response_model=GameEventsListResponse)
 async def live_events(
-    game_id: str,
+    game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
@@ -271,7 +316,7 @@ async def live_active_games(
         "count": len(games),
         "games": [
             {
-                "id": str(g.id),
+                "id": g.id,
                 "date": g.date.isoformat(),
                 "time": g.time.isoformat() if g.time else None,
                 "home_team_id": g.home_team_id,

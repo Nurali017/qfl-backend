@@ -1,4 +1,3 @@
-from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -20,6 +19,7 @@ from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.team import TeamInGame
 from app.config import get_settings
 from app.utils.localization import get_localized_field, get_localized_name
+from app.utils.numbers import sanitize_non_finite_numbers
 
 settings = get_settings()
 
@@ -84,7 +84,7 @@ async def get_players(
 
 @router.get("/{player_id}")
 async def get_player(
-    player_id: UUID,
+    player_id: int,
     season_id: int | None = Query(default=None),
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),
     db: AsyncSession = Depends(get_db),
@@ -136,12 +136,15 @@ async def get_player(
         "top_role": get_localized_field(player, "top_role", lang),
         "teams": teams,
         "jersey_number": jersey_number,
+        "height": player.height,
+        "weight": player.weight,
+        "gender": player.gender,
     }
 
 
 @router.get("/{player_id}/stats", response_model=PlayerSeasonStatsResponse)
 async def get_player_stats(
-    player_id: UUID,
+    player_id: int,
     season_id: int = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -173,12 +176,13 @@ async def get_player_stats(
             detail="Stats not found. Run /sync/player-season-stats first.",
         )
 
-    return PlayerSeasonStatsResponse.model_validate(stats)
+    payload = PlayerSeasonStatsResponse.model_validate(stats).model_dump()
+    return sanitize_non_finite_numbers(payload)
 
 
 @router.get("/{player_id}/games", response_model=GameListResponse)
 async def get_player_games(
-    player_id: UUID,
+    player_id: int,
     season_id: int = Query(default=None),
     limit: int = Query(default=50, le=100),
     db: AsyncSession = Depends(get_db),
@@ -252,7 +256,7 @@ async def get_player_games(
 
 @router.get("/{player_id}/teammates", response_model=PlayerTeammatesListResponse)
 async def get_player_teammates(
-    player_id: UUID,
+    player_id: int,
     season_id: int = Query(default=None),
     limit: int = Query(default=10, le=50),
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),
@@ -312,7 +316,7 @@ async def get_player_teammates(
 
 @router.get("/{player_id}/tournaments", response_model=PlayerTournamentHistoryResponse)
 async def get_player_tournament_history(
-    player_id: UUID,
+    player_id: int,
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),
     db: AsyncSession = Depends(get_db),
 ):

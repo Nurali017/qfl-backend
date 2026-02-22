@@ -1,5 +1,4 @@
 from datetime import date
-from uuid import UUID
 from pydantic import BaseModel
 
 from app.schemas.country import CountryInPlayer
@@ -7,7 +6,7 @@ from app.utils.file_urls import FileUrl
 
 
 class PlayerBase(BaseModel):
-    id: UUID
+    id: int
     first_name: str | None = None
     last_name: str | None = None
     birthday: date | None = None
@@ -31,6 +30,9 @@ class PlayerListResponse(BaseModel):
 class PlayerDetailResponse(PlayerResponse):
     teams: list[int] = []
     jersey_number: int | None = None
+    height: int | None = None
+    weight: int | None = None
+    gender: str | None = None
 
 
 class PlayerWithTeamResponse(PlayerResponse):
@@ -53,7 +55,7 @@ class PlayerFromSOTA(BaseModel):
 
 
 class PlayerSeasonStatsResponse(BaseModel):
-    player_id: UUID
+    player_id: int
     season_id: int
     team_id: int | None = None
 
@@ -96,7 +98,7 @@ class PlayerSeasonStatsResponse(BaseModel):
 class PlayerStatsTableEntry(BaseModel):
     """Single entry in player stats table."""
 
-    player_id: UUID
+    player_id: int
     first_name: str | None = None
     last_name: str | None = None
     photo_url: FileUrl = None
@@ -148,7 +150,7 @@ class PlayerStatsTableResponse(BaseModel):
 class PlayerTeammateResponse(BaseModel):
     """Response for player teammate."""
 
-    player_id: UUID
+    player_id: int
     first_name: str | None = None
     last_name: str | None = None
     jersey_number: int | None = None

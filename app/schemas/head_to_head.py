@@ -18,7 +18,7 @@ class H2HOverallStats(BaseModel):
 
 class FormGuideMatch(BaseModel):
     """Single match in form guide (W/D/L)."""
-    game_id: str
+    game_id: int
     date: date
     result: str  # "W", "D", or "L"
     opponent_id: int
@@ -55,7 +55,7 @@ class SeasonTableEntry(BaseModel):
 
 class PreviousMeeting(BaseModel):
     """Previous match between two teams."""
-    game_id: str
+    game_id: int
     date: date
     home_team_id: int
     home_team_name: str

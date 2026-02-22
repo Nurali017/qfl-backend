@@ -48,3 +48,9 @@ class NewsListResponse(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+class NewsReactionsResponse(BaseModel):
+    views: int
+    likes: int
+    liked: bool = False

@@ -5,21 +5,28 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.models.sql_types import GAME_ID_SQL_TYPE
 from app.utils.file_urls import FileUrlType
 
 
 class Game(Base):
     __tablename__ = "games"
 
-    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    id: Mapped[int] = mapped_column(GAME_ID_SQL_TYPE, primary_key=True, autoincrement=True)
+    sota_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), unique=True, index=True)
+    legacy_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
+    vsporte_id: Mapped[str | None] = mapped_column(String(100), index=True)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     time: Mapped[time | None] = mapped_column(Time)
     tour: Mapped[int | None] = mapped_column(Integer)
+    stage_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stages.id"), index=True)
     season_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("seasons.id"))
     home_team_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("teams.id"))
     away_team_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("teams.id"))
     home_score: Mapped[int | None] = mapped_column(Integer)
     away_score: Mapped[int | None] = mapped_column(Integer)
+    home_penalty_score: Mapped[int | None] = mapped_column(Integer)
+    away_penalty_score: Mapped[int | None] = mapped_column(Integer)
     has_stats: Mapped[bool] = mapped_column(Boolean, default=False)
     has_lineup: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -27,6 +34,9 @@ class Game(Base):
     is_live: Mapped[bool] = mapped_column(Boolean, default=False)
     home_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-2-3-1"
     away_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-3-3"
+    home_kit_color: Mapped[str | None] = mapped_column(String(10))
+    away_kit_color: Mapped[str | None] = mapped_column(String(10))
+    lineup_live_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     # Stadium - keep string for backward compatibility, add FK
     stadium: Mapped[str | None] = mapped_column(String(255))  # Legacy field
@@ -66,3 +76,4 @@ class Game(Base):
     events: Mapped[list["GameEvent"]] = relationship(
         "GameEvent", back_populates="game", cascade="all, delete-orphan"
     )
+    stage: Mapped["Stage"] = relationship("Stage", back_populates="games")
