@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from httpx import AsyncClient
 
-from app.models import Season, Team, Game, Stage, SeasonParticipant, PlayoffBracket, Championship
+from app.models import Season, Team, Game, Stage, SeasonParticipant, Championship
 
 
 @pytest.fixture
@@ -116,27 +116,6 @@ async def cup_groups(test_session, cup_season, cup_teams) -> list[SeasonParticip
     return entries
 
 
-@pytest.fixture
-async def cup_bracket(test_session, cup_season, cup_games) -> list[PlayoffBracket]:
-    entries = [
-        PlayoffBracket(
-            season_id=cup_season.id, round_name="1_4", side="left",
-            sort_order=1, game_id=cup_games[0].id, is_visible=True,
-        ),
-        PlayoffBracket(
-            season_id=cup_season.id, round_name="1_4", side="right",
-            sort_order=2, game_id=cup_games[1].id, is_visible=True,
-        ),
-        PlayoffBracket(
-            season_id=cup_season.id, round_name="1_2", side="left",
-            sort_order=1, game_id=cup_games[2].id, is_visible=True,
-        ),
-    ]
-    test_session.add_all(entries)
-    await test_session.commit()
-    return entries
-
-
 @pytest.mark.asyncio
 class TestCupOverview:
     """Tests for GET /api/v1/cup/{season_id}/overview."""
@@ -203,14 +182,17 @@ class TestCupOverview:
         assert "B" in group_names
 
     async def test_overview_with_bracket(
-        self, client: AsyncClient, cup_season, cup_games, cup_stages, cup_bracket
+        self, client: AsyncClient, cup_season, cup_games, cup_stages
     ):
         response = await client.get(f"/api/v1/cup/{cup_season.id}/overview")
         assert response.status_code == 200
         data = response.json()
         assert data["bracket"] is not None
         assert data["bracket"]["season_id"] == cup_season.id
-        assert len(data["bracket"]["rounds"]) == 2  # 1_4, 1_2
+        round_names = [round_item["round_name"] for round_item in data["bracket"]["rounds"]]
+        assert "1_4" in round_names
+        assert "1_2" in round_names
+        assert "final" in round_names
 
     async def test_overview_recent_limit(
         self, client: AsyncClient, cup_season, cup_games, cup_stages
@@ -291,3 +273,29 @@ class TestCupSchedule:
         assert "away_team" in game
         assert "status" in game
         assert game["home_team"]["name"] is not None
+
+
+@pytest.mark.asyncio
+class TestSeasonBracketFromStages:
+    async def test_season_bracket_is_built_from_games_and_stages(
+        self, client: AsyncClient, cup_season, cup_games, cup_stages
+    ):
+        response = await client.get(f"/api/v1/seasons/{cup_season.id}/bracket")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["season_id"] == cup_season.id
+        round_names = [round_item["round_name"] for round_item in data["rounds"]]
+        assert "1_4" in round_names
+        assert "1_2" in round_names
+        assert "final" in round_names
+
+        final_round = next(round_item for round_item in data["rounds"] if round_item["round_name"] == "final")
+        assert len(final_round["entries"]) >= 1
+        assert final_round["entries"][0]["game"] is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_playoff_routes_are_not_available(client: AsyncClient):
+    response = await client.get("/api/v1/admin/playoff-brackets?season_id=71")
+    assert response.status_code == 404

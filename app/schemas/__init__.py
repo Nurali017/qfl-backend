@@ -17,7 +17,6 @@ from app.schemas.stats import (
     PlayerSeasonStatsResponse,
     TeamSeasonStatsResponse,
 )
-from app.schemas.sync import SyncResponse, SyncStatus
 from app.schemas.page import PageResponse, PageListResponse
 from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse
 
@@ -43,8 +42,6 @@ __all__ = [
     "ScoreTableResponse",
     "PlayerSeasonStatsResponse",
     "TeamSeasonStatsResponse",
-    "SyncResponse",
-    "SyncStatus",
     "PageResponse",
     "PageListResponse",
     "NewsResponse",

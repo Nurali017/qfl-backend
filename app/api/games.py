@@ -42,8 +42,6 @@ from app.schemas.stats import (
     GamePlayerStatsResponse,
 )
 from app.schemas.team import TeamInGame
-from app.services.sota_client import SotaClient, get_sota_client
-from app.services.sync.lineup_sync import LineupSyncService
 from app.utils.date_helpers import format_match_date, get_localized_field
 from app.utils.numbers import to_finite_float
 from app.config import get_settings
@@ -998,7 +996,6 @@ async def get_game_lineup(
     game_id: int,
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
-    client: SotaClient = Depends(get_sota_client),
 ):
     """
     Get pre-game lineup data for a game.
@@ -1041,38 +1038,6 @@ async def get_game_lineup(
                 "away_team": {"team_id": game.away_team_id, "team_name": game.away_team.name if game.away_team else None, "formation": None, "kit_color": None, "starters": [], "substitutes": []},
             },
         }
-
-    # Read-through refresh from live feed for active games.
-    if game.is_live:
-        ttl_seconds = max(0, settings.lineup_live_refresh_ttl_seconds)
-        last_sync = game.lineup_live_synced_at
-        is_stale = (
-            last_sync is None
-            or (datetime.utcnow() - last_sync) >= timedelta(seconds=ttl_seconds)
-        )
-        if is_stale:
-            try:
-                await LineupSyncService(db, client).sync_live_positions_and_kits(
-                    game_id,
-                    mode="live_read",
-                    timeout_seconds=settings.lineup_live_refresh_timeout_seconds,
-                )
-                refreshed_game_result = await db.execute(
-                    select(Game)
-                    .where(Game.id == game_id)
-                    .options(
-                        selectinload(Game.home_team),
-                        selectinload(Game.away_team),
-                        selectinload(Game.season)
-                        .selectinload(Season.championship),
-                    )
-                )
-                refreshed_game = refreshed_game_result.scalar_one_or_none()
-                if refreshed_game is not None:
-                    game = refreshed_game
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Live lineup read-refresh failed for game %s: %s", game_id, exc)
-                await db.rollback()
 
     # Get referees for this game
     referees_result = await db.execute(

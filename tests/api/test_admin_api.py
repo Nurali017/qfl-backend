@@ -196,35 +196,6 @@ async def test_pages_material_update_and_add_translation(
 
 
 @pytest.mark.asyncio
-async def test_ops_rbac_and_operator_access(
-    client: AsyncClient,
-    editor_user: AdminUser,
-    operator_user: AdminUser,
-    monkeypatch,
-):
-    editor_token = await _login(client, editor_user.email, "editor-secret")
-
-    forbidden = await client.post(
-        "/api/v1/admin/ops/sync/full",
-        headers={"Authorization": f"Bearer {editor_token}"},
-    )
-    assert forbidden.status_code == 403
-
-    async def fake_full_sync(_self, season_id: int):
-        return {"season_id": season_id, "ok": True}
-
-    monkeypatch.setattr("app.api.admin.ops.SyncOrchestrator.full_sync", fake_full_sync)
-
-    operator_token = await _login(client, operator_user.email, "operator-secret")
-    allowed = await client.post(
-        "/api/v1/admin/ops/sync/full?season_id=61",
-        headers={"Authorization": f"Bearer {operator_token}"},
-    )
-    assert allowed.status_code == 200, allowed.text
-    assert allowed.json()["status"] == "success"
-
-
-@pytest.mark.asyncio
 async def test_admin_players_rbac_editor_allowed_operator_forbidden(
     client: AsyncClient,
     editor_user: AdminUser,

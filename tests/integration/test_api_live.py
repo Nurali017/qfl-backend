@@ -228,17 +228,3 @@ class TestNewsAPI:
         assert response.status_code == 404
 
 
-class TestSyncAPI:
-    """Test sync endpoints against live server (non-destructive checks)."""
-
-    def test_sync_teams(self, live_client):
-        response = live_client.post("/api/v1/sync/teams")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] in ["success", "failed"]
-
-    def test_sync_score_table(self, live_client):
-        response = live_client.post("/api/v1/sync/score-table?season_id=61")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] in ["success", "failed"]

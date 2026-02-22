@@ -48,12 +48,6 @@ from app.schemas.admin.partners import (
     AdminPartnerResponse,
     AdminPartnersListResponse,
 )
-from app.schemas.admin.playoff_brackets import (
-    AdminPlayoffBracketCreateRequest,
-    AdminPlayoffBracketUpdateRequest,
-    AdminPlayoffBracketResponse,
-    AdminPlayoffBracketsListResponse,
-)
 from app.schemas.admin.season_participants import (
     AdminSeasonParticipantCreateRequest,
     AdminSeasonParticipantUpdateRequest,
@@ -101,10 +95,6 @@ __all__ = [
     "AdminPartnerUpdateRequest",
     "AdminPartnerResponse",
     "AdminPartnersListResponse",
-    "AdminPlayoffBracketCreateRequest",
-    "AdminPlayoffBracketUpdateRequest",
-    "AdminPlayoffBracketResponse",
-    "AdminPlayoffBracketsListResponse",
     "AdminSeasonParticipantCreateRequest",
     "AdminSeasonParticipantUpdateRequest",
     "AdminSeasonParticipantResponse",

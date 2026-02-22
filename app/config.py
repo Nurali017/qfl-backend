@@ -14,35 +14,11 @@ class Settings(BaseSettings):
     minio_bucket: str = "qfl-files"
     minio_secure: bool = False  # True for HTTPS
 
-    # SOTA API
-    sota_enabled: bool = True
-    sota_api_email: str
-    sota_api_password: str
-    sota_api_base_url: str = "https://sota.id/api"
-    lineup_live_refresh_ttl_seconds: int = 30
-    lineup_live_refresh_timeout_seconds: int = 3
-
-    # Legacy MySQL (one-time lineup backfill only)
-    legacy_mysql_host: str = "localhost"
-    legacy_mysql_port: int = 3306
-    legacy_mysql_db: str = "p-348074_db"
-    legacy_mysql_user: str = "p-348074_user"
-    legacy_mysql_password: str = ""
-    legacy_mysql_connect_timeout_seconds: int = 10
-    legacy_current_season_id: int = 21
-
-    # Redis
+    # Redis (Celery broker)
     redis_url: str = "redis://localhost:6379/0"
-    live_events_channel: str = "qfl:live-events"
 
     # Current season (default for API when season_id not specified)
     current_season_id: int = 61
-
-    # Seasons to sync automatically (Celery tasks)
-    # IDs from SOTA API database:
-    # 61=Premier League, 85=First League, 71=Cup,
-    # 80=Second League (merged), 84=Women's League
-    sync_season_ids: list[int] = [61, 85, 71, 80, 84]
 
     # CORS
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kff.1sportkz.com"
@@ -67,6 +43,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache

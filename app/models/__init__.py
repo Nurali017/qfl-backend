@@ -27,7 +27,6 @@ from app.models.championship import Championship
 from app.models.city import City
 from app.models.club import Club
 from app.models.stage import Stage
-from app.models.playoff_bracket import PlayoffBracket
 from app.models.season_participant import SeasonParticipant
 from app.models.partner import Partner
 from app.models.team_of_week import TeamOfWeek
@@ -67,7 +66,6 @@ __all__ = [
     "City",
     "Club",
     "Stage",
-    "PlayoffBracket",
     "SeasonParticipant",
     "Partner",
     "TeamOfWeek",

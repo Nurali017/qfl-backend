@@ -19,10 +19,10 @@ from app.models import (
     GameEvent,
     GameEventType,
     Stage,
-    PlayoffBracket,
     SeasonParticipant,
 )
 from app.services.season_participants import resolve_season_participants
+from app.services.cup_rounds import build_playoff_bracket_from_rounds, build_schedule_rounds
 from app.utils.localization import get_localized_field
 from app.utils.numbers import to_finite_float
 from app.utils.positions import infer_position_code
@@ -37,14 +37,7 @@ from app.schemas.season import (
 )
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.stage import StageResponse, StageListResponse
-from app.schemas.playoff_bracket import (
-    PlayoffBracketEntry,
-    PlayoffBracketResponse,
-    PlayoffRound,
-    BracketGameBrief,
-    BracketGameTeam,
-    ROUND_LABELS,
-)
+from app.schemas.playoff_bracket import PlayoffBracketResponse
 from app.schemas.season_participant import (
     SeasonParticipantResponse,
     SeasonParticipantListResponse,
@@ -1457,88 +1450,35 @@ async def get_season_bracket(
     lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get playoff bracket for a season."""
-    result = await db.execute(
-        select(PlayoffBracket)
-        .where(PlayoffBracket.season_id == season_id, PlayoffBracket.is_visible == True)
-        .options(
-            selectinload(PlayoffBracket.game).selectinload(Game.home_team),
-            selectinload(PlayoffBracket.game).selectinload(Game.away_team),
-        )
-        .order_by(PlayoffBracket.sort_order)
+    """Get playoff bracket for a season, derived from games and stages."""
+    stage_result = await db.execute(
+        select(Stage)
+        .where(Stage.season_id == season_id)
+        .order_by(Stage.sort_order, Stage.id)
     )
-    brackets = result.scalars().all()
+    stages = list(stage_result.scalars().all())
 
-    # Group by round_name
-    rounds_map: dict[str, list[PlayoffBracketEntry]] = {}
-    for b in brackets:
-        game_brief = None
-        if b.game:
-            home_team = None
-            away_team = None
-            if b.game.home_team:
-                home_team = BracketGameTeam(
-                    id=b.game.home_team.id,
-                    name=get_localized_field(b.game.home_team, "name", lang),
-                    logo_url=b.game.home_team.logo_url,
-                )
-            if b.game.away_team:
-                away_team = BracketGameTeam(
-                    id=b.game.away_team.id,
-                    name=get_localized_field(b.game.away_team, "name", lang),
-                    logo_url=b.game.away_team.logo_url,
-                )
-
-            from app.api.games import compute_game_status
-            game_brief = BracketGameBrief(
-                id=b.game.id,
-                date=b.game.date,
-                time=b.game.time,
-                home_team=home_team,
-                away_team=away_team,
-                home_score=b.game.home_score,
-                away_score=b.game.away_score,
-                home_penalty_score=b.game.home_penalty_score,
-                away_penalty_score=b.game.away_penalty_score,
-                status=compute_game_status(b.game),
-            )
-
-        entry = PlayoffBracketEntry(
-            id=b.id,
-            round_name=b.round_name,
-            side=b.side,
-            sort_order=b.sort_order,
-            is_third_place=b.is_third_place,
-            game=game_brief,
+    games_result = await db.execute(
+        select(Game)
+        .where(Game.season_id == season_id)
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.stage),
         )
+        .order_by(Game.date, Game.time)
+    )
+    games = list(games_result.scalars().all())
 
-        rounds_map.setdefault(b.round_name, []).append(entry)
-
-    # Build rounds in order
-    round_order = ["1_16", "1_8", "1_4", "1_2", "3rd_place", "final"]
-    rounds = []
-    for round_name in round_order:
-        if round_name in rounds_map:
-            rounds.append(
-                PlayoffRound(
-                    round_name=round_name,
-                    round_label=ROUND_LABELS.get(round_name, round_name),
-                    entries=rounds_map[round_name],
-                )
-            )
-
-    # Add any remaining rounds not in the predefined order
-    for round_name, entries in rounds_map.items():
-        if round_name not in round_order:
-            rounds.append(
-                PlayoffRound(
-                    round_name=round_name,
-                    round_label=ROUND_LABELS.get(round_name, round_name),
-                    entries=entries,
-                )
-            )
-
-    return PlayoffBracketResponse(season_id=season_id, rounds=rounds)
+    rounds = build_schedule_rounds(
+        games=games,
+        stages=stages,
+        lang=lang,
+        today=date.today(),
+        include_games=True,
+    )
+    bracket = build_playoff_bracket_from_rounds(season_id, rounds)
+    return bracket or PlayoffBracketResponse(season_id=season_id, rounds=[])
 
 
 @router.get("/{season_id}/teams", response_model=SeasonParticipantListResponse)
