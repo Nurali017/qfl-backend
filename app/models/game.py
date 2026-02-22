@@ -37,6 +37,9 @@ class Game(Base):
     home_kit_color: Mapped[str | None] = mapped_column(String(10))
     away_kit_color: Mapped[str | None] = mapped_column(String(10))
     lineup_live_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lineup_source: Mapped[str | None] = mapped_column(String(32))  # team_squad, sota_api, vsporte_api, matches_players
+    lineup_render_mode: Mapped[str | None] = mapped_column(String(16))  # field, list, hidden
+    lineup_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     # Stadium - keep string for backward compatibility, add FK
     stadium: Mapped[str | None] = mapped_column(String(255))  # Legacy field

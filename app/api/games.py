@@ -22,6 +22,8 @@ from app.models import (
     TeamCoach,
     Stadium,
     Referee,
+    Season,
+    Tournament,
 )
 from app.schemas.game import (
     GameResponse,
@@ -178,6 +180,9 @@ SUPPORTED_FORMATIONS = {
 
 VALID_AMPLUA_VALUES = {"Gk", "D", "DM", "M", "AM", "F"}
 VALID_FIELD_POSITION_VALUES = {"L", "LC", "C", "RC", "R"}
+LINEUP_FIELD_ALLOWED_CHAMPIONSHIPS = {1, 2, 3}
+LINEUP_FIELD_CUTOFF_DATE = date_type(2025, 6, 1)
+VALID_LINEUP_SOURCES = {"team_squad", "sota_api", "vsporte_api", "matches_players", "none"}
 
 POSITION_CODE_TO_AMPLUA = {
     # Goalkeepers
@@ -404,6 +409,54 @@ def detect_formation(positions: list[str | None]) -> str | None:
     else:
         # Fallback: simple D-M-F format
         return f"{defenders}-{total_mids}-{forwards}"
+
+
+def _resolve_championship_gate_id(game: Game) -> int | None:
+    season = game.season
+    tournament = season.tournament if season else None
+    championship = tournament.championship if tournament else None
+    if championship is None:
+        return None
+    return championship.legacy_id if championship.legacy_id is not None else championship.id
+
+
+def _is_field_allowed_by_rules(game: Game) -> bool:
+    championship_gate_id = _resolve_championship_gate_id(game)
+    if game.date is None:
+        return False
+    return (
+        championship_gate_id in LINEUP_FIELD_ALLOWED_CHAMPIONSHIPS
+        and game.date >= LINEUP_FIELD_CUTOFF_DATE
+    )
+
+
+def _team_has_valid_field_data(team_lineup: dict) -> bool:
+    starters = team_lineup.get("starters") or []
+    if len(starters) < 11:
+        return False
+    for player in starters[:11]:
+        amplua = player.get("amplua")
+        field_position = player.get("field_position")
+        if amplua not in VALID_AMPLUA_VALUES:
+            return False
+        if field_position not in VALID_FIELD_POSITION_VALUES:
+            return False
+    return True
+
+
+def _has_any_lineup_data(home_lineup: dict, away_lineup: dict) -> bool:
+    home_total = len(home_lineup.get("starters", [])) + len(home_lineup.get("substitutes", []))
+    away_total = len(away_lineup.get("starters", [])) + len(away_lineup.get("substitutes", []))
+    return (home_total + away_total) > 0
+
+
+def _normalize_lineup_source(raw_source: str | None, has_data: bool) -> str:
+    if isinstance(raw_source, str) and raw_source in VALID_LINEUP_SOURCES:
+        return raw_source
+    if has_data:
+        # Backward compatibility for historical data that was synced before source tracking.
+        return "matches_players"
+    return "none"
 
 
 @router.get("")
@@ -878,6 +931,9 @@ async def get_game_lineup(
         .options(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
+            selectinload(Game.season)
+            .selectinload(Season.tournament)
+            .selectinload(Tournament.championship),
         )
     )
     game = game_result.scalar_one_or_none()
@@ -906,6 +962,9 @@ async def get_game_lineup(
                     .options(
                         selectinload(Game.home_team),
                         selectinload(Game.away_team),
+                        selectinload(Game.season)
+                        .selectinload(Season.tournament)
+                        .selectinload(Tournament.championship),
                     )
                 )
                 refreshed_game = refreshed_game_result.scalar_one_or_none()
@@ -1135,9 +1194,28 @@ async def get_game_lineup(
         else {"team_id": None, "team_name": None, "formation": None, "kit_color": None, "starters": [], "substitutes": []}
     )
 
+    has_lineup_data = _has_any_lineup_data(home_lineup, away_lineup)
+    field_allowed_by_rules = _is_field_allowed_by_rules(game)
+    field_data_valid = _team_has_valid_field_data(home_lineup) and _team_has_valid_field_data(away_lineup)
+
+    if not has_lineup_data:
+        rendering_mode = "hidden"
+    elif field_allowed_by_rules and field_data_valid:
+        rendering_mode = "field"
+    else:
+        rendering_mode = "list"
+
+    source = _normalize_lineup_source(game.lineup_source, has_lineup_data)
+
     return {
         "game_id": game_id,
-        "has_lineup": game.has_lineup,
+        "has_lineup": has_lineup_data,
+        "rendering": {
+            "mode": rendering_mode,
+            "source": source,
+            "field_allowed_by_rules": field_allowed_by_rules,
+            "field_data_valid": field_data_valid,
+        },
         "referees": referees_response,
         "coaches": {
             "home_team": home_coaches,

@@ -1,9 +1,9 @@
 import pytest
 from httpx import AsyncClient
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, date
 
-from app.models import GameLineup, LineupType, Player
+from app.models import Championship, GameLineup, LineupType, Player
 from app.main import app
 from app.services.sota_client import get_sota_client
 from unittest.mock import AsyncMock, Mock
@@ -526,3 +526,150 @@ class TestGamesAPI:
         home_starter = data["lineups"]["home_team"]["starters"][0]
         assert home_starter["amplua"] == "D"
         assert home_starter["field_position"] == "L"
+
+    async def test_get_game_lineup_rendering_mode_field_when_rules_and_positions_are_valid(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_game,
+        sample_tournament,
+    ):
+        championship = Championship(id=1, legacy_id=1, name="Premier League")
+        test_session.add(championship)
+        sample_tournament.championship_id = championship.id
+        sample_game.date = date(2025, 6, 15)
+        await test_session.commit()
+
+        role_pairs = [
+            ("Gk", "C"),
+            ("D", "L"),
+            ("D", "LC"),
+            ("D", "C"),
+            ("D", "RC"),
+            ("DM", "C"),
+            ("M", "L"),
+            ("M", "C"),
+            ("AM", "RC"),
+            ("F", "LC"),
+            ("F", "R"),
+        ]
+
+        players: list[Player] = []
+        for idx in range(22):
+            players.append(
+                Player(
+                    sota_id=uuid4(),
+                    first_name=f"Starter{idx}",
+                    last_name="Player",
+                )
+            )
+        test_session.add_all(players)
+        await test_session.commit()
+        for player in players:
+            await test_session.refresh(player)
+
+        lineups = []
+        for idx, (amplua, field_position) in enumerate(role_pairs):
+            lineups.append(
+                GameLineup(
+                    game_id=sample_game.id,
+                    team_id=sample_game.home_team_id,
+                    player_id=players[idx].id,
+                    lineup_type=LineupType.starter,
+                    shirt_number=idx + 1,
+                    amplua=amplua,
+                    field_position=field_position,
+                )
+            )
+        for idx, (amplua, field_position) in enumerate(role_pairs):
+            lineups.append(
+                GameLineup(
+                    game_id=sample_game.id,
+                    team_id=sample_game.away_team_id,
+                    player_id=players[idx + 11].id,
+                    lineup_type=LineupType.starter,
+                    shirt_number=idx + 1,
+                    amplua=amplua,
+                    field_position=field_position,
+                )
+            )
+
+        test_session.add_all(lineups)
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games/{sample_game.id}/lineup")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["has_lineup"] is True
+        assert data["rendering"]["mode"] == "field"
+        assert data["rendering"]["field_allowed_by_rules"] is True
+        assert data["rendering"]["field_data_valid"] is True
+
+    async def test_get_game_lineup_rendering_mode_list_when_positions_invalid(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_game,
+        sample_tournament,
+    ):
+        championship = Championship(id=2, legacy_id=2, name="First League")
+        test_session.add(championship)
+        sample_tournament.championship_id = championship.id
+        sample_game.date = date(2025, 7, 1)
+
+        home_player = Player(sota_id=uuid4(), first_name="Home", last_name="NoPos")
+        away_player = Player(sota_id=uuid4(), first_name="Away", last_name="NoPos")
+        test_session.add_all([home_player, away_player])
+        await test_session.commit()
+        await test_session.refresh(home_player)
+        await test_session.refresh(away_player)
+
+        test_session.add_all(
+            [
+                GameLineup(
+                    game_id=sample_game.id,
+                    team_id=sample_game.home_team_id,
+                    player_id=home_player.id,
+                    lineup_type=LineupType.starter,
+                    shirt_number=4,
+                    amplua=None,
+                    field_position=None,
+                ),
+                GameLineup(
+                    game_id=sample_game.id,
+                    team_id=sample_game.away_team_id,
+                    player_id=away_player.id,
+                    lineup_type=LineupType.starter,
+                    shirt_number=5,
+                    amplua=None,
+                    field_position=None,
+                ),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games/{sample_game.id}/lineup")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["has_lineup"] is True
+        assert data["rendering"]["mode"] == "list"
+        assert data["rendering"]["field_allowed_by_rules"] is True
+        assert data["rendering"]["field_data_valid"] is False
+
+    async def test_get_game_lineup_rendering_mode_hidden_when_no_lineup_data(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_game,
+    ):
+        sample_game.has_lineup = False
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games/{sample_game.id}/lineup")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["has_lineup"] is False
+        assert data["rendering"]["mode"] == "hidden"
