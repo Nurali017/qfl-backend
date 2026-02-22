@@ -67,7 +67,6 @@ class CupRound(BaseModel):
 class CupOverviewResponse(BaseModel):
     season_id: int
     season_name: str | None = None
-    tournament_name: str | None = None
     championship_name: str | None = None
     current_round: CupRound | None = None
     groups: list[CupGroup] | None = None

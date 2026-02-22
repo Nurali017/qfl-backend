@@ -203,7 +203,7 @@ class TestNewsAPI:
         assert len(data["items"]) <= 5
 
     def test_get_news_by_tournament(self, live_client):
-        response = live_client.get("/api/v1/news?language=ru&tournament_id=pl&per_page=1")
+        response = live_client.get("/api/v1/news?language=ru&championship_code=pl&per_page=1")
         assert response.status_code == 200
         data = response.json()
         assert "items" in data

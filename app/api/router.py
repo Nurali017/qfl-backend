@@ -15,6 +15,7 @@ from app.api.championships import router as championships_router
 from app.api.partners import router as partners_router
 from app.api.clubs import router as clubs_router
 from app.api.cities import router as cities_router
+from app.api.team_of_week import router as team_of_week_router
 from app.api.admin.router import router as admin_router
 
 api_router = APIRouter()
@@ -45,6 +46,9 @@ api_router.include_router(partners_router)
 # Club/City hierarchy
 api_router.include_router(clubs_router)
 api_router.include_router(cities_router)
+
+# Editorial content
+api_router.include_router(team_of_week_router)
 
 # Admin API
 api_router.include_router(admin_router)

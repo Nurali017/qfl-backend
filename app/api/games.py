@@ -23,7 +23,7 @@ from app.models import (
     Stadium,
     Referee,
     Season,
-    Tournament,
+    Championship,
 )
 from app.schemas.game import (
     GameResponse,
@@ -413,8 +413,7 @@ def detect_formation(positions: list[str | None]) -> str | None:
 
 def _resolve_championship_gate_id(game: Game) -> int | None:
     season = game.season
-    tournament = season.tournament if season else None
-    championship = tournament.championship if tournament else None
+    championship = season.championship if season else None
     if championship is None:
         return None
     return championship.legacy_id if championship.legacy_id is not None else championship.id
@@ -932,8 +931,7 @@ async def get_game_lineup(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
             selectinload(Game.season)
-            .selectinload(Season.tournament)
-            .selectinload(Tournament.championship),
+            .selectinload(Season.championship),
         )
     )
     game = game_result.scalar_one_or_none()
@@ -963,8 +961,7 @@ async def get_game_lineup(
                         selectinload(Game.home_team),
                         selectinload(Game.away_team),
                         selectinload(Game.season)
-                        .selectinload(Season.tournament)
-                        .selectinload(Tournament.championship),
+                        .selectinload(Season.championship),
                     )
                 )
                 refreshed_game = refreshed_game_result.scalar_one_or_none()

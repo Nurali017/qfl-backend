@@ -231,7 +231,7 @@ class TeamOverviewTeam(BaseModel):
 class TeamOverviewSeason(BaseModel):
     id: int
     name: str
-    tournament_id: int | None = None
+    championship_id: int | None = None
 
 
 class TeamOverviewSummary(BaseModel):

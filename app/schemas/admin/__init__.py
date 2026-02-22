@@ -54,11 +54,11 @@ from app.schemas.admin.playoff_brackets import (
     AdminPlayoffBracketResponse,
     AdminPlayoffBracketsListResponse,
 )
-from app.schemas.admin.team_tournaments import (
-    AdminTeamTournamentCreateRequest,
-    AdminTeamTournamentUpdateRequest,
-    AdminTeamTournamentResponse,
-    AdminTeamTournamentsListResponse,
+from app.schemas.admin.season_participants import (
+    AdminSeasonParticipantCreateRequest,
+    AdminSeasonParticipantUpdateRequest,
+    AdminSeasonParticipantResponse,
+    AdminSeasonParticipantsListResponse,
 )
 
 __all__ = [
@@ -105,8 +105,8 @@ __all__ = [
     "AdminPlayoffBracketUpdateRequest",
     "AdminPlayoffBracketResponse",
     "AdminPlayoffBracketsListResponse",
-    "AdminTeamTournamentCreateRequest",
-    "AdminTeamTournamentUpdateRequest",
-    "AdminTeamTournamentResponse",
-    "AdminTeamTournamentsListResponse",
+    "AdminSeasonParticipantCreateRequest",
+    "AdminSeasonParticipantUpdateRequest",
+    "AdminSeasonParticipantResponse",
+    "AdminSeasonParticipantsListResponse",
 ]

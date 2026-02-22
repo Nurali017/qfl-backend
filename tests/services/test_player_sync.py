@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from app.models import Player, PlayerSeasonStats, PlayerTeam, Season, Team, Tournament
+from app.models import Player, PlayerSeasonStats, PlayerTeam, Season, Team, Championship
 from app.services.sync.player_sync import PlayerSyncService
 
 
@@ -69,11 +69,11 @@ async def test_sync_players_upserts_by_sota_id(test_session):
 
 @pytest.mark.asyncio
 async def test_sync_player_season_stats_skips_players_without_sota_id(test_session):
-    tournament = Tournament(id=1, name="Test League")
+    championship = Championship(id=1, name="Test League")
     season = Season(
         id=61,
         name="2025",
-        tournament_id=tournament.id,
+        championship_id=championship.id,
         date_start=date(2025, 1, 1),
         date_end=date(2025, 12, 31),
     )
@@ -81,7 +81,7 @@ async def test_sync_player_season_stats_skips_players_without_sota_id(test_sessi
     linked_player = Player(sota_id=uuid4(), first_name="Linked", last_name="Player")
     manual_player = Player(sota_id=None, first_name="Manual", last_name="Player")
 
-    test_session.add_all([tournament, season, team, linked_player, manual_player])
+    test_session.add_all([championship, season, team, linked_player, manual_player])
     await test_session.flush()
 
     test_session.add_all(

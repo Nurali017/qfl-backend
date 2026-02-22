@@ -44,7 +44,6 @@ import re
 from app.services.sota_client import get_sota_client
 from app.services.file_storage import FileStorageService
 from app.models import (
-    Tournament,
     Season,
     Team,
     Country,
@@ -64,6 +63,7 @@ from app.models import (
     TeamCoach,
     GameReferee,
     GameLineup,
+    Championship,
 )
 from app.models.coach import CoachRole
 from app.models.game_referee import RefereeRole
@@ -258,55 +258,24 @@ class SyncService:
         await self.db.flush()
         return player.id
 
-    async def sync_tournaments(self) -> int:
-        """Sync tournaments from SOTA API with all 3 languages."""
-        # Fetch data in all 3 languages
-        tournaments_ru = await self.client.get_tournaments(language="ru")
-        tournaments_kz = await self.client.get_tournaments(language="kk")
-        tournaments_en = await self.client.get_tournaments(language="en")
-
-        # Build lookup dicts
-        kz_by_id = {t["id"]: t for t in tournaments_kz}
-        en_by_id = {t["id"]: t for t in tournaments_en}
-
-        count = 0
-        for t in tournaments_ru:
-            t_id = t["id"]
-            t_kz = kz_by_id.get(t_id, {})
-            t_en = en_by_id.get(t_id, {})
-
-            stmt = insert(Tournament).values(
-                id=t_id,
-                name=t["name"],  # Russian as default
-                name_kz=t_kz.get("name"),
-                name_en=t_en.get("name"),
-                country_code=t.get("country_code"),
-                country_name=t.get("country_name"),  # Russian as default
-                country_name_kz=t_kz.get("country_name"),
-                country_name_en=t_en.get("country_name"),
-                updated_at=datetime.utcnow(),
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["id"],
-                set_={
-                    "name": stmt.excluded.name,
-                    "name_kz": stmt.excluded.name_kz,
-                    "name_en": stmt.excluded.name_en,
-                    "country_code": stmt.excluded.country_code,
-                    "country_name": stmt.excluded.country_name,
-                    "country_name_kz": stmt.excluded.country_name_kz,
-                    "country_name_en": stmt.excluded.country_name_en,
-                    "updated_at": stmt.excluded.updated_at,
-                },
-            )
-            await self.db.execute(stmt)
-            count += 1
-
-        await self.db.commit()
-        return count
+    async def _build_sota_tournament_to_championship_map(self) -> dict[int, int]:
+        """Build mapping from SOTA tournament_id to local championship.id."""
+        result = await self.db.execute(
+            select(Championship).where(Championship.sota_ids.isnot(None))
+        )
+        championships = result.scalars().all()
+        mapping: dict[int, int] = {}
+        for champ in championships:
+            for raw_id in champ.sota_ids.split(";"):
+                raw_id = raw_id.strip()
+                if raw_id.isdigit():
+                    mapping[int(raw_id)] = champ.id
+        return mapping
 
     async def sync_seasons(self) -> int:
         """Sync seasons from SOTA API with all 3 languages."""
+        tournament_to_championship = await self._build_sota_tournament_to_championship_map()
+
         # Fetch data in all 3 languages
         seasons_ru = await self.client.get_seasons(language="ru")
         seasons_kz = await self.client.get_seasons(language="kk")
@@ -322,12 +291,21 @@ class SyncService:
             s_kz = kz_by_id.get(s_id, {})
             s_en = en_by_id.get(s_id, {})
 
+            sota_tournament_id = s.get("tournament_id")
+            championship_id = (
+                tournament_to_championship.get(sota_tournament_id)
+                if sota_tournament_id is not None
+                else None
+            )
+            if championship_id is None:
+                continue
+
             stmt = insert(Season).values(
                 id=s_id,
                 name=s["name"],  # Russian as default
                 name_kz=s_kz.get("name"),
                 name_en=s_en.get("name"),
-                tournament_id=s.get("tournament_id"),
+                championship_id=championship_id,
                 date_start=parse_date(s.get("date_start")),
                 date_end=parse_date(s.get("date_end")),
                 updated_at=datetime.utcnow(),
@@ -338,7 +316,7 @@ class SyncService:
                     "name": stmt.excluded.name,
                     "name_kz": stmt.excluded.name_kz,
                     "name_en": stmt.excluded.name_en,
-                    "tournament_id": stmt.excluded.tournament_id,
+                    "championship_id": stmt.excluded.championship_id,
                     "date_start": stmt.excluded.date_start,
                     "date_end": stmt.excluded.date_end,
                     "updated_at": stmt.excluded.updated_at,
@@ -2048,7 +2026,6 @@ class SyncService:
             season_id = settings.current_season_id
 
         results = {
-            "tournaments": await self.sync_tournaments(),
             "seasons": await self.sync_seasons(),
             "teams": await self.sync_teams(),
             "players": await self.sync_players(season_id),

@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from httpx import AsyncClient
 
-from app.models import Tournament, Season, Team, Game, Stage, TeamTournament, PlayoffBracket, Championship
+from app.models import Season, Team, Game, Stage, SeasonParticipant, PlayoffBracket, Championship
 
 
 @pytest.fixture
@@ -17,19 +17,10 @@ async def cup_championship(test_session) -> Championship:
 
 
 @pytest.fixture
-async def cup_tournament(test_session, cup_championship) -> Tournament:
-    t = Tournament(id=10, name="Кубок РК", name_kz="ҚР Кубогы", name_en="RK Cup", championship_id=cup_championship.id)
-    test_session.add(t)
-    await test_session.commit()
-    await test_session.refresh(t)
-    return t
-
-
-@pytest.fixture
-async def cup_season(test_session, cup_tournament) -> Season:
+async def cup_season(test_session, cup_championship) -> Season:
     s = Season(
         id=71, name="Кубок 2025", name_kz="Кубок 2025", name_en="Cup 2025",
-        tournament_id=cup_tournament.id,
+        championship_id=cup_championship.id,
         date_start=date(2025, 3, 1), date_end=date(2025, 11, 30),
     )
     test_session.add(s)
@@ -113,12 +104,12 @@ async def cup_games(test_session, cup_season, cup_teams, cup_stages) -> list[Gam
 
 
 @pytest.fixture
-async def cup_groups(test_session, cup_season, cup_teams) -> list[TeamTournament]:
+async def cup_groups(test_session, cup_season, cup_teams) -> list[SeasonParticipant]:
     entries = [
-        TeamTournament(team_id=cup_teams[0].id, season_id=cup_season.id, group_name="A"),
-        TeamTournament(team_id=cup_teams[1].id, season_id=cup_season.id, group_name="A"),
-        TeamTournament(team_id=cup_teams[2].id, season_id=cup_season.id, group_name="B"),
-        TeamTournament(team_id=cup_teams[3].id, season_id=cup_season.id, group_name="B"),
+        SeasonParticipant(team_id=cup_teams[0].id, season_id=cup_season.id, group_name="A"),
+        SeasonParticipant(team_id=cup_teams[1].id, season_id=cup_season.id, group_name="A"),
+        SeasonParticipant(team_id=cup_teams[2].id, season_id=cup_season.id, group_name="B"),
+        SeasonParticipant(team_id=cup_teams[3].id, season_id=cup_season.id, group_name="B"),
     ]
     test_session.add_all(entries)
     await test_session.commit()
@@ -160,7 +151,6 @@ class TestCupOverview:
         data = response.json()
         assert data["season_id"] == cup_season.id
         assert data["season_name"] == "Кубок 2025"
-        assert data["tournament_name"] == "Кубок РК"
         assert data["championship_name"] == "Кубок Казахстана"
         assert data["rounds"] == []
         assert data["recent_results"] == []
@@ -198,7 +188,6 @@ class TestCupOverview:
         assert response.status_code == 200
         data = response.json()
         assert data["season_name"] == "Кубок 2025"
-        assert data["tournament_name"] == "ҚР Кубогы"
         assert data["championship_name"] == "Қазақстан Кубогы"
 
     async def test_overview_with_groups(

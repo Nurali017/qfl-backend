@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from httpx import AsyncClient
 
-from app.models import Championship, Season, Tournament
+from app.models import Championship, Season
 
 
 @pytest.mark.asyncio
@@ -13,11 +13,10 @@ class TestChampionshipsFrontMapAPI:
         assert response.status_code == 200
         data = response.json()
 
-        assert set(data['items'].keys()) == {'pl', '1l', 'cup', '2l', 'el'}
-        assert data['items']['pl']['season_id'] is None
-        assert data['items']['2l']['season_id'] is None
+        # No seasons with frontend_code set → empty items
+        assert data['items'] == {}
 
-    async def test_get_front_map_resolves_current_and_second_league_stages(
+    async def test_get_front_map_resolves_from_frontend_code(
         self,
         client: AsyncClient,
         test_session,
@@ -33,64 +32,66 @@ class TestChampionshipsFrontMapAPI:
         ]
         test_session.add_all(championships)
 
-        tournaments = [
-            Tournament(id=201, name='Premier', championship_id=101),
-            Tournament(id=202, name='First', championship_id=102),
-            Tournament(id=203, name='Cup', championship_id=103),
-            Tournament(id=204, name='Second', championship_id=104),
-            Tournament(id=205, name='Women', championship_id=105),
-        ]
-        test_session.add_all(tournaments)
-
         seasons = [
             Season(
                 id=61,
                 name='PL 2026',
-                tournament_id=201,
+                championship_id=101,
                 date_start=today - timedelta(days=30),
                 date_end=today + timedelta(days=30),
+                frontend_code='pl',
+                tournament_type='league',
+                tournament_format='round_robin',
+                has_table=True,
+                sort_order=1,
             ),
             Season(
                 id=85,
                 name='1L 2026',
-                tournament_id=202,
+                championship_id=102,
                 date_start=today - timedelta(days=30),
                 date_end=today + timedelta(days=30),
+                frontend_code='1l',
+                tournament_type='league',
+                tournament_format='round_robin',
+                has_table=True,
+                sort_order=2,
             ),
             Season(
                 id=71,
                 name='Cup 2026',
-                tournament_id=203,
+                championship_id=103,
                 date_start=today - timedelta(days=30),
                 date_end=today + timedelta(days=30),
+                frontend_code='cup',
+                tournament_type='cup',
+                tournament_format='knockout',
+                has_bracket=True,
+                sort_order=3,
             ),
             Season(
                 id=84,
                 name='Women 2026',
-                tournament_id=205,
+                championship_id=105,
                 date_start=today - timedelta(days=30),
                 date_end=today + timedelta(days=30),
+                frontend_code='el',
+                tournament_type='league',
+                tournament_format='round_robin',
+                has_table=True,
+                sort_order=5,
             ),
             Season(
                 id=80,
-                name='Second League Group A',
-                tournament_id=204,
+                name='Second League 2026',
+                championship_id=104,
                 date_start=today - timedelta(days=30),
                 date_end=today + timedelta(days=30),
-            ),
-            Season(
-                id=81,
-                name='Second League Group B',
-                tournament_id=204,
-                date_start=today - timedelta(days=120),
-                date_end=today - timedelta(days=60),
-            ),
-            Season(
-                id=157,
-                name='Second League Final',
-                tournament_id=204,
-                date_start=today + timedelta(days=31),
-                date_end=today + timedelta(days=120),
+                frontend_code='2l',
+                tournament_type='league',
+                tournament_format='round_robin',
+                has_table=True,
+                sort_order=4,
             ),
         ]
         test_session.add_all(seasons)
@@ -104,6 +105,9 @@ class TestChampionshipsFrontMapAPI:
         assert data['1l']['season_id'] == 85
         assert data['cup']['season_id'] == 71
         assert data['el']['season_id'] == 84
-
         assert data['2l']['season_id'] == 80
-        assert data['2l']['stages'] == {'a': 80, 'b': 81, 'final': 157}
+
+        # New fields present
+        assert data['pl']['has_table'] is True
+        assert data['cup']['has_bracket'] is True
+        assert data['2l']['tournament_type'] == 'league'

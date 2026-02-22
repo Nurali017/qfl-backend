@@ -98,22 +98,12 @@ def localize_player(player: Any, lang: str = "kz") -> dict:
     }
 
 
-def localize_tournament(tournament: Any, lang: str = "kz") -> dict:
-    """Create localized tournament dict."""
-    return {
-        "id": tournament.id,
-        "name": get_localized_name(tournament, lang),
-        "country_code": tournament.country_code,
-        "country_name": get_localized_country_name(tournament, lang),
-    }
-
-
 def localize_season(season: Any, lang: str = "kz") -> dict:
     """Create localized season dict."""
     return {
         "id": season.id,
         "name": get_localized_name(season, lang),
-        "tournament_id": season.tournament_id,
+        "championship_id": season.championship_id,
         "date_start": season.date_start,
         "date_end": season.date_end,
     }

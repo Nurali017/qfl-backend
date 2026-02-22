@@ -17,8 +17,7 @@ from app.models import (
     PlayoffBracket,
     Season,
     Stage,
-    TeamTournament,
-    Tournament,
+    SeasonParticipant,
 )
 from app.schemas.cup import (
     CupGameBrief,
@@ -233,13 +232,11 @@ async def _build_bracket(
 
 
 async def _load_season(db: AsyncSession, season_id: int, lang: str) -> Season:
-    """Load season with tournament and championship, or 404."""
+    """Load season with championship, or 404."""
     result = await db.execute(
         select(Season)
         .where(Season.id == season_id)
-        .options(
-            selectinload(Season.tournament).selectinload(Tournament.championship),
-        )
+        .options(selectinload(Season.championship))
     )
     season = result.scalar_one_or_none()
     if not season:
@@ -335,10 +332,9 @@ async def get_cup_overview(
     """Aggregated cup overview: current round, groups, bracket, recent/upcoming."""
     today = date_type.today()
 
-    # 1. Load season + tournament + championship
+    # 1. Load season + championship
     season = await _load_season(db, season_id, lang)
-    tournament = season.tournament
-    championship = tournament.championship if tournament else None
+    championship = season.championship
 
     # 2. Load stages
     stage_result = await db.execute(
@@ -389,31 +385,31 @@ async def get_cup_overview(
         _build_cup_game(g, lang, today) for g in finished_games[:recent_limit]
     ]
 
-    # Upcoming: next N (soonest first), include live games at front
+    # Upcoming: live games first, then next N upcoming (soonest first)
     upcoming_games_raw.sort(key=lambda g: (g.date, g.time or ""))
     upcoming_built = [_build_cup_game(g, lang, today) for g in live_games]
     upcoming_built += [
         _build_cup_game(g, lang, today) for g in upcoming_games_raw[:upcoming_limit]
     ]
-    upcoming_built = upcoming_built[:upcoming_limit]
 
-    # 8. Groups (from TeamTournament entries)
+    # 8. Groups (from SeasonParticipant entries)
     groups = None
-    tt_result = await db.execute(
-        select(TeamTournament)
-        .where(TeamTournament.season_id == season_id)
-        .options(selectinload(TeamTournament.team))
+    sp_result = await db.execute(
+        select(SeasonParticipant)
+        .where(SeasonParticipant.season_id == season_id)
+        .options(selectinload(SeasonParticipant.team))
     )
-    team_tournaments = tt_result.scalars().all()
+    season_participant_entries = sp_result.scalars().all()
 
     group_names = sorted({
-        tt.group_name for tt in team_tournaments if tt.group_name
+        tt.group_name for tt in season_participant_entries if tt.group_name
     })
     if group_names:
         groups = []
         for group_name in group_names:
             group_team_ids = [
-                tt.team_id for tt in team_tournaments if tt.group_name == group_name
+                tt.team_id for tt in season_participant_entries
+                if tt.group_name == group_name and not tt.is_disqualified
             ]
             table = await calculate_dynamic_table(
                 db, season_id,
@@ -431,7 +427,6 @@ async def get_cup_overview(
     return CupOverviewResponse(
         season_id=season_id,
         season_name=get_localized_field(season, "name", lang),
-        tournament_name=get_localized_field(tournament, "name", lang) if tournament else None,
         championship_name=get_localized_field(championship, "name", lang) if championship else None,
         current_round=current_round,
         groups=groups,

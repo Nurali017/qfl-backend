@@ -342,7 +342,7 @@ async def get_player_tournament_history(
         season_result = await db.execute(
             select(Season)
             .where(Season.id == stat.season_id)
-            .options(selectinload(Season.tournament))
+            .options(selectinload(Season.championship))
         )
         season = season_result.scalar_one_or_none()
 
@@ -356,18 +356,18 @@ async def get_player_tournament_history(
             if team:
                 team_name = get_localized_field(team, "name", lang) if hasattr(team, "name_kz") else team.name
 
-        tournament_name = None
+        championship_name = None
         season_name = None
         if season:
             season_name = get_localized_field(season, "name", lang) if hasattr(season, "name_kz") else season.name
-            if season.tournament:
-                tournament_name = get_localized_field(season.tournament, "name", lang) if hasattr(season.tournament, "name_kz") else season.tournament.name
+            if season.championship:
+                championship_name = get_localized_field(season.championship, "name", lang) if hasattr(season.championship, "name_kz") else season.championship.name
 
         items.append(
             PlayerTournamentHistoryEntry(
                 season_id=stat.season_id,
                 season_name=season_name,
-                tournament_name=tournament_name,
+                championship_name=championship_name,
                 team_id=stat.team_id,
                 team_name=team_name,
                 position=None,  # Can be added later if needed

@@ -8,15 +8,26 @@ from app.schemas.stage import StageResponse
 class SeasonBase(BaseModel):
     id: int
     name: str
-    tournament_id: int | None = None
+    championship_id: int | None = None
     date_start: date | None = None
     date_end: date | None = None
     sync_enabled: bool = True
 
 
 class SeasonResponse(SeasonBase):
-    tournament_name: str | None = None
     championship_name: str | None = None
+    frontend_code: str | None = None
+    tournament_type: str | None = None
+    tournament_format: str | None = None
+    has_table: bool = False
+    has_bracket: bool = False
+    sponsor_name: str | None = None
+    sponsor_name_kz: str | None = None
+    logo: str | None = None
+    current_round: int | None = None
+    total_rounds: int | None = None
+    sort_order: int = 0
+    colors: dict | None = None
 
     class Config:
         from_attributes = True

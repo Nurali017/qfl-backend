@@ -48,7 +48,7 @@ class News(Base):
     image_url: Mapped[str | None] = mapped_column(FileUrlType)
     video_url: Mapped[str | None] = mapped_column(String(500))  # YouTube embed URL
     category: Mapped[str | None] = mapped_column(String(100))
-    tournament_id: Mapped[str | None] = mapped_column(String(10), index=True)  # pl, 1l, cup, 2l, el
+    championship_code: Mapped[str | None] = mapped_column(String(10), index=True)  # pl, 1l, cup, 2l, el
     article_type: Mapped[ArticleType | None] = mapped_column(
         SQLEnum(ArticleType, name='article_type'),
         nullable=True

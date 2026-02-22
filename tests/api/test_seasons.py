@@ -471,7 +471,7 @@ class TestSeasonsAPI:
     async def test_get_season_teams_fallback_from_score_table(
         self, client: AsyncClient, sample_season, sample_score_table
     ):
-        """Season teams endpoint falls back to score_table when TeamTournament is empty."""
+        """Season teams endpoint falls back to score_table when SeasonParticipant is empty."""
         response = await client.get("/api/v1/seasons/61/teams?lang=ru")
         assert response.status_code == 200
         data = response.json()
@@ -481,10 +481,10 @@ class TestSeasonsAPI:
     async def test_get_season_teams_backfills_partial_team_tournament(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_score_table
     ):
-        """Season teams endpoint should include fallback teams beyond TeamTournament rows."""
-        from app.models import TeamTournament
+        """Season teams endpoint should include fallback teams beyond SeasonParticipant rows."""
+        from app.models import SeasonParticipant
 
-        test_session.add(TeamTournament(team_id=sample_teams[0].id, season_id=sample_season.id, group_name="A"))
+        test_session.add(SeasonParticipant(team_id=sample_teams[0].id, season_id=sample_season.id, group_name="A"))
         await test_session.commit()
 
         response = await client.get("/api/v1/seasons/61/teams?lang=ru")

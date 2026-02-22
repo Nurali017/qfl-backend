@@ -532,11 +532,9 @@ class TestGamesAPI:
         client: AsyncClient,
         test_session,
         sample_game,
-        sample_tournament,
+        sample_championship,
     ):
-        championship = Championship(id=1, legacy_id=1, name="Premier League")
-        test_session.add(championship)
-        sample_tournament.championship_id = championship.id
+        sample_championship.legacy_id = 1
         sample_game.date = date(2025, 6, 15)
         await test_session.commit()
 
@@ -611,11 +609,9 @@ class TestGamesAPI:
         client: AsyncClient,
         test_session,
         sample_game,
-        sample_tournament,
+        sample_championship,
     ):
-        championship = Championship(id=2, legacy_id=2, name="First League")
-        test_session.add(championship)
-        sample_tournament.championship_id = championship.id
+        sample_championship.legacy_id = 2
         sample_game.date = date(2025, 7, 1)
 
         home_player = Player(sota_id=uuid4(), first_name="Home", last_name="NoPos")

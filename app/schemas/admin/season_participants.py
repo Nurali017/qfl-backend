@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
 
-class AdminTeamTournamentCreateRequest(BaseModel):
+class AdminSeasonParticipantCreateRequest(BaseModel):
     team_id: int
     season_id: int
     group_name: str | None = None
@@ -11,7 +11,7 @@ class AdminTeamTournamentCreateRequest(BaseModel):
     sort_order: int = 0
 
 
-class AdminTeamTournamentUpdateRequest(BaseModel):
+class AdminSeasonParticipantUpdateRequest(BaseModel):
     group_name: str | None = None
     is_disqualified: bool | None = None
     fine_points: int | None = None
@@ -19,7 +19,7 @@ class AdminTeamTournamentUpdateRequest(BaseModel):
     sort_order: int | None = None
 
 
-class AdminTeamTournamentResponse(BaseModel):
+class AdminSeasonParticipantResponse(BaseModel):
     id: int
     team_id: int
     season_id: int
@@ -32,6 +32,6 @@ class AdminTeamTournamentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class AdminTeamTournamentsListResponse(BaseModel):
-    items: list[AdminTeamTournamentResponse]
+class AdminSeasonParticipantsListResponse(BaseModel):
+    items: list[AdminSeasonParticipantResponse]
     total: int
