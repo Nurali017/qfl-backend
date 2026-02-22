@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     lineup_live_refresh_ttl_seconds: int = 30
     lineup_live_refresh_timeout_seconds: int = 3
 
+    # Legacy MySQL (one-time lineup backfill only)
+    legacy_mysql_host: str = "localhost"
+    legacy_mysql_port: int = 3306
+    legacy_mysql_db: str = "p-348074_db"
+    legacy_mysql_user: str = "p-348074_user"
+    legacy_mysql_password: str = ""
+    legacy_mysql_connect_timeout_seconds: int = 10
+    legacy_current_season_id: int = 21
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     live_events_channel: str = "qfl:live-events"

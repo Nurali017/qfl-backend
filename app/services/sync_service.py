@@ -1913,7 +1913,7 @@ class SyncService:
             await self.db.execute(
                 Game.__table__.update()
                 .where(Game.id == game_id)
-                .values(has_lineup=True)
+                .values(has_lineup=True, lineup_source="sota_api")
             )
 
         await self.db.commit()

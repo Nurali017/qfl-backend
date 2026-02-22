@@ -27,6 +27,12 @@ from app.models import (
     Player,
 )
 from app.services.sync.base import BaseSyncService
+from app.utils.lineup_feed_parser import (
+    FORMATION_MARKER,
+    STARTING_MARKERS,
+    SUBS_MARKERS,
+    normalize_lineup_entry,
+)
 from app.utils.lineup_positions import derive_field_positions, infer_formation
 
 logger = logging.getLogger(__name__)
@@ -125,14 +131,15 @@ class LineupSyncService(BaseSyncService):
     @staticmethod
     def _extract_formation_and_kit(live_data: list[dict]) -> tuple[str | None, str | None]:
         for item in live_data:
-            if item.get("number") != "FORMATION":
+            entry = normalize_lineup_entry(item)
+            if not entry or entry["number_upper"] != FORMATION_MARKER:
                 continue
 
-            formation_raw = item.get("first_name")
+            formation_raw = entry["first_name"]
             formation = formation_raw.strip() if isinstance(formation_raw, str) and formation_raw.strip() else None
 
             # SOTA contract: FORMATION.full_name contains HEX color.
-            kit_color = LineupSyncService._normalize_kit_color(item.get("full_name"))
+            kit_color = LineupSyncService._normalize_kit_color(entry["full_name"])
             return formation, kit_color
         return None, None
 
@@ -341,25 +348,28 @@ class LineupSyncService(BaseSyncService):
         saw_starter_section = False
 
         for item in live_data:
-            number = item.get("number")
-            if number == "ОСНОВНЫЕ":
+            entry = normalize_lineup_entry(item)
+            if not entry:
+                continue
+
+            number_upper = entry["number_upper"]
+            if number_upper in STARTING_MARKERS:
                 current_section = LineupType.starter
                 saw_starter_section = True
                 continue
-            if number == "ЗАПАСНЫЕ":
+            if number_upper in SUBS_MARKERS:
                 current_section = LineupType.substitute
                 continue
 
-            shirt_number = self._normalize_shirt_number(number)
+            shirt_number = entry["number_int"]
             if shirt_number is None:
                 continue
             if strict_lineup_sections and current_section == LineupType.starter:
                 strict_starter_numbers.add(shirt_number)
 
-            gk_flag_raw = item.get("gk", item.get("is_gk", False))
-            gk_flag = bool(gk_flag_raw) if gk_flag_raw != "" else False
-            amplua = self._normalize_amplua(item.get("amplua"), gk=gk_flag)
-            field_position = self._normalize_field_position(item.get("position"))
+            gk_flag = bool(entry["gk"])
+            amplua = self._normalize_amplua(entry.get("amplua"), gk=gk_flag)
+            field_position = self._normalize_field_position(entry.get("position"))
             if update_lineup_type:
                 if strict_lineup_sections and current_section in {LineupType.starter, LineupType.substitute}:
                     lineup_type_hint = current_section
@@ -370,8 +380,7 @@ class LineupSyncService(BaseSyncService):
 
             values: dict = {}
             if update_captain:
-                is_captain_raw = item.get("capitan", item.get("is_captain", False))
-                is_captain = bool(is_captain_raw) if is_captain_raw != "" else False
+                is_captain = bool(entry["capitan"])
                 values["is_captain"] = is_captain
             if amplua:
                 values["amplua"] = amplua
@@ -393,7 +402,7 @@ class LineupSyncService(BaseSyncService):
             player_internal_id: int | None = None
             if updated == 0:
                 player_internal_id = await self._resolve_player_id_by_sota(
-                    item,
+                    entry,
                     create_if_missing=create_missing_players,
                 )
                 if player_internal_id is not None:
@@ -413,14 +422,13 @@ class LineupSyncService(BaseSyncService):
                 continue
             if player_internal_id is None:
                 player_internal_id = await self._resolve_player_id_by_sota(
-                    item,
+                    entry,
                     create_if_missing=create_missing_players,
                 )
                 if player_internal_id is None:
                     continue
 
-            is_captain_raw = item.get("capitan", item.get("is_captain", False))
-            is_captain = bool(is_captain_raw) if is_captain_raw != "" else False
+            is_captain = bool(entry["capitan"])
 
             insert_result = await self.db.execute(
                 insert(GameLineup)
@@ -848,7 +856,11 @@ class LineupSyncService(BaseSyncService):
                 Game.__table__
                 .update()
                 .where(Game.id == game_id)
-                .values(has_lineup=True, updated_at=datetime.utcnow())
+                .values(
+                    has_lineup=True,
+                    lineup_source="sota_api",
+                    updated_at=datetime.utcnow(),
+                )
             )
 
         live_result = await self.sync_live_positions_and_kits(
