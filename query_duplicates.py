@@ -2,19 +2,19 @@
 Find matches where starters on the same team have duplicate (amplua, field_position) combinations.
 
 Usage:
-    cd backend && python query_duplicates.py
+    cd backend && python3 query_duplicates.py
 """
 import asyncio
 from sqlalchemy import text
 from app.database import AsyncSessionLocal
 
+DATE_FILTER = "2025-07-01"
+
 
 async def main():
     async with AsyncSessionLocal() as session:
-        # ── Step 1: Count how many matches have duplicates (across ALL data) ──
-        date_filter = "AND g2.date >= '2025-07-01'"
-
-        count_result = await session.execute(text(f'''
+        # ── Step 1: Count ──
+        count_result = await session.execute(text(f"""
             WITH dup_games AS (
                 SELECT DISTINCT gl.game_id
                 FROM game_lineups gl
@@ -22,27 +22,26 @@ async def main():
                 WHERE gl.lineup_type = 'starter'
                   AND gl.amplua IS NOT NULL
                   AND gl.field_position IS NOT NULL
-                  {date_filter}
+                  AND g.date >= '{DATE_FILTER}'
                 GROUP BY gl.game_id, gl.team_id, gl.amplua, gl.field_position
                 HAVING COUNT(*) > 1
             )
             SELECT COUNT(*) as total FROM dup_games
-        '''))
+        """))
         total = count_result.scalar()
-        print(f"Total matches with duplicate (amplua, field_position) among starters: {total}")
+        print(f"Total matches with duplicate (amplua, field_position) among starters (>= {DATE_FILTER}): {total}")
         print("=" * 100)
 
-        # ── Step 2: Get 10 example matches with full details ──
-        result = await session.execute(text(f'''
+        # ── Step 2: 10 examples ──
+        result = await session.execute(text(f"""
             WITH dup_teams AS (
-                -- Find (game_id, team_id) pairs that have duplicate (amplua, field_position) among starters
                 SELECT gl.game_id, gl.team_id, gl.amplua, gl.field_position, COUNT(*) as dup_count
                 FROM game_lineups gl
-                JOIN games g2 ON g2.id = gl.game_id
+                JOIN games g ON g.id = gl.game_id
                 WHERE gl.lineup_type = 'starter'
                   AND gl.amplua IS NOT NULL
                   AND gl.field_position IS NOT NULL
-                  {date_filter}
+                  AND g.date >= '{DATE_FILTER}'
                 GROUP BY gl.game_id, gl.team_id, gl.amplua, gl.field_position
                 HAVING COUNT(*) > 1
             ),
@@ -50,9 +49,7 @@ async def main():
                 SELECT DISTINCT game_id FROM dup_teams
             ),
             ranked_games AS (
-                -- Pick 10 representative games, ordered by date descending (most recent first)
                 SELECT g.id as game_id, g.date, g.tour,
-                       g.home_team_id, g.away_team_id,
                        g.home_score, g.away_score,
                        g.home_formation, g.away_formation,
                        g.lineup_source, g.lineup_render_mode,
@@ -71,15 +68,14 @@ async def main():
                    rg.home_formation, rg.away_formation,
                    rg.lineup_source, rg.lineup_render_mode,
                    rg.champ_name, rg.season_name,
-                   dt.team_id,
-                   t.name as dup_team_name,
+                   dt.team_id, t.name as dup_team_name,
                    dt.amplua, dt.field_position, dt.dup_count
             FROM ranked_games rg
             JOIN dup_teams dt ON dt.game_id = rg.game_id
             JOIN teams t ON t.id = dt.team_id
             WHERE rg.rn <= 10
             ORDER BY rg.date DESC, rg.game_id DESC, dt.team_id, dt.amplua, dt.field_position
-        '''))
+        """))
         rows = result.fetchall()
 
         if not rows:
@@ -97,36 +93,33 @@ async def main():
                 print(f"  Formations: {row.home_formation} vs {row.away_formation}")
                 print(f"  Lineup source: {row.lineup_source} | Render mode: {row.lineup_render_mode}")
                 print(f"  Duplicate positions found:")
-
             print(f"    {row.dup_team_name}: {row.dup_count}x players at {row.amplua}/{row.field_position}")
 
-        # ── Step 3: For the first 5 games, show the actual players in each duplicate slot ──
+        # ── Step 3: Detailed view (first 5) ──
         print(f"\n\n{'#' * 100}")
         print("DETAILED VIEW: Players in duplicate positions (first 5 matches)")
         print(f"{'#' * 100}")
 
-        detail_result = await session.execute(text(f'''
+        detail_result = await session.execute(text(f"""
             WITH dup_game_ids AS (
                 SELECT DISTINCT gl.game_id
                 FROM game_lineups gl
-                JOIN games g2 ON g2.id = gl.game_id
+                JOIN games g ON g.id = gl.game_id
                 WHERE gl.lineup_type = 'starter'
                   AND gl.amplua IS NOT NULL
                   AND gl.field_position IS NOT NULL
-                  {date_filter}
+                  AND g.date >= '{DATE_FILTER}'
                 GROUP BY gl.game_id, gl.team_id, gl.amplua, gl.field_position
                 HAVING COUNT(*) > 1
             ),
             ranked_games AS (
-                SELECT game_id,
-                       ROW_NUMBER() OVER (ORDER BY game_id DESC) as rn
+                SELECT game_id, ROW_NUMBER() OVER (ORDER BY game_id DESC) as rn
                 FROM dup_game_ids
             ),
             target_games AS (
                 SELECT game_id FROM ranked_games WHERE rn <= 5
             ),
             starters_with_dup_flag AS (
-                -- Get all starters for target games, with a window-based duplicate flag
                 SELECT gl.game_id, gl.team_id, gl.player_id,
                        gl.amplua, gl.field_position, gl.shirt_number,
                        COUNT(*) OVER (
@@ -141,8 +134,7 @@ async def main():
                    g.home_formation, g.away_formation,
                    c.name as champ_name,
                    t.name as team_name,
-                   s.amplua, s.field_position,
-                   s.shirt_number,
+                   s.amplua, s.field_position, s.shirt_number,
                    p.first_name, p.last_name,
                    CASE WHEN s.pos_count > 1 AND s.amplua IS NOT NULL AND s.field_position IS NOT NULL
                         THEN true ELSE false END as is_duplicate
@@ -166,7 +158,7 @@ async def main():
                     ELSE 5
                 END,
                 s.shirt_number
-        '''))
+        """))
         detail_rows = detail_result.fetchall()
 
         current_game = None
@@ -187,20 +179,20 @@ async def main():
             pos = f"{row.amplua or '?'}/{row.field_position or '?'}"
             print(f"    #{row.shirt_number or '?':>3}  {pos:<8}  {row.last_name or '?'} {row.first_name or ''}{dup_marker}")
 
-        # ── Step 4: Breakdown by lineup source ──
+        # ── Step 4: By lineup source ──
         print(f"\n\n{'#' * 100}")
         print("BREAKDOWN: Duplicates by lineup_source")
         print(f"{'#' * 100}")
 
-        source_result = await session.execute(text(f'''
+        source_result = await session.execute(text(f"""
             WITH dup_games AS (
                 SELECT DISTINCT gl.game_id
                 FROM game_lineups gl
-                JOIN games g2 ON g2.id = gl.game_id
+                JOIN games g ON g.id = gl.game_id
                 WHERE gl.lineup_type = 'starter'
                   AND gl.amplua IS NOT NULL
                   AND gl.field_position IS NOT NULL
-                  {date_filter}
+                  AND g.date >= '{DATE_FILTER}'
                 GROUP BY gl.game_id, gl.team_id, gl.amplua, gl.field_position
                 HAVING COUNT(*) > 1
             )
@@ -209,27 +201,26 @@ async def main():
             JOIN games g ON g.id = dg.game_id
             GROUP BY g.lineup_source
             ORDER BY cnt DESC
-        '''))
+        """))
         for row in source_result.fetchall():
             print(f"  {row.lineup_source or 'NULL':<25} {row.cnt} matches")
 
-        # ── Step 5: Most common duplicate (amplua, field_position) pairs ──
+        # ── Step 5: Most common duplicates ──
         print(f"\n\n{'#' * 100}")
         print("MOST COMMON DUPLICATE POSITIONS")
         print(f"{'#' * 100}")
 
-        common_result = await session.execute(text(f'''
+        common_result = await session.execute(text(f"""
             SELECT gl.amplua, gl.field_position, COUNT(*) as occurrence_count
             FROM game_lineups gl
-            JOIN games g2 ON g2.id = gl.game_id
+            JOIN games g ON g.id = gl.game_id
             WHERE gl.lineup_type = 'starter'
               AND gl.amplua IS NOT NULL
               AND gl.field_position IS NOT NULL
-              {date_filter}
+              AND g.date >= '{DATE_FILTER}'
             GROUP BY gl.game_id, gl.team_id, gl.amplua, gl.field_position
             HAVING COUNT(*) > 1
-        '''))
-        # Aggregate further in Python
+        """))
         from collections import Counter
         pair_counts = Counter()
         for row in common_result.fetchall():
