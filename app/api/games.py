@@ -23,6 +23,7 @@ from app.models import (
     Stadium,
     Referee,
     Season,
+    SeasonParticipant,
     Championship,
 )
 from app.schemas.game import (
@@ -233,6 +234,39 @@ POSITION_CODE_TO_AMPLUA = {
     "ЛН": "F",
     "ПН": "F",
 }
+
+
+def _normalize_stage_ids(raw: object) -> list[int]:
+    if not isinstance(raw, list):
+        return []
+
+    stage_ids: list[int] = []
+    for value in raw:
+        try:
+            stage_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return stage_ids
+
+
+async def get_group_team_ids_for_season(
+    db: AsyncSession, season_id: int, group: str
+) -> list[int]:
+    result = await db.execute(
+        select(SeasonParticipant.team_id).where(
+            SeasonParticipant.season_id == season_id,
+            SeasonParticipant.group_name == group,
+        )
+    )
+    return [row[0] for row in result.all()]
+
+
+async def get_final_stage_ids_for_season(db: AsyncSession, season_id: int) -> list[int]:
+    result = await db.execute(select(Season.final_stage_ids).where(Season.id == season_id))
+    row = result.first()
+    if row is None:
+        return []
+    return _normalize_stage_ids(row[0])
 
 
 def normalize_amplua_value(amplua: str | None) -> str | None:
@@ -462,6 +496,8 @@ def _normalize_lineup_source(raw_source: str | None, has_data: bool) -> str:
 @router.get("")
 async def get_games(
     season_id: int | None = Query(default=None),
+    group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
+    final: bool = Query(default=False, description="Show only final stage matches"),
     team_id: int | None = None,
     team_ids: list[int] | None = Query(default=None),
     tour: int | None = None,
@@ -483,6 +519,8 @@ async def get_games(
 
     Filters:
     - season_id: Filter by season (defaults to current season)
+    - group: Filter by group name using season_participants
+    - final: Show only games from season.final_stage_ids
     - team_id: Filter by single team (home or away)
     - team_ids: Filter by multiple teams (home or away) - use ?team_ids=1&team_ids=5
     - tour: Filter by single tour/round number
@@ -495,14 +533,37 @@ async def get_games(
     - hide_past: Hide matches before today
     - group_by_date: Group results by date with formatted labels
     - lang: Language for localized fields (kz, ru, en)
+
+    `group` and `final=true` cannot be used together.
     """
     if season_id is None:
         season_id = settings.current_season_id
 
+    if group and final:
+        raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
+
     today = date_type.today()
+    group_team_ids: list[int] | None = None
+    if group:
+        group_team_ids = await get_group_team_ids_for_season(db, season_id, group)
+        if not group_team_ids:
+            return {"groups": [], "total": 0} if group_by_date else {"items": [], "total": 0}
+
+    final_stage_ids: list[int] | None = None
+    if final:
+        final_stage_ids = await get_final_stage_ids_for_season(db, season_id)
+        if not final_stage_ids:
+            return {"groups": [], "total": 0} if group_by_date else {"items": [], "total": 0}
 
     # Build base query
     query = select(Game).where(Game.season_id == season_id)
+    if group_team_ids is not None:
+        query = query.where(
+            Game.home_team_id.in_(group_team_ids),
+            Game.away_team_id.in_(group_team_ids),
+        )
+    if final_stage_ids is not None:
+        query = query.where(Game.stage_id.in_(final_stage_ids))
 
     # Team filtering
     if team_id:
@@ -775,6 +836,22 @@ async def get_game(
 @router.get("/{game_id}/stats")
 async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
     """Get statistics for a game."""
+    # Early return for technical wins — no real stats exist
+    tech_result = await db.execute(
+        select(Game.is_technical).where(Game.id == game_id)
+    )
+    is_technical = tech_result.scalar()
+    if is_technical is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if is_technical:
+        return {
+            "game_id": game_id,
+            "is_technical": True,
+            "team_stats": [],
+            "player_stats": [],
+            "events": [],
+        }
+
     # Get team stats
     team_stats_result = await db.execute(
         select(GameTeamStats)
@@ -907,15 +984,9 @@ async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
             "player2_number": e.player2_number,
         })
 
-    # Get is_technical flag
-    game_result_for_flag = await db.execute(
-        select(Game.is_technical).where(Game.id == game_id)
-    )
-    is_technical = game_result_for_flag.scalar() or False
-
     return {
         "game_id": game_id,
-        "is_technical": is_technical,
+        "is_technical": False,
         "team_stats": team_stats_response,
         "player_stats": player_stats_response,
         "events": events_response,
@@ -948,6 +1019,28 @@ async def get_game_lineup(
 
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+
+    # Early return for technical wins — no lineup data exists
+    if game.is_technical:
+        return {
+            "game_id": game_id,
+            "has_lineup": False,
+            "rendering": {
+                "mode": "hidden",
+                "source": None,
+                "field_allowed_by_rules": False,
+                "field_data_valid": False,
+            },
+            "referees": [],
+            "coaches": {
+                "home_team": [],
+                "away_team": [],
+            },
+            "lineups": {
+                "home_team": {"team_id": game.home_team_id, "team_name": game.home_team.name if game.home_team else None, "formation": None, "kit_color": None, "starters": [], "substitutes": []},
+                "away_team": {"team_id": game.away_team_id, "team_name": game.away_team.name if game.away_team else None, "formation": None, "kit_color": None, "starters": [], "substitutes": []},
+            },
+        }
 
     # Read-through refresh from live feed for active games.
     if game.is_live:

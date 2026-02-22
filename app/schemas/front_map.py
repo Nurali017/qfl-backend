@@ -11,6 +11,7 @@ class FrontMapEntry(BaseModel):
     sponsor_name: str | None = None
     logo: str | None = None
     colors: dict | None = None
+    final_stage_ids: list[int] | None = None
     current_round: int | None = None
     total_rounds: int | None = None
     sort_order: int = 0

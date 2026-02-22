@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.models import Game, ScoreTable, TeamSeasonStats
+from app.models import Game, ScoreTable, SeasonParticipant, TeamSeasonStats
 from app.services.sync.base import BaseSyncService, TEAM_SEASON_STATS_FIELDS
 
 logger = logging.getLogger(__name__)
@@ -126,29 +126,38 @@ class StatsSyncService(BaseSyncService):
         Returns:
             Number of team stats synced
         """
-        # Get all teams from score_table for this season
+        # Build candidate team set from all season sources:
+        # score_table + season_participants + games.
+        # This prevents partial sync when score_table is incomplete (e.g. split groups).
         score_table_result = await self.db.execute(
             select(ScoreTable).where(ScoreTable.season_id == season_id)
         )
         score_table_entries = {st.team_id: st for st in score_table_result.scalars().all()}
 
         team_ids = set(score_table_entries.keys())
-        if not team_ids:
-            # Cup seasons may have no score table; infer teams from games.
-            games_result = await self.db.execute(
-                select(Game.home_team_id, Game.away_team_id).where(Game.season_id == season_id)
-            )
-            for home_id, away_id in games_result.all():
-                if home_id:
-                    team_ids.add(home_id)
-                if away_id:
-                    team_ids.add(away_id)
+
+        participants_result = await self.db.execute(
+            select(SeasonParticipant.team_id).where(SeasonParticipant.season_id == season_id)
+        )
+        for team_id in participants_result.scalars().all():
+            if team_id:
+                team_ids.add(team_id)
+
+        # Cup-style seasons or partially populated participants are additionally covered by games.
+        games_result = await self.db.execute(
+            select(Game.home_team_id, Game.away_team_id).where(Game.season_id == season_id)
+        )
+        for home_id, away_id in games_result.all():
+            if home_id:
+                team_ids.add(home_id)
+            if away_id:
+                team_ids.add(away_id)
 
         if not team_ids:
             return 0
 
         count = 0
-        for team_id in team_ids:
+        for team_id in sorted(team_ids):
             try:
                 # Get all metrics from SOTA v2 API
                 stats = await self.client.get_team_season_stats_v2(team_id, season_id)

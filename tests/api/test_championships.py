@@ -91,6 +91,7 @@ class TestChampionshipsFrontMapAPI:
                 tournament_type='league',
                 tournament_format='round_robin',
                 has_table=True,
+                final_stage_ids=[301, 302],
                 sort_order=4,
             ),
         ]
@@ -111,3 +112,4 @@ class TestChampionshipsFrontMapAPI:
         assert data['pl']['has_table'] is True
         assert data['cup']['has_bracket'] is True
         assert data['2l']['tournament_type'] == 'league'
+        assert data['2l']['final_stage_ids'] == [301, 302]

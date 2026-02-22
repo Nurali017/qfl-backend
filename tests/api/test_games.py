@@ -45,6 +45,90 @@ class TestGamesAPI:
         data = response.json()
         assert len(data["items"]) == 0
 
+    async def test_get_games_group_filter(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Group filter should include only games where both teams are in the selected group."""
+        from app.models import Game, SeasonParticipant
+
+        test_session.add_all(
+            [
+                SeasonParticipant(team_id=sample_teams[0].id, season_id=sample_season.id, group_name="A"),
+                SeasonParticipant(team_id=sample_teams[1].id, season_id=sample_season.id, group_name="A"),
+                SeasonParticipant(team_id=sample_teams[2].id, season_id=sample_season.id, group_name="B"),
+            ]
+        )
+
+        cross_group_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 18),
+            time=datetime.strptime("19:00", "%H:%M").time(),
+            tour=2,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[2].id,
+            home_score=1,
+            away_score=1,
+            has_stats=True,
+            stadium="Central Stadium",
+            visitors=9000,
+        )
+        test_session.add(cross_group_game)
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games?season_id={sample_season.id}&group=A")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == sample_game.id
+
+    async def test_get_games_final_filter(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Final filter should include only games from configured final stages."""
+        from app.models import Game, Stage
+
+        regular_stage = Stage(season_id=sample_season.id, name="Regular Stage", sort_order=1)
+        final_stage = Stage(season_id=sample_season.id, name="Final Stage", sort_order=2)
+        test_session.add_all([regular_stage, final_stage])
+        await test_session.flush()
+
+        sample_game.stage_id = regular_stage.id
+        sample_season.final_stage_ids = [final_stage.id]
+
+        final_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 20),
+            time=datetime.strptime("20:00", "%H:%M").time(),
+            tour=3,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[1].id,
+            away_team_id=sample_teams[2].id,
+            home_score=2,
+            away_score=0,
+            stage_id=final_stage.id,
+            has_stats=True,
+            stadium="Final Stadium",
+            visitors=14000,
+        )
+        test_session.add(final_game)
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games?season_id={sample_season.id}&final=true")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == final_game.id
+
+    async def test_get_games_group_and_final_are_mutually_exclusive(
+        self, client: AsyncClient, sample_season
+    ):
+        response = await client.get(f"/api/v1/games?season_id={sample_season.id}&group=A&final=true")
+        assert response.status_code == 400
+        assert "mutually exclusive" in response.json()["detail"]
+
     async def test_get_game_by_id(self, client: AsyncClient, sample_game):
         """Test getting game by int ID."""
         response = await client.get(f"/api/v1/games/{sample_game.id}")

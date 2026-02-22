@@ -59,6 +59,130 @@ class TestSeasonsAPI:
         assert len(data["table"]) == 3
         assert data["table"][0]["position"] == 1
 
+    async def test_get_season_table_group_filter_uses_group_participants(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Table group filter should be calculated dynamically from group matches."""
+        from app.models import SeasonParticipant
+
+        test_session.add_all(
+            [
+                SeasonParticipant(team_id=sample_teams[0].id, season_id=sample_season.id, group_name="A"),
+                SeasonParticipant(team_id=sample_teams[1].id, season_id=sample_season.id, group_name="A"),
+                SeasonParticipant(team_id=sample_teams[2].id, season_id=sample_season.id, group_name="B"),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/table?group=A&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert {row["team_id"] for row in data["table"]} == {
+            sample_teams[0].id,
+            sample_teams[1].id,
+        }
+        assert all(row["team_id"] != sample_teams[2].id for row in data["table"])
+
+    async def test_get_season_table_final_filter_uses_final_stage_ids(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Table final filter should include only games from season.final_stage_ids."""
+        from app.models import Game, Stage
+
+        regular_stage = Stage(season_id=sample_season.id, name="Regular Stage", sort_order=1)
+        final_stage = Stage(season_id=sample_season.id, name="Final Stage", sort_order=2)
+        test_session.add_all([regular_stage, final_stage])
+        await test_session.flush()
+
+        sample_game.stage_id = regular_stage.id
+        sample_season.final_stage_ids = [final_stage.id]
+
+        final_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 20),
+            time=time(20, 0),
+            tour=2,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[1].id,
+            away_team_id=sample_teams[2].id,
+            home_score=1,
+            away_score=0,
+            stage_id=final_stage.id,
+            has_stats=True,
+            stadium="Central Stadium",
+            visitors=12000,
+        )
+        test_session.add(final_game)
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/table?final=true&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert len(data["table"]) == 2
+        assert {row["team_id"] for row in data["table"]} == {
+            sample_teams[1].id,
+            sample_teams[2].id,
+        }
+        assert all(row["team_id"] != sample_teams[0].id for row in data["table"])
+
+    async def test_get_season_table_group_and_final_are_mutually_exclusive(
+        self, client: AsyncClient, sample_season
+    ):
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/table?group=A&final=true")
+        assert response.status_code == 400
+        assert "mutually exclusive" in response.json()["detail"]
+
+    async def test_get_results_grid_final_filter_uses_final_stage_ids(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_score_table, sample_game
+    ):
+        """Results grid final filter should include only final-stage participants."""
+        from app.models import Game, Stage
+
+        regular_stage = Stage(season_id=sample_season.id, name="Regular Stage", sort_order=1)
+        final_stage = Stage(season_id=sample_season.id, name="Final Stage", sort_order=2)
+        test_session.add_all([regular_stage, final_stage])
+        await test_session.flush()
+
+        sample_game.stage_id = regular_stage.id
+        sample_season.final_stage_ids = [final_stage.id]
+
+        final_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 20),
+            time=time(20, 0),
+            tour=2,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[1].id,
+            away_team_id=sample_teams[2].id,
+            home_score=1,
+            away_score=0,
+            stage_id=final_stage.id,
+            has_stats=True,
+            stadium="Central Stadium",
+            visitors=12000,
+        )
+        test_session.add(final_game)
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/results-grid?final=true&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert {row["team_id"] for row in data["teams"]} == {
+            sample_teams[1].id,
+            sample_teams[2].id,
+        }
+        assert all(row["team_id"] != sample_teams[0].id for row in data["teams"])
+
+    async def test_get_results_grid_group_and_final_are_mutually_exclusive(
+        self, client: AsyncClient, sample_season
+    ):
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/results-grid?group=A&final=true")
+        assert response.status_code == 400
+        assert "mutually exclusive" in response.json()["detail"]
+
     async def test_get_season_games(self, client: AsyncClient, sample_season, sample_game):
         """Test getting games for a season."""
         response = await client.get("/api/v1/seasons/61/games")
@@ -468,20 +592,20 @@ class TestSeasonsAPI:
         assert data["items"][0]["team_id"] == sample_teams[0].id
         assert data["items"][0]["points"] == 3
 
-    async def test_get_season_teams_fallback_from_score_table(
+    async def test_get_season_teams_returns_empty_without_season_participants(
         self, client: AsyncClient, sample_season, sample_score_table
     ):
-        """Season teams endpoint falls back to score_table when SeasonParticipant is empty."""
+        """Season teams endpoint should be strict and not fallback to score_table."""
         response = await client.get("/api/v1/seasons/61/teams?lang=ru")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 3
-        assert {item["team_id"] for item in data["items"]} == {91, 13, 90}
+        assert data["total"] == 0
+        assert data["items"] == []
 
-    async def test_get_season_teams_backfills_partial_team_tournament(
+    async def test_get_season_teams_does_not_backfill_partial_season_participants(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_score_table
     ):
-        """Season teams endpoint should include fallback teams beyond SeasonParticipant rows."""
+        """Season teams endpoint should return only explicit season_participants."""
         from app.models import SeasonParticipant
 
         test_session.add(SeasonParticipant(team_id=sample_teams[0].id, season_id=sample_season.id, group_name="A"))
@@ -490,16 +614,12 @@ class TestSeasonsAPI:
         response = await client.get("/api/v1/seasons/61/teams?lang=ru")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 3
-        assert {item["team_id"] for item in data["items"]} == {
-            sample_teams[0].id,
-            sample_teams[1].id,
-            sample_teams[2].id,
-        }
+        assert data["total"] == 1
+        assert {item["team_id"] for item in data["items"]} == {sample_teams[0].id}
         grouped = {item["team_id"]: item["group_name"] for item in data["items"]}
         assert grouped[sample_teams[0].id] == "A"
 
-    async def test_get_team_stats_backfills_missing_participants_for_partial_stats(
+    async def test_get_team_stats_partial_stats_without_season_participants_returns_partial(
         self,
         client: AsyncClient,
         test_session,
@@ -507,7 +627,7 @@ class TestSeasonsAPI:
         sample_teams,
         sample_score_table,
     ):
-        """Team stats endpoint should include teams missing from TeamSeasonStats rows."""
+        """Team stats endpoint should not synthesize missing teams without season_participants."""
         from app.models import TeamSeasonStats
 
         test_session.add(
@@ -529,12 +649,8 @@ class TestSeasonsAPI:
         response = await client.get("/api/v1/seasons/61/team-stats?lang=ru")
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 3
-        assert {item["team_id"] for item in data["items"]} == {
-            sample_teams[0].id,
-            sample_teams[1].id,
-            sample_teams[2].id,
-        }
+        assert data["total"] == 1
+        assert {item["team_id"] for item in data["items"]} == {sample_teams[0].id}
 
     async def test_get_goals_by_period_season_not_found(self, client: AsyncClient):
         """Goals-by-period endpoint returns 404 for unknown season."""

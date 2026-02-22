@@ -36,6 +36,7 @@ class Season(Base):
     total_rounds: Mapped[int | None] = mapped_column(Integer)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     colors: Mapped[dict | None] = mapped_column(JSON)
+    final_stage_ids: Mapped[list[int] | None] = mapped_column(JSON)
 
     # Relationships
     championship: Mapped["Championship"] = relationship("Championship", back_populates="seasons")

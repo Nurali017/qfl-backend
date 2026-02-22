@@ -14,6 +14,7 @@ class AdminSeasonUpdateRequest(BaseModel):
     total_rounds: int | None = None
     sort_order: int | None = None
     colors: dict | None = None
+    final_stage_ids: list[int] | None = None
 
 
 class AdminSeasonResponse(BaseModel):
@@ -34,6 +35,7 @@ class AdminSeasonResponse(BaseModel):
     total_rounds: int | None = None
     sort_order: int = 0
     colors: dict | None = None
+    final_stage_ids: list[int] | None = None
     sync_enabled: bool = True
 
     class Config:

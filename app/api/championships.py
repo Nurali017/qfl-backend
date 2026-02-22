@@ -154,6 +154,7 @@ async def get_front_map(
             sponsor_name=sponsor,
             logo=selected.logo,
             colors=selected.colors,
+            final_stage_ids=selected.final_stage_ids,
             current_round=selected.current_round,
             total_rounds=selected.total_rounds,
             sort_order=selected.sort_order,
