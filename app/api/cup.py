@@ -29,6 +29,7 @@ from app.services.cup_rounds import (
     build_schedule_rounds,
     determine_current_round,
 )
+from app.services.season_visibility import is_season_visible_clause
 from app.utils.localization import get_localized_field
 
 router = APIRouter(prefix="/cup", tags=["cup"])
@@ -38,7 +39,10 @@ async def _load_season(db: AsyncSession, season_id: int, lang: str) -> Season:
     """Load season with championship, or 404."""
     result = await db.execute(
         select(Season)
-        .where(Season.id == season_id)
+        .where(
+            Season.id == season_id,
+            is_season_visible_clause(),
+        )
         .options(selectinload(Season.championship))
     )
     season = result.scalar_one_or_none()

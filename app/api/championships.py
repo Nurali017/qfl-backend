@@ -2,11 +2,12 @@ from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.models import Championship, Season
+from app.models import Championship, Game, Season
+from app.services.season_visibility import is_season_visible_clause
 from app.utils.localization import get_localized_field
 from app.schemas.championship import (
     ChampionshipResponse,
@@ -95,6 +96,7 @@ async def get_championships_tree(
                 tournament_type=s.tournament_type,
             )
             for s in sorted(c.seasons, key=lambda s: s.date_start or s.id, reverse=True)
+            if s.is_visible
         ]
 
         items.append(
@@ -122,7 +124,10 @@ async def get_front_map(
     """
     result = await db.execute(
         select(Season)
-        .where(Season.frontend_code.isnot(None))
+        .where(
+            Season.frontend_code.isnot(None),
+            is_season_visible_clause(),
+        )
         .options(selectinload(Season.championship))
     )
     all_seasons = result.scalars().all()
@@ -132,16 +137,45 @@ async def get_front_map(
     for s in all_seasons:
         by_code.setdefault(s.frontend_code, []).append(s)
 
-    front_map_items: dict[str, FrontMapEntry] = {}
+    selected_by_code: dict[str, Season] = {}
     for code, seasons in by_code.items():
         selected = _pick_current_season(seasons)
-        if selected is None:
-            continue
+        if selected is not None:
+            selected_by_code[code] = selected
+
+    max_tour_by_season: dict[int, int] = {}
+    selected_season_ids = [season.id for season in selected_by_code.values()]
+    if selected_season_ids:
+        max_tour_result = await db.execute(
+            select(
+                Game.season_id,
+                func.max(Game.tour).label("max_tour"),
+            )
+            .where(
+                Game.season_id.in_(selected_season_ids),
+                Game.tour.isnot(None),
+            )
+            .group_by(Game.season_id)
+        )
+        max_tour_by_season = {
+            season_id: int(max_tour)
+            for season_id, max_tour in max_tour_result.all()
+            if season_id is not None and max_tour is not None
+        }
+
+    front_map_items: dict[str, FrontMapEntry] = {}
+    for code, selected in selected_by_code.items():
+        seasons = by_code[code]
 
         sponsor = (
             get_localized_field(selected, "sponsor_name", lang)
             if lang == "kz" and selected.sponsor_name_kz
             else selected.sponsor_name
+        )
+        total_rounds = (
+            selected.total_rounds
+            if selected.total_rounds is not None
+            else max_tour_by_season.get(selected.id)
         )
 
         season_options = []
@@ -164,7 +198,7 @@ async def get_front_map(
             colors=selected.colors,
             final_stage_ids=selected.final_stage_ids,
             current_round=selected.current_round,
-            total_rounds=selected.total_rounds,
+            total_rounds=total_rounds,
             sort_order=selected.sort_order,
             seasons=season_options,
         )

@@ -402,22 +402,31 @@ python scripts/import_cms_data.py
 
 | Метод | Эндпоинт | Описание |
 |-------|----------|----------|
-| GET | `/api/v1/news?language=ru&page=1&per_page=20` | Список новостей |
-| GET | `/api/v1/news/{id}?language=ru` | Одна новость |
-| GET | `/api/v1/news/latest?language=ru&limit=10` | Последние новости |
+| GET | `/api/v1/news?lang=ru&page=1&per_page=20` | Список новостей |
+| GET | `/api/v1/news/{id}?lang=ru` | Одна новость |
+| GET | `/api/v1/news/latest?lang=ru&limit=10` | Последние новости |
 | GET | `/api/v1/news/categories?language=ru` | Список категорий |
+
+Поддерживаемые query-параметры `/api/v1/news`:
+- `lang`: `ru | kz | en` (en fallback на RU-контент)
+- `championship_code`: `pl | 1l | cup | 2l | el`
+- `article_type`: `news | analytics`
+- `search`: поиск по `title/excerpt/content_text/content`
+- `sort`: `date_desc | date_asc | views_desc | likes_desc`
+- `date_from`, `date_to`: диапазон `publish_date` (формат `YYYY-MM-DD`)
+- `page`, `per_page`: пагинация
 
 ### Примеры запросов
 
 ```bash
 # Получить последние 10 новостей на казахском
-curl "http://localhost:8000/api/v1/news/latest?language=kz&limit=10"
+curl "http://localhost:8000/api/v1/news/latest?lang=kz&limit=10"
 
 # Получить страницу руководства на русском
 curl "http://localhost:8000/api/v1/pages/leadership/ru"
 
-# Получить новости категории "ПРЕМЬЕР-ЛИГА"
-curl "http://localhost:8000/api/v1/news?language=ru&category=ПРЕМЬЕР-ЛИГА"
+# Получить аналитику с сортировкой по лайкам
+curl "http://localhost:8000/api/v1/news?lang=ru&article_type=analytics&sort=likes_desc"
 ```
 
 ## Admin API
@@ -427,9 +436,25 @@ curl "http://localhost:8000/api/v1/news?language=ru&category=ПРЕМЬЕР-ЛИ
 - `/api/v1/admin/auth/*`
 - `/api/v1/admin/users/*`
 - `/api/v1/admin/news/materials/*`
+- `/api/v1/admin/news/materials/classify`
+- `/api/v1/admin/news/materials/{group_id}/article-type`
 - `/api/v1/admin/pages/materials/*`
 - `/api/v1/admin/files/*`
 - `/api/v1/admin/ops/*`
+
+### Ручная массовая классификация новостей
+
+Доступен CLI-скрипт (по умолчанию dry-run):
+
+```bash
+python classify_news.py --only-unclassified --limit 200 --min-confidence 0.7
+```
+
+Применить изменения в БД:
+
+```bash
+python classify_news.py --apply --only-unclassified --report-path reports/news_classify_report.json
+```
 
 ### Bootstrap superadmin
 

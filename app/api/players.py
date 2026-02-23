@@ -18,12 +18,19 @@ from app.schemas.player import (
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.team import TeamInGame
 from app.config import get_settings
+from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.numbers import sanitize_non_finite_numbers
 
 settings = get_settings()
 
 router = APIRouter(prefix="/players", tags=["players"])
+
+
+async def _resolve_visible_season_id(db: AsyncSession, season_id: int | None) -> int:
+    resolved_season_id = season_id if season_id is not None else settings.current_season_id
+    await ensure_visible_season_or_404(db, resolved_season_id)
+    return resolved_season_id
 
 
 @router.get("", response_model=PlayerListResponse)
@@ -36,6 +43,9 @@ async def get_players(
     db: AsyncSession = Depends(get_db),
 ):
     """Get players, optionally filtered by season and team."""
+    if season_id is not None:
+        await ensure_visible_season_or_404(db, season_id)
+
     query = select(Player).options(selectinload(Player.country))
 
     if season_id or team_id:
@@ -90,6 +100,9 @@ async def get_player(
     db: AsyncSession = Depends(get_db),
 ):
     """Get player by ID."""
+    if season_id is not None:
+        await ensure_visible_season_or_404(db, season_id)
+
     result = await db.execute(
         select(Player)
         .where(Player.id == player_id)
@@ -158,8 +171,7 @@ async def get_player_stats(
     - Passes, key passes
     - And more in extra_stats
     """
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     # Get from player_season_stats table
     result = await db.execute(
@@ -188,8 +200,7 @@ async def get_player_games(
     db: AsyncSession = Depends(get_db),
 ):
     """Get games a player participated in."""
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     # Get game IDs where player has stats
     game_ids_result = await db.execute(
@@ -266,8 +277,7 @@ async def get_player_teammates(
     Get teammates of a player from the same team in the current season.
     Excludes the player themselves from the result.
     """
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     # 1. Find player's team_id in the current season
     player_team_result = await db.execute(
@@ -342,9 +352,12 @@ async def get_player_tournament_history(
         season_result = await db.execute(
             select(Season)
             .where(Season.id == stat.season_id)
+            .where(is_season_visible_clause())
             .options(selectinload(Season.championship))
         )
         season = season_result.scalar_one_or_none()
+        if season is None:
+            continue
 
         # Get team info
         team_name = None

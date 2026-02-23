@@ -4,7 +4,8 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.models import SeasonParticipant
+from app.models import Season, SeasonParticipant
+from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.schemas.admin.season_participants import (
     AdminSeasonParticipantCreateRequest,
     AdminSeasonParticipantUpdateRequest,
@@ -26,6 +27,8 @@ async def list_season_participants(
     offset: int = Query(default=0),
     db: AsyncSession = Depends(get_db),
 ):
+    await ensure_visible_season_or_404(db, season_id)
+
     base = select(SeasonParticipant).where(SeasonParticipant.season_id == season_id)
     count_result = await db.execute(select(func.count()).select_from(base.subquery()))
     total = count_result.scalar() or 0
@@ -44,6 +47,8 @@ async def create_season_participant(
     body: AdminSeasonParticipantCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    await ensure_visible_season_or_404(db, body.season_id)
+
     obj = SeasonParticipant(**body.model_dump())
     db.add(obj)
     await db.commit()
@@ -57,7 +62,14 @@ async def update_season_participant(
     body: AdminSeasonParticipantUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(SeasonParticipant).where(SeasonParticipant.id == id))
+    result = await db.execute(
+        select(SeasonParticipant)
+        .join(Season, Season.id == SeasonParticipant.season_id)
+        .where(
+            SeasonParticipant.id == id,
+            is_season_visible_clause(),
+        )
+    )
     obj = result.scalar_one_or_none()
     if not obj:
         raise HTTPException(status_code=404, detail="Season participant entry not found")
@@ -72,7 +84,14 @@ async def update_season_participant(
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_season_participant(id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SeasonParticipant).where(SeasonParticipant.id == id))
+    result = await db.execute(
+        select(SeasonParticipant)
+        .join(Season, Season.id == SeasonParticipant.season_id)
+        .where(
+            SeasonParticipant.id == id,
+            is_season_visible_clause(),
+        )
+    )
     obj = result.scalar_one_or_none()
     if not obj:
         raise HTTPException(status_code=404, detail="Season participant entry not found")

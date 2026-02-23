@@ -26,6 +26,34 @@ class TestSeasonsAPI:
         assert data["items"][0]["name"] == "2025"
         assert data["total"] == 1
 
+    async def test_get_seasons_excludes_hidden(self, client: AsyncClient, test_session, sample_championship):
+        from app.models import Season
+
+        visible = Season(
+            id=61,
+            name="2025",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            is_visible=True,
+        )
+        hidden = Season(
+            id=62,
+            name="2024",
+            championship_id=sample_championship.id,
+            date_start=date(2024, 3, 1),
+            date_end=date(2024, 11, 30),
+            is_visible=False,
+        )
+        test_session.add_all([visible, hidden])
+        await test_session.commit()
+
+        response = await client.get("/api/v1/seasons")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == 61
+
     async def test_get_season_by_id(self, client: AsyncClient, sample_season):
         """Test getting a specific season."""
         response = await client.get("/api/v1/seasons/61")
@@ -37,6 +65,24 @@ class TestSeasonsAPI:
     async def test_get_season_not_found(self, client: AsyncClient):
         """Test 404 for non-existent season."""
         response = await client.get("/api/v1/seasons/99999")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Season not found"
+
+    async def test_get_hidden_season_returns_404(self, client: AsyncClient, sample_season, test_session):
+        sample_season.is_visible = False
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Season not found"
+
+    async def test_hidden_season_subresource_returns_404(
+        self, client: AsyncClient, sample_season, test_session
+    ):
+        sample_season.is_visible = False
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/table")
         assert response.status_code == 404
         assert response.json()["detail"] == "Season not found"
 

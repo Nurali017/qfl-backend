@@ -4,7 +4,9 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
+from app.models import Season
 from app.models.team_of_week import TeamOfWeek
+from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.schemas.admin.team_of_week import (
     AdminTeamOfWeekCreateRequest,
     AdminTeamOfWeekUpdateRequest,
@@ -28,7 +30,14 @@ async def list_team_of_week(
     offset: int = Query(default=0),
     db: AsyncSession = Depends(get_db),
 ):
-    base = select(TeamOfWeek)
+    if season_id is not None:
+        await ensure_visible_season_or_404(db, season_id)
+
+    base = (
+        select(TeamOfWeek)
+        .join(Season, Season.id == TeamOfWeek.season_id)
+        .where(is_season_visible_clause())
+    )
     if season_id is not None:
         base = base.where(TeamOfWeek.season_id == season_id)
     if tour_key is not None:
@@ -48,7 +57,14 @@ async def list_team_of_week(
 
 @router.get("/{id}", response_model=AdminTeamOfWeekResponse)
 async def get_team_of_week(id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(TeamOfWeek).where(TeamOfWeek.id == id))
+    result = await db.execute(
+        select(TeamOfWeek)
+        .join(Season, Season.id == TeamOfWeek.season_id)
+        .where(
+            TeamOfWeek.id == id,
+            is_season_visible_clause(),
+        )
+    )
     obj = result.scalar_one_or_none()
     if not obj:
         raise HTTPException(status_code=404, detail="TeamOfWeek not found")
@@ -60,6 +76,8 @@ async def create_team_of_week(
     body: AdminTeamOfWeekCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    await ensure_visible_season_or_404(db, body.season_id)
+
     obj = TeamOfWeek(**body.model_dump())
     db.add(obj)
     await db.commit()
@@ -73,10 +91,20 @@ async def update_team_of_week(
     body: AdminTeamOfWeekUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(TeamOfWeek).where(TeamOfWeek.id == id))
+    result = await db.execute(
+        select(TeamOfWeek)
+        .join(Season, Season.id == TeamOfWeek.season_id)
+        .where(
+            TeamOfWeek.id == id,
+            is_season_visible_clause(),
+        )
+    )
     obj = result.scalar_one_or_none()
     if not obj:
         raise HTTPException(status_code=404, detail="TeamOfWeek not found")
+
+    if body.season_id is not None:
+        await ensure_visible_season_or_404(db, body.season_id)
 
     for key, value in body.model_dump(exclude_unset=True).items():
         setattr(obj, key, value)
@@ -88,7 +116,14 @@ async def update_team_of_week(
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_team_of_week(id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(TeamOfWeek).where(TeamOfWeek.id == id))
+    result = await db.execute(
+        select(TeamOfWeek)
+        .join(Season, Season.id == TeamOfWeek.season_id)
+        .where(
+            TeamOfWeek.id == id,
+            is_season_visible_clause(),
+        )
+    )
     obj = result.scalar_one_or_none()
     if not obj:
         raise HTTPException(status_code=404, detail="TeamOfWeek not found")

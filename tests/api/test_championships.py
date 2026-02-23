@@ -1,9 +1,9 @@
 import pytest
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 from httpx import AsyncClient
 
-from app.models import Championship, Season
+from app.models import Championship, Game, Season
 
 
 @pytest.mark.asyncio
@@ -113,3 +113,131 @@ class TestChampionshipsFrontMapAPI:
         assert data['cup']['has_bracket'] is True
         assert data['2l']['tournament_type'] == 'league'
         assert data['2l']['final_stage_ids'] == [301, 302]
+
+    async def test_get_front_map_falls_back_to_games_max_tour_for_total_rounds(
+        self,
+        client: AsyncClient,
+        test_session,
+    ):
+        today = date.today()
+
+        test_session.add(
+            Championship(id=201, name='First League', slug='first-league', is_active=True)
+        )
+        test_session.add(
+            Season(
+                id=285,
+                name='1L 2026',
+                championship_id=201,
+                date_start=today - timedelta(days=30),
+                date_end=today + timedelta(days=30),
+                frontend_code='1l',
+                tournament_type='league',
+                tournament_format='round_robin',
+                has_table=True,
+                total_rounds=None,
+                sort_order=2,
+            )
+        )
+        test_session.add_all(
+            [
+                Game(season_id=285, date=today, time=time(14, 0), tour=1),
+                Game(season_id=285, date=today, time=time(15, 0), tour=2),
+                Game(season_id=285, date=today, time=time(16, 0), tour=30),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get('/api/v1/championships/front-map')
+        assert response.status_code == 200
+        data = response.json()['items']
+
+        assert data['1l']['season_id'] == 285
+        assert data['1l']['total_rounds'] == 30
+
+    async def test_get_front_map_keeps_explicit_total_rounds_value(
+        self,
+        client: AsyncClient,
+        test_session,
+    ):
+        today = date.today()
+
+        test_session.add(
+            Championship(id=301, name='Women League', slug='women-league', is_active=True)
+        )
+        test_session.add(
+            Season(
+                id=384,
+                name='Women 2026',
+                championship_id=301,
+                date_start=today - timedelta(days=30),
+                date_end=today + timedelta(days=30),
+                frontend_code='el',
+                tournament_type='league',
+                tournament_format='round_robin',
+                has_table=True,
+                total_rounds=18,
+                sort_order=5,
+            )
+        )
+        test_session.add_all(
+            [
+                Game(season_id=384, date=today, time=time(14, 0), tour=1),
+                Game(season_id=384, date=today, time=time(16, 0), tour=30),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get('/api/v1/championships/front-map')
+        assert response.status_code == 200
+        data = response.json()['items']
+
+        assert data['el']['season_id'] == 384
+        assert data['el']['total_rounds'] == 18
+
+    async def test_get_front_map_excludes_hidden_seasons(
+        self,
+        client: AsyncClient,
+        test_session,
+    ):
+        today = date.today()
+
+        test_session.add(
+            Championship(id=401, name='Premier League', slug='premier-league', is_active=True)
+        )
+        test_session.add_all(
+            [
+                Season(
+                    id=461,
+                    name='PL 2025',
+                    championship_id=401,
+                    date_start=today - timedelta(days=365),
+                    date_end=today - timedelta(days=1),
+                    frontend_code='pl',
+                    tournament_type='league',
+                    tournament_format='round_robin',
+                    has_table=True,
+                    is_visible=False,
+                ),
+                Season(
+                    id=462,
+                    name='PL 2026',
+                    championship_id=401,
+                    date_start=today - timedelta(days=30),
+                    date_end=today + timedelta(days=30),
+                    frontend_code='pl',
+                    tournament_type='league',
+                    tournament_format='round_robin',
+                    has_table=True,
+                    is_visible=True,
+                ),
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get('/api/v1/championships/front-map')
+        assert response.status_code == 200
+        data = response.json()['items']
+
+        assert data['pl']['season_id'] == 462
+        assert data['pl']['seasons'] == [{'season_id': 462, 'year': 2026, 'name': 'PL 2026'}]

@@ -45,6 +45,7 @@ from app.schemas.team import TeamInGame
 from app.utils.date_helpers import format_match_date, get_localized_field
 from app.utils.numbers import to_finite_float
 from app.config import get_settings
+from app.services.season_visibility import ensure_visible_season_or_404
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -537,6 +538,7 @@ async def get_games(
     """
     if season_id is None:
         season_id = settings.current_season_id
+    await ensure_visible_season_or_404(db, season_id)
 
     if group and final:
         raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")

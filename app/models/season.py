@@ -16,6 +16,9 @@ class Season(Base):
     championship_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("championships.id"), index=True
     )
+    is_visible: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
     date_start: Mapped[date | None] = mapped_column(Date)
     date_end: Mapped[date | None] = mapped_column(Date)
     sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

@@ -220,26 +220,34 @@ async def sample_page(test_session) -> Page:
 @pytest.fixture
 async def sample_news(test_session) -> list[News]:
     """Create sample news articles."""
-    from app.models.news import News
+    from app.models.news import ArticleType, News
     news_items = [
         News(
             id=1,
             language=Language.RU,
-            title="News Article 1",
-            excerpt="Excerpt 1",
-            content="<p>Content 1</p>",
+            title="Официально: новый трансфер в клубе",
+            excerpt="Клуб объявил о подписании игрока",
+            content="<p>Официальный анонс перехода футболиста.</p>",
+            content_text="Официальный анонс перехода футболиста.",
             category="PREMIER-LIGA",
             championship_code="pl",
+            article_type=ArticleType.NEWS,
+            views_count=120,
+            likes_count=7,
             publish_date=date(2025, 5, 1),
         ),
         News(
             id=2,
             language=Language.RU,
-            title="News Article 2",
-            excerpt="Excerpt 2",
-            content="<p>Content 2</p>",
+            title="Тактический анализ матча тура",
+            excerpt="Разбор игры и статистика xG",
+            content="<p>Анализ схем и ключевых эпизодов.</p>",
+            content_text="Анализ схем и ключевых эпизодов.",
             category="CUP",
             championship_code="cup",
+            article_type=ArticleType.ANALYTICS,
+            views_count=45,
+            likes_count=33,
             publish_date=date(2025, 5, 2),
         ),
     ]

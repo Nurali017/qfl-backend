@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.api.deps import get_db
 from app.models.team_of_week import TeamOfWeek
+from app.services.season_visibility import ensure_visible_season_or_404
 from app.schemas.team_of_week import TeamOfWeekResponse, TeamOfWeekListResponse
 
 router = APIRouter(prefix="/team-of-week", tags=["team-of-week"])
@@ -17,6 +18,8 @@ async def get_team_of_week(
     db: AsyncSession = Depends(get_db),
 ):
     """Get team of the week / season entries."""
+    await ensure_visible_season_or_404(db, season_id)
+
     query = select(TeamOfWeek).where(
         TeamOfWeek.season_id == season_id,
         TeamOfWeek.locale == locale,

@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.api.deps import get_db
 from app.models import Partner
+from app.services.season_visibility import ensure_visible_season_or_404
 from app.schemas.partner import PartnerResponse, PartnerListResponse
 
 router = APIRouter(prefix="/partners", tags=["partners"])
@@ -16,6 +17,9 @@ async def get_partners(
     db: AsyncSession = Depends(get_db),
 ):
     """Get partners/sponsors with optional filters."""
+    if season_id is not None:
+        await ensure_visible_season_or_404(db, season_id)
+
     query = select(Partner).where(Partner.is_active == True)
 
     if championship_id is not None:
