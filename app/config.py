@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     current_season_id: int = 200
 
     # CORS
-    allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kff.1sportkz.com"
+    allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kffleague.kz"
 
     # Admin auth (JWT + refresh cookie)
     admin_jwt_secret: str = "change-me-admin-jwt-secret"
