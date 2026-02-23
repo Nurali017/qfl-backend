@@ -43,6 +43,85 @@ class TestGamesAPI:
         data = response.json()
         assert len(data["items"]) == 0
 
+    async def test_get_games_filter_by_month_without_year(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Month filter without year should match all years within season scope."""
+        from app.models import Game
+
+        may_2024_game = Game(
+            sota_id=uuid4(),
+            date=date(2024, 5, 12),
+            time=datetime.strptime("18:30", "%H:%M").time(),
+            tour=2,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[1].id,
+            away_team_id=sample_teams[2].id,
+            home_score=1,
+            away_score=0,
+            has_stats=True,
+            stadium="May Stadium 2024",
+            visitors=6000,
+        )
+        june_2025_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 6, 1),
+            time=datetime.strptime("20:00", "%H:%M").time(),
+            tour=3,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[2].id,
+            away_team_id=sample_teams[0].id,
+            home_score=2,
+            away_score=2,
+            has_stats=True,
+            stadium="June Stadium 2025",
+            visitors=7200,
+        )
+        test_session.add_all([may_2024_game, june_2025_game])
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games?season_id={sample_season.id}&month=5")
+        assert response.status_code == 200
+        data = response.json()
+
+        returned_ids = {item["id"] for item in data["items"]}
+        assert sample_game.id in returned_ids  # 2025-05 fixture
+        assert may_2024_game.id in returned_ids
+        assert june_2025_game.id not in returned_ids
+
+    async def test_get_games_filter_by_month_and_year(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Month + year should keep strict year filtering."""
+        from app.models import Game
+
+        may_2024_game = Game(
+            sota_id=uuid4(),
+            date=date(2024, 5, 18),
+            time=datetime.strptime("16:00", "%H:%M").time(),
+            tour=4,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[2].id,
+            away_team_id=sample_teams[1].id,
+            home_score=0,
+            away_score=1,
+            has_stats=True,
+            stadium="May Stadium 2024",
+            visitors=5100,
+        )
+        test_session.add(may_2024_game)
+        await test_session.commit()
+
+        response = await client.get(
+            f"/api/v1/games?season_id={sample_season.id}&month=5&year=2025"
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        returned_ids = {item["id"] for item in data["items"]}
+        assert sample_game.id in returned_ids  # 2025-05 fixture
+        assert may_2024_game.id not in returned_ids
+
     async def test_get_games_group_filter(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
     ):

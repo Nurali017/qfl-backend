@@ -341,3 +341,14 @@ class TeamOverviewResponse(BaseModel):
     standings_window: list[TeamOverviewStandingEntry]
     leaders: TeamOverviewLeaders
     staff_preview: list[TeamOverviewCoachPreview]
+
+
+class TeamSeasonEntry(BaseModel):
+    season_id: int
+    season_name: str | None = None
+    championship_name: str | None = None
+
+
+class TeamSeasonsResponse(BaseModel):
+    items: list[TeamSeasonEntry]
+    total: int
