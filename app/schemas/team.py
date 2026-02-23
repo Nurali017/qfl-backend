@@ -347,6 +347,8 @@ class TeamSeasonEntry(BaseModel):
     season_id: int
     season_name: str | None = None
     championship_name: str | None = None
+    frontend_code: str | None = None
+    season_year: int | None = None
 
 
 class TeamSeasonsResponse(BaseModel):

@@ -67,6 +67,89 @@ class PreviousMeeting(BaseModel):
     season_name: str | None
 
 
+# --- Phase 1: Fun Facts & Aggregated Match Stats ---
+
+class H2HBiggestWin(BaseModel):
+    """Biggest win for a team in H2H history."""
+    game_id: int
+    date: date
+    score: str  # e.g. "4-0"
+    goal_difference: int
+
+
+class H2HGoalsByHalf(BaseModel):
+    """Goals scored by each team broken down by half."""
+    team1_first_half: int
+    team1_second_half: int
+    team2_first_half: int
+    team2_second_half: int
+
+
+class H2HFunFacts(BaseModel):
+    """Interesting facts about H2H history."""
+    avg_goals_per_match: float  # Average total goals per match
+    over_2_5_percent: float  # % of matches with total > 2.5
+    btts_percent: float  # % of matches where Both Teams To Score
+    team1_biggest_win: H2HBiggestWin | None
+    team2_biggest_win: H2HBiggestWin | None
+    team1_unbeaten_streak: int  # Max consecutive matches without loss
+    team2_unbeaten_streak: int
+    goals_by_half: H2HGoalsByHalf | None  # None if no GameEvent data
+
+
+class H2HTeamMatchStats(BaseModel):
+    """Aggregated match stats for one team across H2H matches."""
+    avg_possession: float | None
+    avg_shots: float | None
+    avg_shots_on_goal: float | None
+    avg_corners: float | None
+    avg_fouls: float | None
+    total_yellow_cards: int
+    total_red_cards: int
+
+
+class H2HAggregatedMatchStats(BaseModel):
+    """Aggregated match statistics from GameTeamStats for H2H matches."""
+    matches_with_stats: int  # How many matches have GameTeamStats data
+    team1: H2HTeamMatchStats
+    team2: H2HTeamMatchStats
+
+
+# --- Phase 2: Top Performers ---
+
+class H2HTopPerformer(BaseModel):
+    """A player who performed well in H2H matches."""
+    player_id: int
+    player_name: str
+    team_id: int
+    photo_url: str | None
+    count: int  # Goals or assists
+
+
+class H2HTopPerformers(BaseModel):
+    """Top scorers and assisters in H2H history."""
+    top_scorers: list[H2HTopPerformer]
+    top_assisters: list[H2HTopPerformer]
+
+
+# --- Phase 3: Enhanced Season Stats ---
+
+class H2HEnhancedSeasonTeamStats(BaseModel):
+    """Enhanced season stats for one team."""
+    xg: float | None
+    xg_per_match: float | None
+    possession_avg: float | None
+    pass_accuracy_avg: float | None
+    duel_ratio: float | None  # Duels won %
+    shots_per_match: float | None
+
+
+class H2HEnhancedSeasonStats(BaseModel):
+    """Enhanced season comparison from TeamSeasonStats."""
+    team1: H2HEnhancedSeasonTeamStats | None
+    team2: H2HEnhancedSeasonTeamStats | None
+
+
 class HeadToHeadResponse(BaseModel):
     """Complete head-to-head response."""
     team1_id: int
@@ -86,3 +169,13 @@ class HeadToHeadResponse(BaseModel):
 
     # Previous meetings (chronological, most recent first)
     previous_meetings: list[PreviousMeeting]
+
+    # Phase 1: Fun facts & aggregated match stats
+    fun_facts: H2HFunFacts | None = None
+    match_stats: H2HAggregatedMatchStats | None = None
+
+    # Phase 2: Top performers
+    top_performers: H2HTopPerformers | None = None
+
+    # Phase 3: Enhanced season stats
+    enhanced_season_stats: H2HEnhancedSeasonStats | None = None

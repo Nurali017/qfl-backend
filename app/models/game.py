@@ -30,6 +30,9 @@ class Game(Base):
     has_stats: Mapped[bool] = mapped_column(Boolean, default=False)
     has_lineup: Mapped[bool] = mapped_column(Boolean, default=False)
     is_technical: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_schedule_tentative: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
 
     # Live match tracking
     is_live: Mapped[bool] = mapped_column(Boolean, default=False)

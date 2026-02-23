@@ -1,10 +1,11 @@
 from collections import defaultdict
 from datetime import date
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import get_db
 from app.models import (
@@ -51,7 +52,18 @@ from app.schemas.head_to_head import (
     FormGuideMatch,
     SeasonTableEntry,
     PreviousMeeting,
+    H2HFunFacts,
+    H2HBiggestWin,
+    H2HGoalsByHalf,
+    H2HAggregatedMatchStats,
+    H2HTeamMatchStats,
+    H2HTopPerformers,
+    H2HTopPerformer,
+    H2HEnhancedSeasonStats,
+    H2HEnhancedSeasonTeamStats,
 )
+from app.models.game_team_stats import GameTeamStats
+from app.models.game_event import GameEvent, GameEventType
 from app.config import get_settings
 from app.services.season_participants import resolve_season_participants
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
@@ -64,6 +76,13 @@ router = APIRouter(prefix="/teams", tags=["teams"])
 
 def _safe_int(value: int | float | None) -> int:
     return int(value) if value is not None else 0
+
+
+def _extract_year(value: str | None) -> int | None:
+    if not value:
+        return None
+    match = re.search(r"(\d{4})", value)
+    return int(match.group(1)) if match else None
 
 
 def _match_status(game: Game) -> str:
@@ -268,14 +287,19 @@ async def get_team_seasons(
     )
     rows = result.all()
 
-    items = [
-        TeamSeasonEntry(
-            season_id=season.id,
-            season_name=get_localized_name(season, lang),
-            championship_name=get_localized_name(championship, lang),
+    items: list[TeamSeasonEntry] = []
+    for _, season, championship in rows:
+        season_name = get_localized_name(season, lang)
+        season_year = season.date_start.year if season.date_start else _extract_year(season_name)
+        items.append(
+            TeamSeasonEntry(
+                season_id=season.id,
+                season_name=season_name,
+                championship_name=get_localized_name(championship, lang),
+                frontend_code=season.frontend_code,
+                season_year=season_year,
+            )
         )
-        for _, season, championship in rows
-    ]
 
     return TeamSeasonsResponse(items=items, total=len(items))
 
@@ -959,6 +983,7 @@ async def get_head_to_head(
             Game.home_score.is_not(None),  # Only finished matches
             Game.away_score.is_not(None),
         )
+        .order_by(Game.date.asc())
     )
     overall_result = await db.execute(overall_query)
     all_h2h_games = overall_result.scalars().all()
@@ -1135,6 +1160,277 @@ async def get_head_to_head(
             season_name=get_localized_field(game.season, "name", lang) if game.season else None,
         ))
 
+    # 5. FUN FACTS (computed from all_h2h_games + GameEvent)
+    fun_facts = None
+    if all_h2h_games:
+        total_goals = team1_goals + team2_goals
+        total_matches = len(all_h2h_games)
+        avg_goals = round(total_goals / total_matches, 2) if total_matches else 0
+
+        over_2_5_count = 0
+        btts_count = 0
+        team1_best_diff = 0
+        team2_best_diff = 0
+        team1_best_win = None
+        team2_best_win = None
+        team1_streak = 0
+        team2_streak = 0
+        team1_max_streak = 0
+        team2_max_streak = 0
+
+        for game in all_h2h_games:
+            hs = game.home_score or 0
+            aws = game.away_score or 0
+            total = hs + aws
+
+            if total > 2.5:
+                over_2_5_count += 1
+            if hs > 0 and aws > 0:
+                btts_count += 1
+
+            # Determine team1/team2 scores
+            if game.home_team_id == team1_id:
+                t1_score, t2_score = hs, aws
+            else:
+                t1_score, t2_score = aws, hs
+
+            # Biggest wins
+            diff = t1_score - t2_score
+            if diff > team1_best_diff:
+                team1_best_diff = diff
+                team1_best_win = H2HBiggestWin(
+                    game_id=game.id,
+                    date=game.date,
+                    score=f"{t1_score}-{t2_score}",
+                    goal_difference=diff,
+                )
+            if -diff > team2_best_diff:
+                team2_best_diff = -diff
+                team2_best_win = H2HBiggestWin(
+                    game_id=game.id,
+                    date=game.date,
+                    score=f"{t2_score}-{t1_score}",
+                    goal_difference=-diff,
+                )
+
+            # Unbeaten streaks (sorted by date ascending for streak calc)
+            if t1_score >= t2_score:
+                team1_streak += 1
+                team1_max_streak = max(team1_max_streak, team1_streak)
+            else:
+                team1_streak = 0
+
+            if t2_score >= t1_score:
+                team2_streak += 1
+                team2_max_streak = max(team2_max_streak, team2_streak)
+            else:
+                team2_streak = 0
+
+        over_2_5_pct = round((over_2_5_count / total_matches) * 100, 1)
+        btts_pct = round((btts_count / total_matches) * 100, 1)
+
+        # Goals by half from GameEvent
+        h2h_game_ids = [g.id for g in all_h2h_games]
+        goals_by_half = None
+
+        goal_events_query = (
+            select(GameEvent)
+            .where(
+                GameEvent.game_id.in_(h2h_game_ids),
+                GameEvent.event_type == GameEventType.goal,
+            )
+        )
+        goal_events_result = await db.execute(goal_events_query)
+        goal_events = goal_events_result.scalars().all()
+
+        if goal_events:
+            t1_1h, t1_2h, t2_1h, t2_2h = 0, 0, 0, 0
+            # Build a map of game_id -> home_team_id for resolving team1/team2
+            game_home_map = {g.id: g.home_team_id for g in all_h2h_games}
+            for ev in goal_events:
+                home_tid = game_home_map.get(ev.game_id)
+                # Determine if event team is team1
+                if ev.team_id == team1_id:
+                    is_team1 = True
+                elif ev.team_id == team2_id:
+                    is_team1 = False
+                else:
+                    continue
+
+                if is_team1:
+                    if ev.half == 1:
+                        t1_1h += 1
+                    else:
+                        t1_2h += 1
+                else:
+                    if ev.half == 1:
+                        t2_1h += 1
+                    else:
+                        t2_2h += 1
+
+            goals_by_half = H2HGoalsByHalf(
+                team1_first_half=t1_1h,
+                team1_second_half=t1_2h,
+                team2_first_half=t2_1h,
+                team2_second_half=t2_2h,
+            )
+
+        fun_facts = H2HFunFacts(
+            avg_goals_per_match=avg_goals,
+            over_2_5_percent=over_2_5_pct,
+            btts_percent=btts_pct,
+            team1_biggest_win=team1_best_win,
+            team2_biggest_win=team2_best_win,
+            team1_unbeaten_streak=team1_max_streak,
+            team2_unbeaten_streak=team2_max_streak,
+            goals_by_half=goals_by_half,
+        )
+
+    # 6. AGGREGATED MATCH STATS (from GameTeamStats)
+    match_stats = None
+    if all_h2h_games:
+        h2h_game_ids = [g.id for g in all_h2h_games]
+        gts_query = (
+            select(GameTeamStats)
+            .where(
+                GameTeamStats.game_id.in_(h2h_game_ids),
+                GameTeamStats.team_id.in_([team1_id, team2_id]),
+            )
+        )
+        gts_result = await db.execute(gts_query)
+        all_gts = gts_result.scalars().all()
+
+        if all_gts:
+            # Group by team
+            t1_stats = [s for s in all_gts if s.team_id == team1_id]
+            t2_stats = [s for s in all_gts if s.team_id == team2_id]
+
+            def calc_team_match_stats(stats_list):
+                n = len(stats_list)
+                if n == 0:
+                    return H2HTeamMatchStats(
+                        avg_possession=None, avg_shots=None,
+                        avg_shots_on_goal=None, avg_corners=None,
+                        avg_fouls=None, total_yellow_cards=0, total_red_cards=0,
+                    )
+                poss = [s.possession_percent for s in stats_list if s.possession_percent is not None]
+                shots = [s.shots for s in stats_list if s.shots is not None]
+                sog = [s.shots_on_goal for s in stats_list if s.shots_on_goal is not None]
+                corners = [s.corners for s in stats_list if s.corners is not None]
+                fouls = [s.fouls for s in stats_list if s.fouls is not None]
+                yc = sum(s.yellow_cards or 0 for s in stats_list)
+                rc = sum(s.red_cards or 0 for s in stats_list)
+                return H2HTeamMatchStats(
+                    avg_possession=round(sum(poss) / len(poss), 1) if poss else None,
+                    avg_shots=round(sum(shots) / len(shots), 1) if shots else None,
+                    avg_shots_on_goal=round(sum(sog) / len(sog), 1) if sog else None,
+                    avg_corners=round(sum(corners) / len(corners), 1) if corners else None,
+                    avg_fouls=round(sum(fouls) / len(fouls), 1) if fouls else None,
+                    total_yellow_cards=yc,
+                    total_red_cards=rc,
+                )
+
+            # Count unique games that have stats
+            games_with_stats = len(set(s.game_id for s in all_gts))
+
+            match_stats = H2HAggregatedMatchStats(
+                matches_with_stats=games_with_stats,
+                team1=calc_team_match_stats(t1_stats),
+                team2=calc_team_match_stats(t2_stats),
+            )
+
+    # 7. TOP PERFORMERS (from PlayerSeasonStats — season leaders for both teams)
+    top_performers = None
+    pss_query = (
+        select(PlayerSeasonStats)
+        .options(joinedload(PlayerSeasonStats.player))
+        .where(
+            PlayerSeasonStats.season_id == season_id,
+            PlayerSeasonStats.team_id.in_([team1_id, team2_id]),
+        )
+    )
+    pss_result = await db.execute(pss_query)
+    all_pss = pss_result.scalars().unique().all()
+
+    if all_pss:
+        # Top scorers by goals
+        scorers = sorted(
+            [p for p in all_pss if (p.goals or 0) > 0],
+            key=lambda p: p.goals or 0, reverse=True
+        )[:5]
+        # Top assisters by assists
+        assisters = sorted(
+            [p for p in all_pss if (p.assists or 0) > 0],
+            key=lambda p: p.assists or 0, reverse=True
+        )[:5]
+
+        def _player_full_name(player: Player | None) -> str:
+            if not player:
+                return ""
+            parts = [player.first_name or "", player.last_name or ""]
+            return " ".join(p for p in parts if p)
+
+        top_scorers = [
+            H2HTopPerformer(
+                player_id=p.player_id,
+                player_name=_player_full_name(p.player),
+                team_id=p.team_id,
+                photo_url=p.player.photo_url if p.player else None,
+                count=p.goals or 0,
+            )
+            for p in scorers
+        ]
+        top_assisters = [
+            H2HTopPerformer(
+                player_id=p.player_id,
+                player_name=_player_full_name(p.player),
+                team_id=p.team_id,
+                photo_url=p.player.photo_url if p.player else None,
+                count=p.assists or 0,
+            )
+            for p in assisters
+        ]
+
+        if top_scorers or top_assisters:
+            top_performers = H2HTopPerformers(
+                top_scorers=top_scorers,
+                top_assisters=top_assisters,
+            )
+
+    # 8. ENHANCED SEASON STATS (from TeamSeasonStats)
+    enhanced_season_stats = None
+    tss_query = (
+        select(TeamSeasonStats)
+        .where(
+            TeamSeasonStats.season_id == season_id,
+            TeamSeasonStats.team_id.in_([team1_id, team2_id]),
+        )
+    )
+    tss_result = await db.execute(tss_query)
+    tss_all = tss_result.scalars().all()
+
+    if tss_all:
+        tss_map = {s.team_id: s for s in tss_all}
+        t1_tss = tss_map.get(team1_id)
+        t2_tss = tss_map.get(team2_id)
+
+        def to_enhanced(tss):
+            if not tss:
+                return None
+            return H2HEnhancedSeasonTeamStats(
+                xg=float(tss.xg) if tss.xg is not None else None,
+                xg_per_match=float(tss.xg_per_match) if tss.xg_per_match is not None else None,
+                possession_avg=float(tss.possession_avg) if tss.possession_avg is not None else None,
+                pass_accuracy_avg=float(tss.pass_accuracy_avg) if tss.pass_accuracy_avg is not None else None,
+                duel_ratio=float(tss.duel_ratio) if tss.duel_ratio is not None else None,
+                shots_per_match=float(tss.shot_per_match) if tss.shot_per_match is not None else None,
+            )
+
+        enhanced_season_stats = H2HEnhancedSeasonStats(
+            team1=to_enhanced(t1_tss),
+            team2=to_enhanced(t2_tss),
+        )
+
     return HeadToHeadResponse(
         team1_id=team1_id,
         team1_name=get_localized_name(team1, lang),
@@ -1148,4 +1444,8 @@ async def get_head_to_head(
         },
         season_table=season_table,
         previous_meetings=previous_meetings,
+        fun_facts=fun_facts,
+        match_stats=match_stats,
+        top_performers=top_performers,
+        enhanced_season_stats=enhanced_season_stats,
     )

@@ -23,11 +23,12 @@ class TestGamesAPI:
         self, client: AsyncClient, sample_season, sample_game
     ):
         """Test getting all games."""
-        response = await client.get("/api/v1/games")
+        response = await client.get("/api/v1/games?season_id=61")
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
         assert data["total"] == 1
+        assert data["items"][0]["is_schedule_tentative"] is False
 
     async def test_get_games_filter_by_season(
         self, client: AsyncClient, sample_season, sample_game
@@ -214,6 +215,7 @@ class TestGamesAPI:
         assert data["home_score"] == 2
         assert data["away_score"] == 1
         assert data["protocol_url"] is None
+        assert data["is_schedule_tentative"] is False
 
     async def test_get_game_by_id_includes_protocol_url(
         self,
@@ -257,7 +259,7 @@ class TestGamesAPI:
         sample_game.protocol_url = "document/match_protocols/list-protocol.pdf"
         await test_session.commit()
 
-        response = await client.get("/api/v1/games")
+        response = await client.get("/api/v1/games?season_id=61")
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 1
@@ -277,7 +279,7 @@ class TestGamesAPI:
         sample_game.protocol_url = "document/match_protocols/group-protocol.pdf"
         await test_session.commit()
 
-        response = await client.get("/api/v1/games?group_by_date=true")
+        response = await client.get("/api/v1/games?season_id=61&group_by_date=true")
         assert response.status_code == 200
 
         data = response.json()
@@ -288,6 +290,32 @@ class TestGamesAPI:
             group_games[0]["protocol_url"]
             == "document/match_protocols/group-protocol.pdf"
         )
+        assert group_games[0]["is_schedule_tentative"] is False
+
+    async def test_get_games_includes_schedule_tentative_flag_when_true(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_game,
+    ):
+        """List/grouped/detail endpoints should expose is_schedule_tentative flag."""
+        sample_game.is_schedule_tentative = True
+        await test_session.commit()
+
+        list_response = await client.get("/api/v1/games?season_id=61")
+        assert list_response.status_code == 200
+        list_data = list_response.json()
+        assert list_data["items"][0]["is_schedule_tentative"] is True
+
+        grouped_response = await client.get("/api/v1/games?season_id=61&group_by_date=true")
+        assert grouped_response.status_code == 200
+        grouped_data = grouped_response.json()
+        assert grouped_data["groups"][0]["games"][0]["is_schedule_tentative"] is True
+
+        detail_response = await client.get(f"/api/v1/games/{sample_game.id}")
+        assert detail_response.status_code == 200
+        detail_data = detail_response.json()
+        assert detail_data["is_schedule_tentative"] is True
 
     async def test_get_game_lineup_orders_starters_by_position_order(
         self,

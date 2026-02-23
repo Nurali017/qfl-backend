@@ -703,6 +703,7 @@ async def get_season_games(
             "home_score": g.home_score,
             "away_score": g.away_score,
             "has_stats": g.has_stats,
+            "is_schedule_tentative": g.is_schedule_tentative,
             "stadium": g.stadium,
             "visitors": g.visitors,
             "home_team": home_team,

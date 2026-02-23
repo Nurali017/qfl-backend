@@ -150,6 +150,7 @@ def group_games_by_date(
                 "has_stats": game.has_stats,
                 "has_lineup": game.has_lineup,
                 "is_technical": game.is_technical,
+                "is_schedule_tentative": game.is_schedule_tentative,
                 "visitors": game.visitors,
                 "status": compute_game_status(game, today),
                 "has_score": game.home_score is not None and game.away_score is not None,
@@ -708,6 +709,7 @@ async def get_games(
             "has_lineup": g.has_lineup,
             "is_live": g.is_live,
             "is_technical": g.is_technical,
+            "is_schedule_tentative": g.is_schedule_tentative,
             "stadium": g.stadium,  # Legacy field
             "visitors": g.visitors,
             "status": game_status,
@@ -820,6 +822,7 @@ async def get_game(
         "has_lineup": game.has_lineup,
         "is_live": game.is_live,
         "is_technical": game.is_technical,
+        "is_schedule_tentative": game.is_schedule_tentative,
         "stadium": stadium_dict,
         "referee": referee_name,
         "visitors": game.visitors,

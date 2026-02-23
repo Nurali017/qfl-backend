@@ -1,0 +1,175 @@
+table,sheet,id,column,issue_type,value
+championships,Championships,6,name_en,non_latin_in_en,ЖЕНСКАЯ ЛИГА
+championships,Championships,6,short_name_en,non_latin_in_en,ЖЛ
+championships,Championships,7,name_en,non_latin_in_en,ЖЕНСКИЙ КУБОК
+championships,Championships,7,short_name_en,non_latin_in_en,ЖК
+cities,Cities,98,name_en,non_latin_in_en,ЮКО
+clubs,Clubs,17,name_en,non_latin_in_en,Восток
+clubs,Clubs,18,name_en,non_latin_in_en,Лашын
+clubs,Clubs,19,name_en,non_latin_in_en,Спартак
+clubs,Clubs,22,name_en,non_latin_in_en,ЦСКА
+clubs,Clubs,23,name_en,non_latin_in_en,Астана-1964
+clubs,Clubs,26,name_en,non_latin_in_en,Гефест
+clubs,Clubs,28,name_en,non_latin_in_en,Байконур
+clubs,Clubs,29,name_en,non_latin_in_en,БИИК
+clubs,Clubs,30,name_en,non_latin_in_en,Рузаевка
+clubs,Clubs,32,name_en,non_latin_in_en,СДЮСШОР №8
+clubs,Clubs,33,name_en,non_latin_in_en,Ак-Бет
+clubs,Clubs,35,name_en,non_latin_in_en,ОСДЮСШОР - Жас Ұлан
+clubs,Clubs,37,name_en,non_latin_in_en,Игілік
+clubs,Clubs,39,name_en,non_latin_in_en,ФЦ Дидара Сыдыкбека
+clubs,Clubs,40,name_en,non_latin_in_en,Темирлан
+clubs,Clubs,44,name_en,non_latin_in_en,Жас Сункар
+coaches,Coaches,503,first_name_en,non_latin_in_en,Андрей
+coaches,Coaches,503,last_name_en,non_latin_in_en,ШУМАРА
+coaches,Coaches,504,first_name_en,non_latin_in_en,Абдухалик
+coaches,Coaches,504,last_name_en,non_latin_in_en,БУРИБАЕВ
+coaches,Coaches,505,first_name_en,non_latin_in_en,Андрей
+coaches,Coaches,505,last_name_en,non_latin_in_en,Ферапонтов
+coaches,Coaches,506,first_name_en,non_latin_in_en,Руслан
+coaches,Coaches,506,last_name_en,non_latin_in_en,Жангиров
+coaches,Coaches,507,first_name_en,non_latin_in_en,Максим
+coaches,Coaches,507,last_name_en,non_latin_in_en,САМЧЕНКО
+players,Players,1929,first_name_en,non_latin_in_en,Станислав
+players,Players,1929,last_name_en,non_latin_in_en,Самойлов
+players,Players,1930,first_name_en,non_latin_in_en,Ерболат
+players,Players,1930,last_name_en,non_latin_in_en,СЕРИК
+players,Players,1931,first_name_en,non_latin_in_en,Нуртас
+players,Players,1931,last_name_en,non_latin_in_en,АЙЫП
+players,Players,1932,first_name_en,non_latin_in_en,Арсен
+players,Players,1932,last_name_en,non_latin_in_en,АБДРЕШОВ
+players,Players,1934,first_name_en,non_latin_in_en,Максим
+players,Players,1934,last_name_en,non_latin_in_en,МАМЕКОВ
+players,Players,1935,first_name_en,non_latin_in_en,Мирас
+players,Players,1935,last_name_en,non_latin_in_en,АМАНТАЕВ
+players,Players,1937,first_name_en,non_latin_in_en,Канат
+players,Players,1937,last_name_en,non_latin_in_en,ИСМАГУЛОВ
+players,Players,1938,first_name_en,non_latin_in_en,Арсен
+players,Players,1938,last_name_en,non_latin_in_en,АЗАТОВ
+players,Players,1940,first_name_en,non_latin_in_en,Мустафа
+players,Players,1940,last_name_en,non_latin_in_en,РЕЙИСОВ
+players,Players,1941,first_name_en,non_latin_in_en,Салауат
+players,Players,1941,last_name_en,non_latin_in_en,Габдулахмет
+players,Players,1942,first_name_en,non_latin_in_en,Максат
+players,Players,1942,last_name_en,non_latin_in_en,РАМАЗАНОВ
+players,Players,1943,first_name_en,non_latin_in_en,Серик
+players,Players,1943,last_name_en,non_latin_in_en,Рысбек
+players,Players,1944,first_name_en,non_latin_in_en,Баглан
+players,Players,1944,last_name_en,non_latin_in_en,НУРБОСЫНОВ
+players,Players,1945,first_name_en,non_latin_in_en,Мохаммед
+players,Players,1945,last_name_en,non_latin_in_en,ЕНСЕБАЕВ
+players,Players,1946,first_name_en,non_latin_in_en,Нуршапагат
+players,Players,1946,last_name_en,non_latin_in_en,Мухамодиев
+players,Players,1947,first_name_en,non_latin_in_en,Тамерлан
+players,Players,1947,last_name_en,non_latin_in_en,АСКАР
+stadiums,Stadiums,35,address_en,non_latin_in_en,ул. Рыскулбекова 12
+stadiums,Stadiums,35,name_en,non_latin_in_en,Стадион им. П.Атояна
+stadiums,Stadiums,36,address_en,non_latin_in_en,"ул.Кенесары, 14"
+stadiums,Stadiums,36,name_en,non_latin_in_en,Центральный стадион «им. Х.Мунайтпасова»
+stadiums,Stadiums,37,address_en,non_latin_in_en,ул. Кабанбай батыра 45
+stadiums,Stadiums,37,name_en,non_latin_in_en,СК «Астана Арена»
+stadiums,Stadiums,38,address_en,non_latin_in_en,улица Ауэзова 28а
+stadiums,Stadiums,38,name_en,non_latin_in_en,Спорткомплекс «Мунайшы»
+stadiums,Stadiums,39,address_en,non_latin_in_en,"ул. Кабанбай батыра, 88/90"
+stadiums,Stadiums,39,name_en,non_latin_in_en,Центральный стадион «Жетысу»
+stadiums,Stadiums,40,address_en,non_latin_in_en,"проспект Абая, 48"
+stadiums,Stadiums,40,name_en,non_latin_in_en,Центральный стадион
+stadiums,Stadiums,41,address_en,non_latin_in_en,"ул. Мадели Кожа, 1"
+stadiums,Stadiums,41,name_en,non_latin_in_en,Центральный стадион имени Кажымукана
+stadiums,Stadiums,42,address_en,non_latin_in_en,"ул. Абая, 113"
+stadiums,Stadiums,42,name_en,non_latin_in_en,Центральный стадион «Тараз»
+stadiums,Stadiums,43,address_en,non_latin_in_en,"ул. 1 Мая, 153"
+stadiums,Stadiums,43,name_en,non_latin_in_en,"«Центральный» (ФК ""Тобол"")"
+stadiums,Stadiums,44,address_en,non_latin_in_en,"ул. Казахстанская, 1"
+stadiums,Stadiums,44,name_en,non_latin_in_en,«Шахтёр»
+stadiums,Stadiums,45,address_en,non_latin_in_en,Бульвар Гагарина
+stadiums,Stadiums,45,name_en,non_latin_in_en,«Восток»
+stadiums,Stadiums,46,address_en,non_latin_in_en,ул. Менделеева
+stadiums,Stadiums,46,name_en,non_latin_in_en,Талгарский городской стадион
+stadiums,Stadiums,47,address_en,non_latin_in_en,пр-т Республики 34а
+stadiums,Stadiums,47,name_en,non_latin_in_en,«Металлург»
+stadiums,Stadiums,48,address_en,non_latin_in_en,"ул. Жамбыла, 61/1"
+stadiums,Stadiums,48,name_en,non_latin_in_en,«Сункар»
+stadiums,Stadiums,49,address_en,non_latin_in_en,"ул. Алпысбаева, 116"
+stadiums,Stadiums,49,name_en,non_latin_in_en,ФЦ «БИІК»
+stadiums,Stadiums,50,address_en,non_latin_in_en,"Алматинская обл., Илийский р-он, п.Отеген батыр, ул.Ажимуратова 5"
+stadiums,Stadiums,50,name_en,non_latin_in_en,Центральный стадион пос. Отеген батыр
+stadiums,Stadiums,51,address_en,non_latin_in_en,"ул.Муратбаева, 1"
+stadiums,Stadiums,51,name_en,non_latin_in_en,ККГП «Стадион» имени Г. Муратбаева
+stadiums,Stadiums,52,address_en,mixed_latin_cyrillic_in_en,"12 микрорайон, ГККП &laquo;Жас Канат&raquo;"
+stadiums,Stadiums,52,address_en,non_latin_in_en,"12 микрорайон, ГККП &laquo;Жас Канат&raquo;"
+stadiums,Stadiums,52,name_en,non_latin_in_en,«Жас Канат»
+stadiums,Stadiums,53,address_en,non_latin_in_en,"ул. Жамбыла, 173"
+stadiums,Stadiums,53,name_en,non_latin_in_en,«Карасай»
+stadiums,Stadiums,54,address_en,non_latin_in_en,с.Аксукент
+stadiums,Stadiums,54,name_en,non_latin_in_en,«Улан»
+stadiums,Stadiums,55,address_en,non_latin_in_en,"г.Каратау, ул.Шахтерская 28 Б"
+stadiums,Stadiums,55,name_en,non_latin_in_en,Центральный стадион (ФК «Лашын»)
+stadiums,Stadiums,56,address_en,non_latin_in_en,"ЮКО, Махтааральский район, с/о Махтарал, село Оркениет, ул. Ибраева 64"
+stadiums,Stadiums,56,name_en,non_latin_in_en,«Центральный» (ФК «Махтаарал»)
+stadiums,Stadiums,57,address_en,non_latin_in_en,"Гагарина, 168"
+stadiums,Stadiums,57,name_en,non_latin_in_en,«Спартак»
+stadiums,Stadiums,58,address_en,mixed_latin_cyrillic_in_en,Сатпаева 6 &laquo;б&raquo;
+stadiums,Stadiums,58,address_en,non_latin_in_en,Сатпаева 6 &laquo;б&raquo;
+stadiums,Stadiums,58,name_en,non_latin_in_en,УТЦ ЦСКА МО РК (спортивная база г. Алматы)
+stadiums,Stadiums,59,name_en,non_latin_in_en,«Шахтер» (ФК «Экибастуз» )
+stadiums,Stadiums,60,address_en,non_latin_in_en,ул. Богенбай Батыра №1а
+stadiums,Stadiums,60,name_en,non_latin_in_en,Стадион 10 лет Независимости РК
+stadiums,Stadiums,61,address_en,non_latin_in_en,ул. Абая 116
+stadiums,Stadiums,61,name_en,non_latin_in_en,«Окжетпес»
+stadiums,Stadiums,62,name_en,non_latin_in_en,Жас Кыран
+stadiums,Stadiums,64,address_en,non_latin_in_en,Сатпаева 29/3
+stadiums,Stadiums,64,name_en,non_latin_in_en,Центральный стадион Алматы
+stadiums,Stadiums,65,address_en,non_latin_in_en,мкр. Береке 142
+stadiums,Stadiums,65,name_en,non_latin_in_en,Тобыл Арена
+stadiums,Stadiums,66,address_en,non_latin_in_en,"1 мая, 153"
+stadiums,Stadiums,66,name_en,non_latin_in_en,Центральный стадион Костанай
+stadiums,Stadiums,67,address_en,non_latin_in_en,Луначарского 50/1
+stadiums,Stadiums,67,name_en,non_latin_in_en,Центральный стадион Павлодар
+stadiums,Stadiums,68,address_en,non_latin_in_en,мкр. Жилгородок
+stadiums,Stadiums,68,name_en,non_latin_in_en,стадион Мунайши
+stadiums,Stadiums,69,address_en,non_latin_in_en,Абая 113
+stadiums,Stadiums,69,name_en,non_latin_in_en,Центральный стадион Тараз
+stadiums,Stadiums,70,address_en,non_latin_in_en,Петропавловск
+stadiums,Stadiums,70,name_en,non_latin_in_en,стадион Карасай
+stadiums,Stadiums,71,address_en,non_latin_in_en,Курмангазы 179/5
+stadiums,Stadiums,71,name_en,non_latin_in_en,стадион Акжайык
+stadiums,Stadiums,89,address_en,non_latin_in_en,"32-я улица, 1"
+stadiums,Stadiums,90,address_en,non_latin_in_en,пр-т Республики 34а
+stadiums,Stadiums,90,name_en,non_latin_in_en,Металлург
+stages,Stages,100,name_en,non_latin_in_en,2 тур
+teams,Teams,5001,name_en,non_latin_in_en,Иле-Алатау
+teams,Teams,5003,name_en,non_latin_in_en,Восток
+teams,Teams,5004,name_en,non_latin_in_en,Лашын
+teams,Teams,5005,name_en,non_latin_in_en,Спартак
+teams,Teams,5007,name_en,non_latin_in_en,ЦСКА
+teams,Teams,5008,name_en,non_latin_in_en,Астана-1964
+teams,Teams,5010,name_en,non_latin_in_en,Гефест
+teams,Teams,5011,name_en,non_latin_in_en,Байконур
+teams,Teams,5012,name_en,non_latin_in_en,БИИК
+teams,Teams,5013,name_en,non_latin_in_en,Иртыш
+teams,Teams,5014,name_en,mixed_latin_cyrillic_in_en,Акжайык-U21
+teams,Teams,5014,name_en,non_latin_in_en,Акжайык-U21
+teams,Teams,5015,name_en,mixed_latin_cyrillic_in_en,Тараз-U21
+teams,Teams,5015,name_en,non_latin_in_en,Тараз-U21
+teams,Teams,5016,name_en,mixed_latin_cyrillic_in_en,Астана-U21
+teams,Teams,5016,name_en,non_latin_in_en,Астана-U21
+teams,Teams,5017,name_en,non_latin_in_en,СДЮШОР №7
+teams,Teams,5018,name_en,non_latin_in_en,Рузаевка
+teams,Teams,5019,name_en,non_latin_in_en,Кайрат А
+teams,Teams,5020,name_en,non_latin_in_en,Жетысу Б
+teams,Teams,5021,name_en,non_latin_in_en,СДЮСШОР №8
+teams,Teams,5022,name_en,non_latin_in_en,Ак-Бет
+teams,Teams,5023,name_en,non_latin_in_en,ОСДЮСШОР - Жас Ұлан
+teams,Teams,5024,name_en,non_latin_in_en,Аксу
+teams,Teams,5025,name_en,non_latin_in_en,Кыран М
+teams,Teams,5026,name_en,non_latin_in_en,Актобе-Жас
+teams,Teams,5027,name_en,non_latin_in_en,Игілік
+teams,Teams,5028,name_en,non_latin_in_en,Академия Оңтүстік М
+teams,Teams,5029,name_en,non_latin_in_en,Темирлан
+teams,Teams,5030,name_en,non_latin_in_en,СДЮСШОР №8 М
+teams,Teams,5031,name_en,non_latin_in_en,Тараз-Каратау
+teams,Teams,5032,name_en,non_latin_in_en,Аксу-Павлодар
+teams,Teams,5033,name_en,non_latin_in_en,Жас Сункар
+teams,Teams,5034,name_en,non_latin_in_en,Мактаарал-М
+teams,Teams,5035,name_en,non_latin_in_en,Академия 05

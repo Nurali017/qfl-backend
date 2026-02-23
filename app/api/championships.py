@@ -15,7 +15,7 @@ from app.schemas.championship import (
     ChampionshipTreeListResponse,
     SeasonBrief,
 )
-from app.schemas.front_map import FrontMapEntry, FrontMapResponse
+from app.schemas.front_map import FrontMapEntry, FrontMapResponse, SeasonOption
 
 router = APIRouter(prefix="/championships", tags=["championships"])
 
@@ -144,6 +144,14 @@ async def get_front_map(
             else selected.sponsor_name
         )
 
+        season_options = []
+        for s in sorted(seasons, key=_season_key, reverse=True):
+            year = s.date_start.year if s.date_start else None
+            if year:
+                season_options.append(
+                    SeasonOption(season_id=s.id, year=year, name=s.name)
+                )
+
         front_map_items[code] = FrontMapEntry(
             season_id=selected.id,
             name=get_localized_field(selected, "name", lang),
@@ -158,6 +166,7 @@ async def get_front_map(
             current_round=selected.current_round,
             total_rounds=selected.total_rounds,
             sort_order=selected.sort_order,
+            seasons=season_options,
         )
 
     return FrontMapResponse(items=front_map_items)
