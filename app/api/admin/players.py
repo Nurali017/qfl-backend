@@ -19,6 +19,7 @@ from app.models import (
     Season,
     Team,
 )
+from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.schemas.admin.players import (
     AdminMetaCountry,
     AdminMetaSeason,
@@ -82,7 +83,10 @@ async def _validate_binding_refs(
     existing_season_ids = set(
         (
             await db.execute(
-                select(Season.id).where(Season.id.in_(season_ids))
+                select(Season.id).where(
+                    Season.id.in_(season_ids),
+                    is_season_visible_clause(),
+                )
             )
         ).scalars().all()
     )
@@ -131,6 +135,7 @@ async def _get_player_bindings(
         select(PlayerTeam, Team, Season)
         .join(Team, Team.id == PlayerTeam.team_id)
         .join(Season, Season.id == PlayerTeam.season_id)
+        .where(is_season_visible_clause())
         .where(PlayerTeam.player_id.in_(player_ids))
         .order_by(PlayerTeam.player_id, PlayerTeam.season_id.desc(), PlayerTeam.team_id.asc())
     )
@@ -182,7 +187,11 @@ async def get_players_meta(
     teams_result = await db.execute(select(Team).order_by(Team.name.asc()))
     teams = teams_result.scalars().all()
 
-    seasons_result = await db.execute(select(Season).order_by(Season.id.desc()))
+    seasons_result = await db.execute(
+        select(Season)
+        .where(is_season_visible_clause())
+        .order_by(Season.id.desc())
+    )
     seasons = seasons_result.scalars().all()
 
     return AdminPlayersMetaResponse(
@@ -206,6 +215,9 @@ async def list_players(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
 ):
+    if season_id is not None:
+        await ensure_visible_season_or_404(db, season_id)
+
     query = select(Player).options(selectinload(Player.country))
 
     if season_id is not None or team_id is not None:

@@ -1,10 +1,12 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select, func, desc, asc, update, delete
+from sqlalchemy import select, func, desc, asc, update, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.models import News, Language
-from app.models.news import NewsLike
+from app.models.news import ArticleType, NewsLike
 from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse, NewsReactionsResponse
 from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
@@ -21,17 +23,55 @@ def get_client_ip(request: Request) -> str:
 router = APIRouter(prefix="/news", tags=["news"])
 
 
+def _resolve_language(lang: str) -> Language:
+    if lang == "kz":
+        return Language.KZ
+    return Language.RU
+
+
+def _article_type_from_query(value: str | None) -> ArticleType | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    if normalized == "NEWS":
+        return ArticleType.NEWS
+    if normalized == "ANALYTICS":
+        return ArticleType.ANALYTICS
+    raise HTTPException(status_code=400, detail="article_type must be news or analytics")
+
+
+def _news_order_by(sort: str):
+    if sort == "date_asc":
+        return [asc(News.publish_date), asc(News.id)]
+    if sort == "views_desc":
+        return [desc(News.views_count), desc(News.publish_date), desc(News.id)]
+    if sort == "likes_desc":
+        return [desc(News.likes_count), desc(News.publish_date), desc(News.id)]
+    return [desc(News.publish_date), desc(News.id)]
+
+
 @router.get("", response_model=NewsListResponse)
 async def get_news_list(
     lang: str = Query("ru", pattern="^(kz|ru|en)$"),
     championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
     article_type: str | None = Query(None, description="Filter by type: news or analytics"),
+    search: str | None = Query(None, description="Search in title/excerpt/content"),
+    sort: str = Query(
+        "date_desc",
+        pattern="^(date_desc|date_asc|views_desc|likes_desc)$",
+        description="Sorting mode",
+    ),
+    date_from: date | None = Query(None, description="Filter from publish date (inclusive)"),
+    date_to: date | None = Query(None, description="Filter to publish date (inclusive)"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get paginated news list."""
-    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    lang_enum = _resolve_language(lang)
+    article_type_enum = _article_type_from_query(article_type)
 
     # Base query
     query = select(News).where(News.language == lang_enum)
@@ -41,19 +81,31 @@ async def get_news_list(
         query = query.where(News.championship_code == championship_code)
 
     # Filter by article_type
-    if article_type:
-        from app.models.news import ArticleType
-        if article_type.upper() == "NEWS":
-            query = query.where(News.article_type == ArticleType.NEWS)
-        elif article_type.upper() == "ANALYTICS":
-            query = query.where(News.article_type == ArticleType.ANALYTICS)
+    if article_type_enum is not None:
+        query = query.where(News.article_type == article_type_enum)
+
+    if search and search.strip():
+        search_term = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                News.title.ilike(search_term),
+                News.excerpt.ilike(search_term),
+                News.content_text.ilike(search_term),
+                News.content.ilike(search_term),
+            )
+        )
+
+    if date_from:
+        query = query.where(News.publish_date >= date_from)
+    if date_to:
+        query = query.where(News.publish_date <= date_to)
 
     # Count total
     count_query = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_query)).scalar()
 
     # Paginate and order
-    query = query.order_by(desc(News.publish_date), desc(News.id))
+    query = query.order_by(*_news_order_by(sort))
     query = query.offset((page - 1) * per_page).limit(per_page)
 
     result = await db.execute(query)
@@ -75,7 +127,7 @@ async def get_article_types(
     db: AsyncSession = Depends(get_db),
 ):
     """Get count of articles by type."""
-    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    lang_enum = _resolve_language(lang)
 
     result = await db.execute(
         select(News.article_type, func.count(News.id))
@@ -95,7 +147,7 @@ async def get_latest_news(
     db: AsyncSession = Depends(get_db),
 ):
     """Get latest news."""
-    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    lang_enum = _resolve_language(lang)
 
     query = select(News).where(News.language == lang_enum)
 
@@ -116,7 +168,7 @@ async def get_slider_news(
     db: AsyncSession = Depends(get_db),
 ):
     """Get news for slider."""
-    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    lang_enum = _resolve_language(lang)
 
     query = select(News).where(News.language == lang_enum, News.is_slider == True)
 
@@ -137,7 +189,7 @@ async def get_news_navigation(
     db: AsyncSession = Depends(get_db),
 ):
     """Get previous and next news articles for navigation."""
-    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    lang_enum = _resolve_language(lang)
 
     # Get current article
     current = (await db.execute(
@@ -278,7 +330,7 @@ async def get_news_item(
     db: AsyncSession = Depends(get_db),
 ):
     """Get single news article by ID with images from MinIO."""
-    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    lang_enum = _resolve_language(lang)
     result = await db.execute(
         select(News).where(News.id == news_id, News.language == lang_enum)
     )

@@ -1,0 +1,72 @@
+{
+  "summary": {
+    "dry_run": true,
+    "total_groups": 396,
+    "classified_groups": 394,
+    "updated_groups": 42,
+    "unchanged_groups": 352,
+    "needs_review_count": 2
+  },
+  "needs_review": [
+    {
+      "group_id": "f3275d4e-c846-4e6a-ba25-8b41e7c77861",
+      "representative_news_id": 19,
+      "representative_title": "8 наурыз – Халықаралық әйелдер күні құтты болсын!",
+      "confidence": 0.5,
+      "source": "ai",
+      "reason": "The content is a greeting message and does not pertain to football news or analytics."
+    },
+    {
+      "group_id": "568d0db4-9a84-4609-a990-b5e600b71376",
+      "representative_news_id": 372,
+      "representative_title": "Екінші лигада маусым аяқталды",
+      "confidence": 0.65,
+      "source": "ai",
+      "reason": "low_confidence"
+    }
+  ],
+  "updated_group_ids": [
+    "e277f944-17cb-42b5-b938-d43de90ec1b9",
+    "47c7f46e-33ed-4574-a58b-f7aa260a838f",
+    "f5bc4621-8125-48e8-8a25-cb8e78dd9865",
+    "cb94dcd5-00a9-4d75-8390-2e39536d3777",
+    "36dd2443-3b70-463c-941e-c7d1f147e7e7",
+    "1aaf4a40-273e-442e-9c3d-f658a000169c",
+    "6a70295a-4449-4a21-af43-30b02b251d82",
+    "3a49d6c0-039d-48a9-a43e-b032b6d2195b",
+    "3ec42ba9-22d6-406c-bc0c-81d1500e6122",
+    "51c3d06d-8281-4ec7-bc4d-995962883907",
+    "7814459b-6c1c-4821-bc75-349ae46c5c59",
+    "0173e5fd-6fe8-4d06-912c-4b4136f560fd",
+    "c1e4e812-199c-4501-bac0-4198dedab3e9",
+    "20504cd0-e693-450f-aa4e-d270df4ce303",
+    "bf8fd4b5-ced0-4293-af1d-8c4f0ae36e79",
+    "170bdf02-7e03-4bef-8bec-52766110448c",
+    "33278371-1392-4bc7-994d-e192eea9b914",
+    "82729fd8-74c9-4603-8849-e1bc663eafe9",
+    "e2085a45-d2eb-45cc-9e6d-3577a5b52671",
+    "aedbedcd-c4c9-4cf0-acc2-deed20e6d382",
+    "08af3c83-5e1f-4a63-95ae-eafb9a6ad547",
+    "43a6d139-0d93-43ab-9dd7-03f56ad50695",
+    "400e96c8-f79a-48d3-af4d-d2178472bee3",
+    "84224b76-de19-4bac-bdf3-7d3bad0d40ad",
+    "bde1a2be-2e7a-4141-9f04-bc24b9d5cd02",
+    "fd6f9f71-8d3f-42d6-b394-57827a85f1ff",
+    "494e795f-9dd3-48e7-8287-0f97138295b8",
+    "4a9322c0-2945-482b-93b3-6e21b1deed7e",
+    "aa024070-e15d-4d41-ac3d-a0c04a58526e",
+    "29b4b239-3c75-428a-927e-c685cb3e7470",
+    "83e62b78-ec30-4384-969a-c3559e1bba1f",
+    "9ccdaa59-c5f8-438d-9b82-b580c2069ef8",
+    "1f102fb8-779e-4f0b-8a47-18ec89aae546",
+    "dace2fc2-60e7-4077-ba65-03bbba943310",
+    "7563d4a6-fc7b-4919-9462-db7e4c85d653",
+    "81074a0b-616a-4a88-adfb-f416d2294c62",
+    "4fe7a935-d67a-429c-8f8f-c9a12b92da3f",
+    "cedcf22d-3c6c-4e38-8437-ce17714c81a5",
+    "b254b4aa-667e-440f-805f-d80f7761d873",
+    "32df6374-999a-468e-8dd1-8feb2c669fed",
+    "146ce0c3-066a-4424-b68b-fccd8aa4ee15",
+    "7ba2be5c-7f26-4595-a283-137bdf6126b6"
+  ]
+}

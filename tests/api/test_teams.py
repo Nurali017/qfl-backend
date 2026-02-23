@@ -176,6 +176,54 @@ class TestTeamsAPI:
         assert data["total"] == 1
         assert data["items"][0]["season_year"] == 2024
 
+    async def test_get_team_seasons_excludes_hidden_seasons(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_championship,
+        sample_season,
+        sample_teams,
+        sample_game,
+    ):
+        """Team seasons endpoint should not return hidden seasons."""
+        from app.models import Game, Season
+
+        sample_season.is_visible = False
+
+        visible_season = Season(
+            id=62,
+            name="2026",
+            championship_id=sample_championship.id,
+            date_start=date(2026, 3, 1),
+            date_end=date(2026, 11, 30),
+            frontend_code="pl",
+            is_visible=True,
+        )
+        test_session.add(visible_season)
+        await test_session.flush()
+
+        test_session.add(
+            Game(
+                sota_id=uuid4(),
+                date=date(2026, 4, 10),
+                time=time(18, 0),
+                tour=1,
+                season_id=visible_season.id,
+                home_team_id=sample_teams[0].id,
+                away_team_id=sample_teams[1].id,
+                home_score=1,
+                away_score=0,
+                has_stats=True,
+            )
+        )
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/teams/{sample_teams[0].id}/seasons?lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["items"][0]["season_id"] == visible_season.id
+
     async def test_get_team_not_found(self, client: AsyncClient):
         """Test 404 for non-existent team."""
         response = await client.get("/api/v1/teams/99999")
@@ -183,9 +231,9 @@ class TestTeamsAPI:
         # Error message may be localized (ru/kz/en)
         assert "detail" in response.json()
 
-    async def test_get_team_players_empty(self, client: AsyncClient, sample_teams):
+    async def test_get_team_players_empty(self, client: AsyncClient, sample_teams, sample_season):
         """Test getting team players when no players assigned."""
-        response = await client.get("/api/v1/teams/91/players")
+        response = await client.get(f"/api/v1/teams/91/players?season_id={sample_season.id}")
         assert response.status_code == 200
         data = response.json()
         assert data["items"] == []

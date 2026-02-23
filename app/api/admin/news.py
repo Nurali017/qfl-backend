@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
@@ -10,6 +10,11 @@ from app.api.deps import get_db
 from app.models import AdminUser, Language, News
 from app.models.news import ArticleType
 from app.schemas.admin.news import (
+    AdminNewsArticleTypeUpdateRequest,
+    AdminNewsClassifyRequest,
+    AdminNewsClassifyResponse,
+    AdminNewsClassifySummary,
+    AdminNewsNeedsReviewItem,
     AdminNewsMaterialCreateRequest,
     AdminNewsMaterialListResponse,
     AdminNewsMaterialResponse,
@@ -18,6 +23,7 @@ from app.schemas.admin.news import (
     AdminNewsTranslationPayload,
     AdminNewsTranslationResponse,
 )
+from app.services.news_classifier import NewsClassifierService
 
 router = APIRouter(prefix="/news", tags=["admin-news"])
 
@@ -30,16 +36,26 @@ def _lang_from_str(lang: str) -> Language:
     raise HTTPException(status_code=400, detail="Language must be 'ru' or 'kz'")
 
 
-def _article_type_from_str(value: str | None) -> ArticleType | None:
+def _article_type_from_str(
+    value: str | None,
+    *,
+    allow_unclassified: bool = False,
+) -> ArticleType | str | None:
     if value is None:
         return None
     normalized = value.strip().upper()
     if not normalized:
         return None
+    if allow_unclassified and normalized == "UNCLASSIFIED":
+        return "UNCLASSIFIED"
     try:
         return ArticleType(normalized)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="article_type must be NEWS or ANALYTICS") from exc
+        if allow_unclassified:
+            message = "article_type must be NEWS, ANALYTICS, or UNCLASSIFIED"
+        else:
+            message = "article_type must be NEWS or ANALYTICS"
+        raise HTTPException(status_code=400, detail=message) from exc
 
 
 async def _next_news_id(db: AsyncSession) -> int:
@@ -49,6 +65,10 @@ async def _next_news_id(db: AsyncSession) -> int:
 
 
 def _apply_payload(item: News, payload: AdminNewsTranslationPayload, admin_id: int) -> None:
+    parsed_article_type = _article_type_from_str(payload.article_type)
+    if parsed_article_type == "UNCLASSIFIED":
+        raise HTTPException(status_code=400, detail="article_type must be NEWS or ANALYTICS")
+
     item.title = payload.title
     item.excerpt = payload.excerpt
     item.content = payload.content
@@ -57,7 +77,7 @@ def _apply_payload(item: News, payload: AdminNewsTranslationPayload, admin_id: i
     item.video_url = payload.video_url
     item.category = payload.category
     item.championship_code = payload.championship_code
-    item.article_type = _article_type_from_str(payload.article_type)
+    item.article_type = parsed_article_type
     item.is_slider = payload.is_slider
     item.slider_order = payload.slider_order
     item.publish_date = payload.publish_date
@@ -103,11 +123,42 @@ def _to_material_response(items: list[News]) -> AdminNewsMaterialResponse:
 async def list_materials(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    article_type: str | None = Query(None, description="NEWS, ANALYTICS, or UNCLASSIFIED"),
+    search: str | None = Query(None, description="Search in title/excerpt/content"),
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
 ):
-    result = await db.execute(select(News).order_by(desc(News.updated_at), desc(News.id)))
-    rows = result.scalars().all()
+    article_type_filter = _article_type_from_str(article_type, allow_unclassified=True)
+
+    query = select(News).order_by(desc(News.updated_at), desc(News.id))
+    if isinstance(article_type_filter, ArticleType):
+        query = query.where(News.article_type == article_type_filter)
+    elif article_type_filter == "UNCLASSIFIED":
+        query = query.where(News.article_type.is_(None))
+
+    if search and search.strip():
+        search_term = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                News.title.ilike(search_term),
+                News.excerpt.ilike(search_term),
+                News.content_text.ilike(search_term),
+                News.content.ilike(search_term),
+            )
+        )
+
+    result = await db.execute(query)
+    matched_rows = result.scalars().all()
+    if not matched_rows:
+        return AdminNewsMaterialListResponse(items=[], total=0)
+
+    group_ids = {row.translation_group_id for row in matched_rows}
+    full_rows_result = await db.execute(
+        select(News)
+        .where(News.translation_group_id.in_(group_ids))
+        .order_by(desc(News.updated_at), desc(News.id))
+    )
+    rows = full_rows_result.scalars().all()
 
     grouped: dict[UUID, list[News]] = {}
     for row in rows:
@@ -120,6 +171,108 @@ async def list_materials(
     start = (page - 1) * per_page
     end = start + per_page
     return AdminNewsMaterialListResponse(items=materials[start:end], total=total)
+
+
+@router.post("/materials/classify", response_model=AdminNewsClassifyResponse)
+async def classify_materials(
+    payload: AdminNewsClassifyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    if payload.min_confidence < 0 or payload.min_confidence > 1:
+        raise HTTPException(status_code=400, detail="min_confidence must be between 0 and 1")
+
+    result = await db.execute(select(News).order_by(desc(News.publish_date), desc(News.id)))
+    rows = result.scalars().all()
+
+    grouped: dict[UUID, list[News]] = {}
+    for row in rows:
+        grouped.setdefault(row.translation_group_id, []).append(row)
+
+    groups = list(grouped.items())
+    if payload.only_unclassified:
+        groups = [(group_id, items) for group_id, items in groups if any(item.article_type is None for item in items)]
+
+    if payload.championship_code:
+        groups = [
+            (group_id, items)
+            for group_id, items in groups
+            if any(item.championship_code == payload.championship_code for item in items)
+        ]
+
+    if payload.date_from or payload.date_to:
+        filtered_groups: list[tuple[UUID, list[News]]] = []
+        for group_id, items in groups:
+            has_in_range = False
+            for item in items:
+                if item.publish_date is None:
+                    continue
+                if payload.date_from and item.publish_date < payload.date_from:
+                    continue
+                if payload.date_to and item.publish_date > payload.date_to:
+                    continue
+                has_in_range = True
+                break
+            if has_in_range:
+                filtered_groups.append((group_id, items))
+        groups = filtered_groups
+
+    groups.sort(
+        key=lambda pair: max((item.updated_at for item in pair[1]), default=datetime.min),
+        reverse=True,
+    )
+    if payload.limit is not None:
+        groups = groups[: payload.limit]
+
+    classifier = NewsClassifierService()
+    needs_review: list[AdminNewsNeedsReviewItem] = []
+    updated_group_ids: list[UUID] = []
+    classified_groups = 0
+
+    for group_id, items in groups:
+        decision = await classifier.classify_group(
+            items,
+            min_confidence=payload.min_confidence,
+        )
+        if decision.article_type is None:
+            needs_review.append(
+                AdminNewsNeedsReviewItem(
+                    group_id=group_id,
+                    representative_news_id=decision.representative_news_id,
+                    representative_title=decision.representative_title,
+                    confidence=decision.confidence,
+                    source=decision.source,
+                    reason=decision.reason,
+                )
+            )
+            continue
+
+        classified_groups += 1
+        will_change = any(item.article_type != decision.article_type for item in items)
+        if will_change:
+            updated_group_ids.append(group_id)
+            if payload.apply:
+                for item in items:
+                    item.article_type = decision.article_type
+                    item.updated_by_admin_id = current_admin.id
+
+    if payload.apply and updated_group_ids:
+        await db.commit()
+
+    summary = AdminNewsClassifySummary(
+        dry_run=not payload.apply,
+        total_groups=len(groups),
+        classified_groups=classified_groups,
+        updated_groups=len(updated_group_ids),
+        unchanged_groups=max(len(groups) - len(updated_group_ids) - len(needs_review), 0),
+        needs_review_count=len(needs_review),
+    )
+
+    return AdminNewsClassifyResponse(
+        summary=summary,
+        needs_review=needs_review,
+        updated_group_ids=updated_group_ids,
+    )
 
 
 @router.get("/materials/{group_id}", response_model=AdminNewsMaterialResponse)
@@ -198,6 +351,30 @@ async def update_material(
 
     await db.commit()
 
+    refreshed = await db.execute(select(News).where(News.translation_group_id == group_id))
+    return _to_material_response(refreshed.scalars().all())
+
+
+@router.patch("/materials/{group_id}/article-type", response_model=AdminNewsMaterialResponse)
+async def set_material_article_type(
+    group_id: UUID,
+    payload: AdminNewsArticleTypeUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    normalized = _article_type_from_str(payload.article_type)
+    if normalized == "UNCLASSIFIED":
+        raise HTTPException(status_code=400, detail="article_type must be NEWS or ANALYTICS")
+    result = await db.execute(select(News).where(News.translation_group_id == group_id))
+    rows = result.scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    for item in rows:
+        item.article_type = normalized
+        item.updated_by_admin_id = current_admin.id
+
+    await db.commit()
     refreshed = await db.execute(select(News).where(News.translation_group_id == group_id))
     return _to_material_response(refreshed.scalars().all())
 

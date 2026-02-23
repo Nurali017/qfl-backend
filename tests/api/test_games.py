@@ -14,10 +14,8 @@ class TestGamesAPI:
     async def test_get_games_empty(self, client: AsyncClient):
         """Test getting games when database is empty."""
         response = await client.get("/api/v1/games")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["items"] == []
-        assert data["total"] == 0
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Season not found"
 
     async def test_get_games_with_data(
         self, client: AsyncClient, sample_season, sample_game
@@ -40,9 +38,18 @@ class TestGamesAPI:
         assert len(data["items"]) == 1
 
         response = await client.get("/api/v1/games?season_id=999")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["items"]) == 0
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Season not found"
+
+    async def test_get_games_hidden_season_returns_404(
+        self, client: AsyncClient, sample_season, sample_game, test_session
+    ):
+        sample_season.is_visible = False
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games?season_id={sample_season.id}")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Season not found"
 
     async def test_get_games_filter_by_month_without_year(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game

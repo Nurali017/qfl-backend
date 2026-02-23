@@ -3,9 +3,12 @@ from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from app.models import AdminUser, GamePlayerStats, Language, News, Page, Player, Season
+from app.models.news import ArticleType
 from app.security import hash_password
+from app.services.news_classifier import ClassificationDecision, NewsClassifierService
 
 
 @pytest.fixture
@@ -157,6 +160,229 @@ async def test_news_material_create_update_and_add_translation(
 
 
 @pytest.mark.asyncio
+async def test_news_materials_filter_article_type_and_search(
+    client: AsyncClient,
+    superadmin_user: AdminUser,
+    test_session,
+):
+    token = await _login(client, superadmin_user.email, "super-secret")
+
+    group_news = uuid4()
+    group_unclassified = uuid4()
+    test_session.add_all(
+        [
+            News(
+                id=12_001,
+                language=Language.RU,
+                translation_group_id=group_news,
+                title="Transfer news RU",
+                excerpt="Official announcement",
+                article_type=ArticleType.NEWS,
+                publish_date=date(2026, 1, 3),
+            ),
+            News(
+                id=12_002,
+                language=Language.KZ,
+                translation_group_id=group_news,
+                title="Transfer news KZ",
+                excerpt="Official announcement",
+                article_type=ArticleType.NEWS,
+                publish_date=date(2026, 1, 3),
+            ),
+            News(
+                id=12_003,
+                language=Language.RU,
+                translation_group_id=group_unclassified,
+                title="Pending review",
+                excerpt="No type yet",
+                article_type=None,
+                publish_date=date(2026, 1, 4),
+            ),
+        ]
+    )
+    await test_session.commit()
+
+    resp_unclassified = await client.get(
+        "/api/v1/admin/news/materials?article_type=UNCLASSIFIED",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_unclassified.status_code == 200, resp_unclassified.text
+    data_unclassified = resp_unclassified.json()
+    assert data_unclassified["total"] == 1
+    assert data_unclassified["items"][0]["group_id"] == str(group_unclassified)
+
+    resp_news = await client.get(
+        "/api/v1/admin/news/materials?article_type=NEWS",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_news.status_code == 200, resp_news.text
+    data_news = resp_news.json()
+    assert data_news["total"] == 1
+    assert data_news["items"][0]["group_id"] == str(group_news)
+
+    resp_search = await client.get(
+        "/api/v1/admin/news/materials?search=transfer",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_search.status_code == 200, resp_search.text
+    data_search = resp_search.json()
+    assert data_search["total"] == 1
+    assert data_search["items"][0]["group_id"] == str(group_news)
+
+
+@pytest.mark.asyncio
+async def test_news_material_set_group_article_type(
+    client: AsyncClient,
+    superadmin_user: AdminUser,
+    test_session,
+):
+    token = await _login(client, superadmin_user.email, "super-secret")
+    group_id = uuid4()
+    test_session.add_all(
+        [
+            News(
+                id=13_001,
+                language=Language.RU,
+                translation_group_id=group_id,
+                title="RU title",
+                article_type=None,
+                publish_date=date(2026, 1, 5),
+            ),
+            News(
+                id=13_002,
+                language=Language.KZ,
+                translation_group_id=group_id,
+                title="KZ title",
+                article_type=None,
+                publish_date=date(2026, 1, 5),
+            ),
+        ]
+    )
+    await test_session.commit()
+
+    set_response = await client.patch(
+        f"/api/v1/admin/news/materials/{group_id}/article-type",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"article_type": "ANALYTICS"},
+    )
+    assert set_response.status_code == 200, set_response.text
+    payload = set_response.json()
+    assert payload["ru"]["article_type"] == "ANALYTICS"
+    assert payload["kz"]["article_type"] == "ANALYTICS"
+
+    reset_response = await client.patch(
+        f"/api/v1/admin/news/materials/{group_id}/article-type",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"article_type": None},
+    )
+    assert reset_response.status_code == 200, reset_response.text
+    payload_reset = reset_response.json()
+    assert payload_reset["ru"]["article_type"] is None
+    assert payload_reset["kz"]["article_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_news_materials_classify_dry_run_and_apply(
+    client: AsyncClient,
+    superadmin_user: AdminUser,
+    test_session,
+    monkeypatch,
+):
+    token = await _login(client, superadmin_user.email, "super-secret")
+
+    analytical_group = uuid4()
+    review_group = uuid4()
+    test_session.add_all(
+        [
+            News(
+                id=14_001,
+                language=Language.RU,
+                translation_group_id=analytical_group,
+                title="Тактический анализ тура",
+                content_text="Подробный разбор игры",
+                article_type=None,
+                publish_date=date(2026, 1, 10),
+            ),
+            News(
+                id=14_002,
+                language=Language.KZ,
+                translation_group_id=analytical_group,
+                title="Матч талдауы",
+                content_text="Ойын сараптамасы",
+                article_type=None,
+                publish_date=date(2026, 1, 10),
+            ),
+            News(
+                id=14_003,
+                language=Language.RU,
+                translation_group_id=review_group,
+                title="Сомнительный материал",
+                content_text="Короткий текст",
+                article_type=None,
+                publish_date=date(2026, 1, 11),
+            ),
+        ]
+    )
+    await test_session.commit()
+
+    async def fake_classify_group(self, items, min_confidence=0.7):
+        ru_item = next((item for item in items if item.language == Language.RU), items[0])
+        title = (ru_item.title or "").lower()
+        if "анализ" in title or "талдау" in title:
+            return ClassificationDecision(
+                article_type=ArticleType.ANALYTICS,
+                confidence=0.92,
+                source="rules",
+                representative_news_id=ru_item.id,
+                representative_title=ru_item.title,
+            )
+        return ClassificationDecision(
+            article_type=None,
+            confidence=0.45,
+            source="rules",
+            reason="low_confidence",
+            representative_news_id=ru_item.id,
+            representative_title=ru_item.title,
+        )
+
+    monkeypatch.setattr(NewsClassifierService, "classify_group", fake_classify_group)
+
+    dry_run_response = await client.post(
+        "/api/v1/admin/news/materials/classify",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"apply": False, "only_unclassified": True, "min_confidence": 0.7},
+    )
+    assert dry_run_response.status_code == 200, dry_run_response.text
+    dry_run_payload = dry_run_response.json()
+    assert dry_run_payload["summary"]["dry_run"] is True
+    assert dry_run_payload["summary"]["total_groups"] == 2
+    assert dry_run_payload["summary"]["updated_groups"] == 1
+    assert dry_run_payload["summary"]["needs_review_count"] == 1
+
+    verify_dry_run = await test_session.execute(
+        select(News).where(News.translation_group_id == analytical_group)
+    )
+    assert all(item.article_type is None for item in verify_dry_run.scalars().all())
+
+    apply_response = await client.post(
+        "/api/v1/admin/news/materials/classify",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"apply": True, "only_unclassified": True, "min_confidence": 0.7},
+    )
+    assert apply_response.status_code == 200, apply_response.text
+    apply_payload = apply_response.json()
+    assert apply_payload["summary"]["dry_run"] is False
+    assert apply_payload["summary"]["updated_groups"] == 1
+    assert apply_payload["summary"]["needs_review_count"] == 1
+
+    verify_apply = await test_session.execute(
+        select(News).where(News.translation_group_id == analytical_group)
+    )
+    applied_items = verify_apply.scalars().all()
+    assert all(item.article_type == ArticleType.ANALYTICS for item in applied_items)
+
+
+@pytest.mark.asyncio
 async def test_pages_material_update_and_add_translation(
     client: AsyncClient,
     superadmin_user: AdminUser,
@@ -214,6 +440,76 @@ async def test_admin_players_rbac_editor_allowed_operator_forbidden(
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert operator_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_players_meta_excludes_hidden_seasons(
+    client: AsyncClient,
+    superadmin_user: AdminUser,
+    test_session,
+    sample_championship,
+    sample_season,
+):
+    token = await _login(client, superadmin_user.email, "super-secret")
+    sample_season.is_visible = False
+    test_session.add(
+        Season(
+            id=62,
+            name="2026",
+            championship_id=sample_championship.id,
+            date_start=date(2026, 3, 1),
+            date_end=date(2026, 11, 30),
+            is_visible=True,
+        )
+    )
+    await test_session.commit()
+
+    response = await client.get(
+        "/api/v1/admin/players/meta",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    season_ids = [item["id"] for item in response.json()["seasons"]]
+    assert season_ids == [62]
+
+
+@pytest.mark.asyncio
+async def test_admin_seasons_exclude_hidden_and_return_404_for_hidden_id(
+    client: AsyncClient,
+    superadmin_user: AdminUser,
+    test_session,
+    sample_championship,
+    sample_season,
+):
+    token = await _login(client, superadmin_user.email, "super-secret")
+    sample_season.is_visible = False
+    test_session.add(
+        Season(
+            id=62,
+            name="2026",
+            championship_id=sample_championship.id,
+            date_start=date(2026, 3, 1),
+            date_end=date(2026, 11, 30),
+            is_visible=True,
+        )
+    )
+    await test_session.commit()
+
+    list_response = await client.get(
+        "/api/v1/admin/seasons",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_response.status_code == 200, list_response.text
+    list_data = list_response.json()
+    assert list_data["total"] == 1
+    assert [item["id"] for item in list_data["items"]] == [62]
+
+    hidden_response = await client.get(
+        f"/api/v1/admin/seasons/{sample_season.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert hidden_response.status_code == 404
+    assert hidden_response.json()["detail"] == "Season not found"
 
 
 @pytest.mark.asyncio

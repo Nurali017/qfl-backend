@@ -1,6 +1,9 @@
 from app.schemas.admin.auth import LoginRequest, LoginResponse, MeResponse
 from app.schemas.admin.users import AdminPasswordResetRequest, AdminUserCreateRequest, AdminUserResponse, AdminUserUpdateRequest
 from app.schemas.admin.news import (
+    AdminNewsArticleTypeUpdateRequest,
+    AdminNewsClassifyRequest,
+    AdminNewsClassifyResponse,
     AdminNewsMaterialCreateRequest,
     AdminNewsMaterialResponse,
     AdminNewsMaterialUpdateRequest,
@@ -63,6 +66,9 @@ __all__ = [
     "AdminUserCreateRequest",
     "AdminUserResponse",
     "AdminUserUpdateRequest",
+    "AdminNewsArticleTypeUpdateRequest",
+    "AdminNewsClassifyRequest",
+    "AdminNewsClassifyResponse",
     "AdminNewsMaterialCreateRequest",
     "AdminNewsMaterialResponse",
     "AdminNewsMaterialUpdateRequest",

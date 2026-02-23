@@ -51,10 +51,12 @@ class TestPlayersAPI:
         response = await client.get("/api/v1/players/not-a-number")
         assert response.status_code == 422
 
-    async def test_get_player_stats(self, client: AsyncClient, sample_player):
+    async def test_get_player_stats(self, client: AsyncClient, sample_player, sample_season):
         """Test getting player stats returns 404 when no stats exist."""
         player_id = sample_player.id
-        response = await client.get(f"/api/v1/players/{player_id}/stats")
+        response = await client.get(
+            f"/api/v1/players/{player_id}/stats?season_id={sample_season.id}"
+        )
         # PlayerSeasonStats table is empty, so API returns 404
         assert response.status_code == 404
         assert "detail" in response.json()
@@ -93,10 +95,12 @@ class TestPlayersAPI:
         assert data["xg"] is None
         assert data["pass_accuracy"] is None
 
-    async def test_get_player_games_empty(self, client: AsyncClient, sample_player):
+    async def test_get_player_games_empty(self, client: AsyncClient, sample_player, sample_season):
         """Test getting player games when no games played."""
         player_id = sample_player.id
-        response = await client.get(f"/api/v1/players/{player_id}/games")
+        response = await client.get(
+            f"/api/v1/players/{player_id}/games?season_id={sample_season.id}"
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["items"] == []

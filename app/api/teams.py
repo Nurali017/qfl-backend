@@ -66,6 +66,7 @@ from app.models.game_team_stats import GameTeamStats
 from app.models.game_event import GameEvent, GameEventType
 from app.config import get_settings
 from app.services.season_participants import resolve_season_participants
+from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
 from app.utils.error_messages import get_error_message
 
@@ -91,6 +92,12 @@ def _match_status(game: Game) -> str:
     if game.home_score is not None and game.away_score is not None:
         return "finished"
     return "upcoming"
+
+
+async def _resolve_visible_season_id(db: AsyncSession, season_id: int | None) -> int:
+    resolved_season_id = season_id if season_id is not None else settings.current_season_id
+    await ensure_visible_season_or_404(db, resolved_season_id)
+    return resolved_season_id
 
 
 def _build_overview_match(game: Game, lang: str) -> TeamOverviewMatch:
@@ -187,7 +194,8 @@ async def get_teams(
     db: AsyncSession = Depends(get_db),
 ):
     """Get all teams, optionally filtered by season."""
-    if season_id:
+    if season_id is not None:
+        await ensure_visible_season_or_404(db, season_id)
         participants = await resolve_season_participants(db, season_id, lang)
         if not participants:
             raise HTTPException(
@@ -282,7 +290,10 @@ async def get_team_seasons(
     result = await db.execute(
         select(Season.id, Season, Championship)
         .join(Championship, Season.championship_id == Championship.id)
-        .where(Season.id.in_(select(season_ids_subq.c.season_id)))
+        .where(
+            Season.id.in_(select(season_ids_subq.c.season_id)),
+            is_season_visible_clause(),
+        )
         .order_by(Season.date_start.desc().nullslast(), Season.id.desc())
     )
     rows = result.all()
@@ -314,8 +325,7 @@ async def get_team_overview(
     db: AsyncSession = Depends(get_db),
 ):
     """Get aggregated team overview data for the team page."""
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     team_result = await db.execute(
         select(Team)
@@ -326,7 +336,12 @@ async def get_team_overview(
     if not team:
         raise HTTPException(status_code=404, detail=get_error_message("team_not_found", lang))
 
-    season_result = await db.execute(select(Season).where(Season.id == season_id))
+    season_result = await db.execute(
+        select(Season).where(
+            Season.id == season_id,
+            is_season_visible_clause(),
+        )
+    )
     season = season_result.scalar_one_or_none()
 
     games_result = await db.execute(
@@ -650,8 +665,7 @@ async def get_team_players(
     db: AsyncSession = Depends(get_db),
 ):
     """Get players for a team in a specific season."""
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     result = await db.execute(
         select(PlayerTeam)
@@ -698,8 +712,7 @@ async def get_team_games(
     db: AsyncSession = Depends(get_db),
 ):
     """Get games for a team."""
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     query = (
         select(Game)
@@ -775,8 +788,7 @@ async def get_team_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get team statistics for a season from local DB."""
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     # Fetch from team_season_stats table
     result = await db.execute(
@@ -899,8 +911,7 @@ async def get_team_coaches(
     db: AsyncSession = Depends(get_db),
 ):
     """Get coaching staff for a team in a specific season."""
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     result = await db.execute(
         select(TeamCoach)
@@ -959,8 +970,7 @@ async def get_head_to_head(
     - Season table positions
     - Previous meetings between the two teams
     """
-    if season_id is None:
-        season_id = settings.current_season_id
+    season_id = await _resolve_visible_season_id(db, season_id)
 
     # Validate teams exist
     team1_result = await db.execute(select(Team).where(Team.id == team1_id))

@@ -1,0 +1,12 @@
+{
+  "summary": {
+    "dry_run": false,
+    "total_groups": 0,
+    "classified_groups": 0,
+    "updated_groups": 0,
+    "unchanged_groups": 0,
+    "needs_review_count": 0
+  },
+  "needs_review": [],
+  "updated_group_ids": []
+}

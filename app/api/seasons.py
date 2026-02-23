@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.services.season_participants import resolve_season_participants
 from app.services.cup_rounds import build_playoff_bracket_from_rounds, build_schedule_rounds
+from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_field
 from app.utils.numbers import to_finite_float
 from app.utils.positions import infer_position_code
@@ -56,6 +57,10 @@ from app.schemas.player import PlayerStatsTableEntry, PlayerStatsTableResponse
 from app.schemas.country import CountryInPlayer
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
+
+
+async def _ensure_visible_season(db: AsyncSession, season_id: int) -> None:
+    await ensure_visible_season_or_404(db, season_id)
 
 
 def _build_season_response(s: Season) -> SeasonResponse:
@@ -130,6 +135,7 @@ async def get_seasons(db: AsyncSession = Depends(get_db)):
     """Get all seasons."""
     result = await db.execute(
         select(Season)
+        .where(is_season_visible_clause())
         .options(selectinload(Season.championship))
         .order_by(Season.date_start.desc())
     )
@@ -150,7 +156,12 @@ async def update_season_sync(
 ):
     """Enable or disable SOTA sync for a season. When disabled, local data is source of truth."""
     result = await db.execute(
-        select(Season).where(Season.id == season_id).options(selectinload(Season.championship))
+        select(Season)
+        .where(
+            Season.id == season_id,
+            is_season_visible_clause(),
+        )
+        .options(selectinload(Season.championship))
     )
     season = result.scalar_one_or_none()
     if not season:
@@ -167,7 +178,12 @@ async def update_season_sync(
 async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
     """Get season by ID."""
     result = await db.execute(
-        select(Season).where(Season.id == season_id).options(selectinload(Season.championship))
+        select(Season)
+        .where(
+            Season.id == season_id,
+            is_season_visible_clause(),
+        )
+        .options(selectinload(Season.championship))
     )
     season = result.scalar_one_or_none()
 
@@ -431,6 +447,8 @@ async def get_season_table(
     - tour_to: Ending matchweek (inclusive)
     - home_away: "home" for home games only, "away" for away games only
     """
+    await _ensure_visible_season(db, season_id)
+
     if group and final:
         raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
 
@@ -511,6 +529,8 @@ async def get_results_grid(
 
     Returns a matrix where each team has an array of results for each matchweek.
     """
+    await _ensure_visible_season(db, season_id)
+
     if group and final:
         raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
 
@@ -658,6 +678,8 @@ async def get_season_games(
     db: AsyncSession = Depends(get_db),
 ):
     """Get games for a season."""
+    await _ensure_visible_season(db, season_id)
+
     query = (
         select(Game)
         .where(Game.season_id == season_id)
@@ -747,6 +769,8 @@ async def get_player_stats_table(
     interception, dribble, minutes_played, games_played, yellow_cards,
     red_cards, save_shot, dry_match, etc.
     """
+    await _ensure_visible_season(db, season_id)
+
     # Validate sort field
     if sort_by not in PLAYER_STATS_SORT_FIELDS:
         raise HTTPException(
@@ -904,9 +928,14 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
 
     Returns match results, attendance, goals, penalties, fouls, and cards.
     """
+    await _ensure_visible_season(db, season_id)
+
     # Verify season exists
     season_result = await db.execute(
-        select(Season).where(Season.id == season_id)
+        select(Season).where(
+            Season.id == season_id,
+            is_season_visible_clause(),
+        )
     )
     season = season_result.scalar_one_or_none()
     if not season:
@@ -980,8 +1009,13 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
 @router.get("/{season_id}/goals-by-period", response_model=SeasonGoalsByPeriodResponse)
 async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)):
     """Get goals grouped by minute periods for a season."""
+    await _ensure_visible_season(db, season_id)
+
     season_result = await db.execute(
-        select(Season).where(Season.id == season_id)
+        select(Season).where(
+            Season.id == season_id,
+            is_season_visible_clause(),
+        )
     )
     season = season_result.scalar_one_or_none()
     if not season:
@@ -1072,6 +1106,8 @@ async def get_team_stats_table(
     Sort by: points, goals_scored, goals_conceded, wins, draws, losses,
     shots, passes, possession_avg, tackles, fouls, yellow_cards, etc.
     """
+    await _ensure_visible_season(db, season_id)
+
     # Validate sort field
     if sort_by not in TEAM_STATS_SORT_FIELDS:
         raise HTTPException(
@@ -1370,6 +1406,8 @@ async def get_season_stages(
     db: AsyncSession = Depends(get_db),
 ):
     """Get stages/tours for a season."""
+    await _ensure_visible_season(db, season_id)
+
     result = await db.execute(
         select(Stage)
         .where(Stage.season_id == season_id)
@@ -1399,6 +1437,8 @@ async def get_stage_games(
     db: AsyncSession = Depends(get_db),
 ):
     """Get games for a specific stage/tour."""
+    await _ensure_visible_season(db, season_id)
+
     result = await db.execute(
         select(Game)
         .where(Game.season_id == season_id, Game.stage_id == stage_id)
@@ -1459,6 +1499,8 @@ async def get_season_bracket(
     db: AsyncSession = Depends(get_db),
 ):
     """Get playoff bracket for a season, derived from games and stages."""
+    await _ensure_visible_season(db, season_id)
+
     stage_result = await db.execute(
         select(Stage)
         .where(Stage.season_id == season_id)
@@ -1496,6 +1538,8 @@ async def get_season_teams(
     db: AsyncSession = Depends(get_db),
 ):
     """Get all teams participating in a season."""
+    await _ensure_visible_season(db, season_id)
+
     participants = await resolve_season_participants(db, season_id, lang)
     items = [
         SeasonParticipantResponse(
@@ -1522,6 +1566,8 @@ async def get_season_groups(
     db: AsyncSession = Depends(get_db),
 ):
     """Get teams grouped by group_name for a season."""
+    await _ensure_visible_season(db, season_id)
+
     result = await db.execute(
         select(SeasonParticipant)
         .where(SeasonParticipant.season_id == season_id)

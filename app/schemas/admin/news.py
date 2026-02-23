@@ -67,3 +67,41 @@ class AdminNewsMaterialResponse(BaseModel):
 class AdminNewsMaterialListResponse(BaseModel):
     items: list[AdminNewsMaterialResponse]
     total: int
+
+
+class AdminNewsArticleTypeUpdateRequest(BaseModel):
+    article_type: str | None = None
+
+
+class AdminNewsClassifyRequest(BaseModel):
+    apply: bool = False
+    limit: int | None = None
+    only_unclassified: bool = True
+    championship_code: str | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    min_confidence: float = 0.70
+
+
+class AdminNewsNeedsReviewItem(BaseModel):
+    group_id: UUID
+    representative_news_id: int | None = None
+    representative_title: str | None = None
+    confidence: float
+    source: str
+    reason: str | None = None
+
+
+class AdminNewsClassifySummary(BaseModel):
+    dry_run: bool
+    total_groups: int
+    classified_groups: int
+    updated_groups: int
+    unchanged_groups: int
+    needs_review_count: int
+
+
+class AdminNewsClassifyResponse(BaseModel):
+    summary: AdminNewsClassifySummary
+    needs_review: list[AdminNewsNeedsReviewItem]
+    updated_group_ids: list[UUID]

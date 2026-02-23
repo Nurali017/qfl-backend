@@ -1,0 +1,2593 @@
+{
+  "summary": {
+    "dry_run": false,
+    "total_groups": 396,
+    "classified_groups": 75,
+    "updated_groups": 11,
+    "unchanged_groups": 64,
+    "needs_review_count": 321
+  },
+  "needs_review": [
+    {
+      "group_id": "e277f944-17cb-42b5-b938-d43de90ec1b9",
+      "representative_news_id": 418,
+      "representative_title": "КУБОК КАЗАХСТАНА-2025: КРАХ ФАВОРИТОВ И ИСТОРИЧЕСКИЙ ФИНАЛ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "47c7f46e-33ed-4574-a58b-f7aa260a838f",
+      "representative_news_id": 420,
+      "representative_title": "ПЕРВАЯ ЛИГА: НЕ ВСЕ ФАВОРИТЫ УДОВЛЕТВОРИЛИ СВОИ АМБИЦИИ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f3275d4e-c846-4e6a-ba25-8b41e7c77861",
+      "representative_news_id": 19,
+      "representative_title": "8 наурыз – Халықаралық әйелдер күні құтты болсын!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "8410fbd7-525f-43f7-8cef-c7c95d292811",
+      "representative_news_id": 274,
+      "representative_title": "Когда женский футбол переписывает историю: «Актобе» – БИИК и три события, вошедшие в летопись казахстанского футбола",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "09cd734c-563e-4502-ad51-58b1f4f51c30",
+      "representative_news_id": 72,
+      "representative_title": "Әйелдер арасындағы чемпионаттың алғашқы туры голға толы болды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ac0b7107-38ee-430e-942e-c8f8e9378e31",
+      "representative_news_id": 60,
+      "representative_title": "Вторая лига: на старт, внимание, марш!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e64f8c15-3096-4e76-97a0-5fae00741491",
+      "representative_news_id": 59,
+      "representative_title": "ҚПЛ-дің 4-тур қорытындысы: Сәтпаевтың рекорды және көшбасшылардың кезекті жеңісі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "9cd3600a-eb4f-4ddc-9a32-fd2ab11920b2",
+      "representative_news_id": 58,
+      "representative_title": "Бірінші лига: бізді қызықты маусым күтіп тұр!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "9a48bbcf-54aa-4c94-aa70-8a7d19044960",
+      "representative_news_id": 55,
+      "representative_title": "4-й тур КПЛ: момент истины для «Ордабасы»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "8999a476-fa03-4944-b48c-5605e0a20365",
+      "representative_news_id": 54,
+      "representative_title": "«Атырау» - «Қайрат» матчының күні ауысты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a98c5fe1-f969-431b-b0a2-143e627c8285",
+      "representative_news_id": 50,
+      "representative_title": "«Астана» и «Ордабасы» сыграют раньше",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "70c308fb-d8a4-406b-900f-55a801e428d9",
+      "representative_news_id": 49,
+      "representative_title": "Женская лига: какие изменения ждут нас в новом сезоне?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "886f7fe3-7691-4092-92c2-c0ce08b87653",
+      "representative_news_id": 48,
+      "representative_title": "9 апреля стартует новый сезон Первой лиги",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "9fd2fec4-5dd4-4d9e-a475-891d1f80c101",
+      "representative_news_id": 46,
+      "representative_title": "В апреле стартует чемпионат РК по футболу среди женщин",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7ede9b8f-d2ab-4c2a-9a04-0e69a6594aa0",
+      "representative_news_id": 42,
+      "representative_title": "Итоги второго игрового дня 3-го тура: «Актобе» и «Кайрат» одержали крупные победы, «Тобол» потерял очки",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fe1def98-2444-45e1-ab39-6391d5bb1150",
+      "representative_news_id": 39,
+      "representative_title": "Итоги первого игрового дня 3-го тура: «Кайрат» одержал победу, а матч в Кызылорде завершился вничью",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f66d15ce-7f8a-475c-91e1-c59063e04f54",
+      "representative_news_id": 36,
+      "representative_title": "ҚФФ президенті Премьер-лига мен Бірінші лига клубтарының басшыларымен негізгі реформаларды талқылады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "95a362ab-9a09-4021-bbef-d4fd78550db2",
+      "representative_news_id": 35,
+      "representative_title": "Чемпионат Казахстана по футболу получит новое наименование в сезоне-2025",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "311fc1ab-fce3-40f3-bd5f-d98ece73b441",
+      "representative_news_id": 37,
+      "representative_title": "Премьер-лигадағы букмекерлік кеңсенің аты алынып тасталады — Марат Омаров",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c861eca8-97c5-4eb8-9c13-5f899e6691b1",
+      "representative_news_id": 32,
+      "representative_title": "Касым-Жомарт Токаев высказался о футболе в Казахстане",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f5bc4621-8125-48e8-8a25-cb8e78dd9865",
+      "representative_news_id": 23,
+      "representative_title": "Третий тур КПЛ-2025: ремейк финала Кубка и «зеленое дерби» в Костанае",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "927fdc07-a9cf-4978-a9b6-370be8c0f5fa",
+      "representative_news_id": 31,
+      "representative_title": "Премьер-лиганың 3-турындағы матчтар кестесі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "84b2f773-5551-49b3-becf-a697cfabdf8b",
+      "representative_news_id": 30,
+      "representative_title": "Перенесен матч Чемпионата Казахстана «Астана» - «Жетісу»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "1d967446-a360-4922-806a-926ac297e474",
+      "representative_news_id": 27,
+      "representative_title": "Бақытжан Пазылхайыр: Трансляция – медиа өнімнің ең маңызды бөлігі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "87beb9fb-6307-4993-8d2e-ca3b571de242",
+      "representative_news_id": 22,
+      "representative_title": "Стали известны все команды прошедшие в основной этап Olimpbet-Кубка Казахстана",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "cb94dcd5-00a9-4d75-8390-2e39536d3777",
+      "representative_news_id": 182,
+      "representative_title": "НУРБОЛ АНУАРБЕКОВ: НА ПОЛЕ НЕТ ДРУЗЕЙ, ЕСТЬ ТОЛЬКО ЗАДАЧА – ПОБЕДИТЬ!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "6f0335ad-a2ff-4934-92e6-aea1fad7fcff",
+      "representative_news_id": 179,
+      "representative_title": "Піралы Әлиев:  «Жеңіс» командасында ұлттық құрамада ойнауға лайықты футболшылар өсіп келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "36dd2443-3b70-463c-941e-c7d1f147e7e7",
+      "representative_news_id": 178,
+      "representative_title": "Нуну Каштру: Судейство в Казахстане требует серьезного улучшения",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d521085e-796e-413b-88cc-eb604a704470",
+      "representative_news_id": 177,
+      "representative_title": "Алияр Мұхамед: Беларусь – физикалық тұрғыдан мықты команда, бірақ біз дайынбыз",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "cc2aa97c-ce9c-4917-80a1-7ee136b7e59c",
+      "representative_news_id": 176,
+      "representative_title": "Әли Әлиев: Құрамаға шақырту алған әр ойыншы ел үшін жанын салу керек",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b2cd8cb5-0717-427a-a1f4-1f7e76f6f45a",
+      "representative_news_id": 174,
+      "representative_title": "Әділет Омарбек: «Алтай» ҚПЛ-ға шығуды мақсат етіп отыр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "87dae80d-462a-4415-8a14-8f0d9ca1d7b9",
+      "representative_news_id": 173,
+      "representative_title": "11-Й ТУР КПЛ: ВОЛЕВАЯ ПОБЕДА «КАЙРАТА» В МЕНЬШИНСТВЕ НАД «АКТОБЕ» ВЫВЕЛА В ЛИДЕРЫ «АСТАНУ»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "34ab87a0-a647-495c-bf16-49dea93e4c33",
+      "representative_news_id": 172,
+      "representative_title": "Ақтөбе халықаралық талаптарға сай жаңа стадион салуға жақын арада кіріседі – Бақытжан Пазылхайыр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "97acc91f-3487-41c1-acd1-83d8de48820a",
+      "representative_news_id": 171,
+      "representative_title": "Бірінші лига: «Каспий» алға ұзап барады, «Шахтер» алғаш рет жеңілді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "25694d8b-94ac-4b16-9b84-d9484bdf40dc",
+      "representative_news_id": 170,
+      "representative_title": "Отандық футбол клубтарының жас тәрбиеленушілері Хорватиядағы беделді жарысқа қатысады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "aa26b1d3-9468-42d4-95a2-9d183f0fc909",
+      "representative_news_id": 168,
+      "representative_title": "Фархат Каналы: Матч в Актобе обещает быть настоящим «Big Drama Show»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5d9dfe5e-7131-4a12-8429-4b9409f60ad5",
+      "representative_news_id": 167,
+      "representative_title": "ҚПЛ: 11-турда үш клуб көшбасшылыққа таласады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4436a463-6689-41fc-a1ba-b20c195ba5b4",
+      "representative_news_id": 165,
+      "representative_title": "Билеты на матч «Актобе» – «Кайрат» были полностью распроданы за 44 минуты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "edd71663-bb84-4c2f-af42-74dde96482f3",
+      "representative_news_id": 164,
+      "representative_title": "Екінші лига: «Астана» жеңісті сериясын жалғастырса, «Жайық» алғаш рет жеңілді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ebc45f22-85ad-4888-b976-235a9052375f",
+      "representative_news_id": 162,
+      "representative_title": "ВОСЬМОЙ ТУР ПЕРВОЙ ЛИГИ: МАТЧИ С ПРИВКУСОМ НОСТАЛЬГИИ В УСТЬ-КАМЕНОГОРСКЕ И ТАРАЗЕ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "832b5257-fe20-40f1-bcf1-37fe8b2b5bd6",
+      "representative_news_id": 160,
+      "representative_title": "ИТОГИ СЕДЬМОГО ТУРА ПЕРВОЙ ЛИГИ: «КАСПИЙ» И «ШАХТЕР» ПОБЕЖДАЮТ, ERTIS СНОВА ТЕРЯЕТ ОЧКИ, «АЛТАЙ» ОПЯТЬ ИГРАЕТ НА НОЛЬ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "de16936d-5b59-40de-bc12-a0a6c6dfca93",
+      "representative_news_id": 159,
+      "representative_title": "ИТОГИ СЕДЬМОГО ТУРА ЖЕНСКОЙ ЛИГИ: ЛИДЕРЫ ДОБИЛИСЬ ДЕЖУРНЫХ ПОБЕД",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ddb1c2a6-a01c-4cc4-95e2-b308efaacbea",
+      "representative_news_id": 155,
+      "representative_title": "Отандық футболдағы дербилер",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0742242d-5862-41aa-9319-4bebdeacf086",
+      "representative_news_id": 154,
+      "representative_title": "ҚПЛ: Оныншы турда жанкүйерлерді Астана дербиі күтіп тұр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c60b8332-4559-4667-a279-1dc4c79c7993",
+      "representative_news_id": 152,
+      "representative_title": "Екінші лига: «Оңтүстік-батыс» конференциясында үш команда көш бастады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "593da86f-79a5-4175-9809-bbc835ad79e4",
+      "representative_news_id": 151,
+      "representative_title": "Бірінші лига: Жетінші турда көшбасшылар алғашқы ойын күнінде алаңға шығады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "6a70295a-4449-4a21-af43-30b02b251d82",
+      "representative_news_id": 150,
+      "representative_title": "Адина Бейбіт:  «Астана» келесі ойында жеңіске жетуі тиіс",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3a49d6c0-039d-48a9-a43e-b032b6d2195b",
+      "representative_news_id": 149,
+      "representative_title": "Вахид Масудов: Өскемен футболы бұрынғы биігіне қайта оралуға тиіс",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0d386ebe-9b5e-4907-bfc6-dcdc1c826cd5",
+      "representative_news_id": 146,
+      "representative_title": "ҚПЛ: Тоғызыншы турдан кейін «Ақтөбе» көш бастап, «Қайрат» алғаш рет жеңілді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "da829491-8e29-4366-94af-20fc9fb9cbbd",
+      "representative_news_id": 145,
+      "representative_title": "Матч «Тобыл» – «Ордабасы» перенесен",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "21a42dcc-c44c-432e-811a-1172f4526da2",
+      "representative_news_id": 144,
+      "representative_title": "Сергей Игнатович: Жартылай финалға дейін жеткен соң, финалға да шыққымыз келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a2e90c80-45eb-4b3c-96ee-5d33051f5d3e",
+      "representative_news_id": 143,
+      "representative_title": "Бірінші лига: Ertis алғаш рет гол жіберіп, «Каспий» қайта көш бастады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "41ad101a-0da1-442c-a69b-3ff031899242",
+      "representative_news_id": 142,
+      "representative_title": "Екінші лига: сәуір айының үздіктері анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "da41ee2a-3533-43e4-b345-46b38fb3ae00",
+      "representative_news_id": 140,
+      "representative_title": "Иван Шараванья: Мы проявили характер и заслуженно вышли в полуфинал",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a66bf395-447a-43e3-826b-06afbb55219d",
+      "representative_news_id": 139,
+      "representative_title": "Бірінші лига: сәуір айының үздік ойыншысы мен үздік жаттықтырушысы анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "229c9449-2602-4606-8131-f31d5e0f73ce",
+      "representative_news_id": 138,
+      "representative_title": "Мика: Очень счастлив, что мой гол помог одержать такую великолепную победу",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "42216a0e-e2f8-4939-90e8-41892c5eb149",
+      "representative_news_id": 137,
+      "representative_title": "Девятый тур Премьер-лиги: непростой выезд для лидеров и суперматч в Костанае",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e290300e-05ce-4252-8356-aa80d9840fd2",
+      "representative_news_id": 135,
+      "representative_title": "Қазақстан кубогы: «Ордабасы», «Қызылжар», «Жеңіс» және «Тобыл» жартылай финалға шықты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e9a08624-3f7a-42b9-b8f4-af5d80c68089",
+      "representative_news_id": 134,
+      "representative_title": "Екінші лига: алтыншы турда «Оңтүстік-батыс» конференциясында көшбасшы ауысты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "861d72a4-4ab2-4e1e-bca1-5a7b43e0c00f",
+      "representative_news_id": 133,
+      "representative_title": "Бірінші лига: Алтыншы турда көшбасшылар оңтүстік командаларымен кездеседі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e6e54bc7-ba63-4d4f-bc5a-2062582a8fe3",
+      "representative_news_id": 132,
+      "representative_title": "Касымжан Мукатаев: Единственное, что может помешать «Астане» – это их проблемы",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fe289397-ccb1-4c80-829c-76e873016f13",
+      "representative_news_id": 131,
+      "representative_title": "Наргиз Нургалиева: Мы только втягиваемся в чемпионат – это еще не наш максимум",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "94e6cead-1e93-4be6-b4a8-41d7406ff947",
+      "representative_news_id": 130,
+      "representative_title": "Николай Сигневич: Былтырғы жетістікті қайталап, ҚПЛ-дың үздік сұрмергені атанғым келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f882c2c8-c71f-40e5-b560-fd33b1a71959",
+      "representative_news_id": 129,
+      "representative_title": "Әйелдер лигасы: Бесінші турдан кейін көшбасшы ауысып, «Астана» клубы алғашқы жеңісіне қол жеткізді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3b282832-4ab6-460c-8bff-4140dbf6c513",
+      "representative_news_id": 126,
+      "representative_title": "Айсана Зекен: Маусымды алғашқы төрттікте аяқтағымыз келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d0d9b20a-6aa1-4851-97f8-0eb7553316ac",
+      "representative_news_id": 125,
+      "representative_title": "Итоги восьмого тура КПЛ: разгром в Шымкенте и первое поражение «Астаны»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0ba0b799-ed3d-45c8-8966-cd7b8fc3430e",
+      "representative_news_id": 124,
+      "representative_title": "Александр Зуев: Маусым айында ұлттық құрамаға шақырту алғым келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ec74d3bf-90e1-4eca-9626-64dea47a0b9b",
+      "representative_news_id": 123,
+      "representative_title": "Сұлтан Бұсұрманов: Бұл – бүкіл команданың жеңісі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a6f89098-0a0a-4eb3-b418-2f3de3ce24e7",
+      "representative_news_id": 122,
+      "representative_title": "Сенсациялар шеруі: Бірінші лиганың 5-тур қорытындысы",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a6b9a77f-a236-415a-8ebc-bae5724b00d6",
+      "representative_news_id": 120,
+      "representative_title": "Восьмой тур КПЛ: болельщиков ждут сражения «Астаны» с «Тоболом» и «Актобе» с «Елимаем»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f27ca4d5-62cc-4e16-b615-7754a8a41533",
+      "representative_news_id": 119,
+      "representative_title": "Итоги 5-го тура Второй лиги: «Астана-М», «Жас Кыран» и «Жайык» идут без осечек",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c21365a2-8cd7-448f-9e32-b99298d6423a",
+      "representative_news_id": 118,
+      "representative_title": "Бірінші лиганың бесінші туры: Екібастұздағы «кеншілер» дербиі, Павлодардағы дебютанттар кездесуі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2da67183-4613-49fd-9025-bb52d93f9336",
+      "representative_news_id": 117,
+      "representative_title": "Оралхан Өміртаев: Қазір чемпиондыққа талас жүріп жатыр, ұпай жоғалтуға болмайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d5f20e7c-1f21-4698-b9be-13b49ce6675f",
+      "representative_news_id": 113,
+      "representative_title": "Кристиан Новак: «Нам нужно больше бить и, наконец, начать забивать»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "37365314-1102-4999-90a3-656fe892363a",
+      "representative_news_id": 112,
+      "representative_title": "Жетінші турдың қорытындысы: Қызылордадағы күтпеген нәтиже, Семейдегі сенсация",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "bb5c2b57-0905-4f3c-8600-3818b0f55b46",
+      "representative_news_id": 110,
+      "representative_title": "Ермұхамед Мәулен: «Атырау» өз алаңында «Ордабасымен» өте сәтті ойнайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e65a66e0-a7c9-4448-a31e-3a10d4040fbc",
+      "representative_news_id": 109,
+      "representative_title": "Премьер-лига: 7-турда көшбасшылар аутсайдерлермен кездеседі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4f16774d-6b8f-4d8a-ba28-14970b4d590c",
+      "representative_news_id": 108,
+      "representative_title": "Разъяснение по отдельным игровым эпизодам матча «Атырау» – «Астана»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a3ddf217-a7bd-41f2-9705-18f3accdcb6b",
+      "representative_news_id": 107,
+      "representative_title": "Калоян Петков: Cделаем все возможное, чтобы пройти как можно дальше в Лиге чемпионов",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2f87a0cd-2816-49a0-9a15-6ffa2c0a95d0",
+      "representative_news_id": 106,
+      "representative_title": "Бірінші лига:  Төртінші турда басты фавориттердің тартысы күтіп тұр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e69aa03e-8372-473d-a89b-223011f1d750",
+      "representative_news_id": 105,
+      "representative_title": "Айгерим Айтымова получила серьезную травму в матче против «БИИК-Шымкент»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "37d04ebb-76f1-443c-8730-7b82b73f462d",
+      "representative_news_id": 104,
+      "representative_title": "Назми Грипши: Аптасына үш ойын өткізу бізге қиындық тудырмайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2b8e02d5-7711-4387-9ad1-34d730a6f75c",
+      "representative_news_id": 103,
+      "representative_title": "Әйелдер лигасының 3-туры: «Қайрат» еңсе тіктеп, көшбасшылар тең түсті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "51c3d06d-8281-4ec7-bc4d-995962883907",
+      "representative_news_id": 101,
+      "representative_title": "Джеффри Чинеду: Еуропаның танымал клубтарында Қазақстан чемпионатын қарап тұратын футболшылар көп",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "215c1ecf-e362-44f7-996d-6ea402044e60",
+      "representative_news_id": 100,
+      "representative_title": "Итоги 6-го тура КПЛ: первое поражение «Тобола» и подъем «Елимая»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a8993e18-58c9-4013-9467-8e0222fcac3a",
+      "representative_news_id": 99,
+      "representative_title": "Бірінші лиганың 3-тур қорытындысы: Алматыдағы тартысты матч, «Алтайдың» алғашқы жеңілісі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e81adbd9-835d-4ddc-82c1-c52828e27a7e",
+      "representative_news_id": 98,
+      "representative_title": "Дмитрий Нестеренко: Бұл турдан сенсация күтпеймін, бірақ оңай жеңістер де болмайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "acb27c08-be52-4319-8174-e869d511b76e",
+      "representative_news_id": 96,
+      "representative_title": "Қазақстан футболы күні құтты болсын!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "626fb380-4b1f-4d81-9209-789a67ae6311",
+      "representative_news_id": 95,
+      "representative_title": "Игорь Шацкий: У нас собрана отличная команда",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "37ff1182-2a56-4b55-aff8-4f5fdb34a965",
+      "representative_news_id": 94,
+      "representative_title": "ҚПЛ-дің алтыншы туры: Алматыдағы көшбасшылар кездесуі және оңтүстіктегі дерби",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2d9907fe-e443-4bb6-9cae-5d1e3e8622f0",
+      "representative_news_id": 93,
+      "representative_title": "Әнел Сұнқарова: Чемпионаттың ұйымдастырылуы жоғары деңгейде",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "79c377e9-058c-48fa-bc01-e1c6a8c585c5",
+      "representative_news_id": 90,
+      "representative_title": "Екінші лиганың 3-тур ойындары: Оңтүстік дербиіндегі голдар шоуы және «Жайықтың» алғашқы ойыны",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e057e920-4668-4ac6-9ca2-4db62f40c421",
+      "representative_news_id": 88,
+      "representative_title": "Третий тур Первой лиги: проверка амбиций ФК Ertis и непростое испытание для «Шахтера»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7814459b-6c1c-4821-bc75-349ae46c5c59",
+      "representative_news_id": 87,
+      "representative_title": "Гүлнар Габелия: Әр команданың өзіне тән мықты тұстары бар",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a7609e05-1cbe-42f1-89c9-c8cf5b692561",
+      "representative_news_id": 86,
+      "representative_title": "Премьер-лига: Статистический обзор пятого тура",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3665e0a3-9dca-4ad3-aa77-2aae4e867e1f",
+      "representative_news_id": 85,
+      "representative_title": "Разъяснения отдельных игровых ситуаций 5-го тура Премьер Лиги",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "06f4c642-07d1-4be1-866a-714475706c99",
+      "representative_news_id": 84,
+      "representative_title": "Әйелдер лигасының 2-тур нәтижесі: Түркістандағы ірі жеңіс және турнир кестесіндегі қос көшбасшы",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "50b5dd22-f603-4b3e-853c-80d253fdd51c",
+      "representative_news_id": 82,
+      "representative_title": "Бесінші тур: көшбасшылар ұпай жоғалтып, «Ордабасы» алғашқы жеңісіне қол жеткізді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "10aab922-82a6-4816-86a8-44ec49daa736",
+      "representative_news_id": 81,
+      "representative_title": "Итоги 2-го тура Первой лиги: фавориты идут без осечек",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "33d55d75-9526-488c-a070-1b38d122a9f0",
+      "representative_news_id": 80,
+      "representative_title": "Нуркен Мырзагалиев: Матчи обещают быть напряженными",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f0274341-2d61-4e3e-9b6f-94f4821fb465",
+      "representative_news_id": 79,
+      "representative_title": "Пятый тур Премьер-лиги: суперматч в Костанае и шанс для аутсайдеров",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "85c3e5b4-77ae-4d82-9f63-db73a6c58b68",
+      "representative_news_id": 78,
+      "representative_title": "«Мақтааралдың» жігерлі жеңісі және дебютанттың алғашқы голы: Екінші лиганың 2-турындағы ең қызықты сәттер",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "06309cb9-fd85-40fd-bad6-b95885a89882",
+      "representative_news_id": 75,
+      "representative_title": "Второй тур Первой лиги: болельщиков ждет алматинское дерби",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3e89de67-3ce6-4277-8707-420242f5e826",
+      "representative_news_id": 74,
+      "representative_title": "Марат Омаров: ҚФФ әйелдер футболын қолдауды жалғастырады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "45c28eec-be60-4e4b-a000-bf013b7c178f",
+      "representative_news_id": 69,
+      "representative_title": "В Казахстане стартовал чемпионат страны по футболу среди женщин",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2e7fb4b8-742d-4fbc-9208-644061fd8f8d",
+      "representative_news_id": 68,
+      "representative_title": "Итоги 1/8 финала Кубка Казахстана: у трофея будет новый обладатель",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5c93c131-a048-460b-8459-b788dfa06ef9",
+      "representative_news_id": 66,
+      "representative_title": "Звезды казахстанского футбола, выступающие в Первой лиге",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0173e5fd-6fe8-4d06-912c-4b4136f560fd",
+      "representative_news_id": 65,
+      "representative_title": "«Бұл кезеңде сенсация болмайды». Димаш Төлегенов Қазақстан кубогының 1/8 финалы туралы",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "32f471d3-955b-460c-b091-88f1af1fb5f7",
+      "representative_news_id": 64,
+      "representative_title": "Бірінші лиганың алғашқы тур қорытындысы: «Шахтер», «Каспий» және Ertis фаворит екенін дәлелдеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "aa1f40b8-3b48-4c1e-9985-ef5119f31632",
+      "representative_news_id": 63,
+      "representative_title": "1/8 финала Кубка Казахстана: в борьбу за трофей вступают клубы КПЛ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5865e52e-e0be-4ee8-ab2d-a322098237ce",
+      "representative_news_id": 62,
+      "representative_title": "Екінші лиганың алғашқы туры: астаналық дербидегі ірі жеңіс, дебютанттың сәтсіздігі және жалғыз тең ойын",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "54b322c9-b075-4cd1-9fc5-4c450c229807",
+      "representative_news_id": 288,
+      "representative_title": "ГЛАВНОЕ ИЗ 16-ГО ТУРА ЖЕНСКОЙ ЛИГИ: ЛИДЕРЫ ГРОМЯТ АУТСАЙДЕРОВ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7b001aef-8bf9-4f5d-bc7f-567e4d08a1b3",
+      "representative_news_id": 286,
+      "representative_title": "Матч «Тобол» – «Астана» перенесён",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "64dc9dea-cf62-4e21-a9c2-a9794d696da7",
+      "representative_news_id": 284,
+      "representative_title": "ҚПЛ: 21-ТУРДА АЛМАТЫ МЕН ШЫМКЕНТТЕ ӨТЕТІН ТАРТЫСТЫ МАТЧТАРҒА КУӘ БОЛАМЫЗ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fea6f2e7-5a3a-4fad-982b-916ab59c42d4",
+      "representative_news_id": 283,
+      "representative_title": "Эльдар Аманбаев: «Тобыл» ойыншылары жеке шеберліктің арқасында үш ұпай алуы тиіс",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "17840729-0fb0-4480-8315-693cb6c4b39f",
+      "representative_news_id": 282,
+      "representative_title": "19-Й ТУР КПЛ: «КАЙРАТ» ИГРАЕТ ДОМА, «АСТАНА» ГОТОВИТСЯ К «ЛОЗАННЕ»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7b28df2f-96b9-4ba7-8b3a-0a4b298bd931",
+      "representative_news_id": 280,
+      "representative_title": "Матч «Астана» – «Қайсар» перенесен на неопределенный срок",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5a311296-fbc9-452b-aedf-0968de4c6dc5",
+      "representative_news_id": 279,
+      "representative_title": "БІРІНШІ ЛИГАНЫҢ 16-ТУРЫ: ПАВЛОДАРДАҒЫ ТОП-МАТЧ ЖӘНЕ АЛМАТЫЛЫҚ ДЕРБИ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f6e695fc-7363-4551-89e9-a54ebc3ba4bb",
+      "representative_news_id": 278,
+      "representative_title": "Екінші лиганың 15-туры: Конференция көшбасшылары кезекті жеңістеріне қол жеткізді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "87fee802-b9b7-46b7-857c-c67c7658e1e6",
+      "representative_news_id": 277,
+      "representative_title": "Әйелдер лигасының 15-туры: «Ақтөбе» Шымкент командасының гегомониясын бұзуға жақын",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "46550921-3750-4d84-a46e-0be8f7072baf",
+      "representative_news_id": 275,
+      "representative_title": "«Қайрат» биылғы маусымда «Тобылды» екі матчта да жеңді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f5771590-f1f1-493f-9181-f05b53c028da",
+      "representative_news_id": 270,
+      "representative_title": "Анель Бланк: Если бы не тренер, я могла бы уйти из футбола",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ba5308bf-ae41-47c1-a864-6f72249482f7",
+      "representative_news_id": 269,
+      "representative_title": "ҚПЛ-дың 18-туры: Қостанайдағы суперматч және «Оңтүстік» дербиі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "bd0a6789-1086-45b4-83b2-1f0a15f3067b",
+      "representative_news_id": 268,
+      "representative_title": "Дримат Цамай: Надеюсь, смогу принести пользу «Астане» и вырасти здесь как игрок",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d377542e-7549-473b-b6ee-6f1367328c9a",
+      "representative_news_id": 265,
+      "representative_title": "Бірінші лиганың 15-туры: «Ertis» Алматыға қонаққа барады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4316ddce-5fec-485a-8c29-15ff8966006b",
+      "representative_news_id": 264,
+      "representative_title": "ҚПЛ: Маусым айының үздіктері анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "1f00ca7b-2c22-4798-a00b-992aa8d5ef4b",
+      "representative_news_id": 263,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 14-ГО ТУРА ЖЕНСКОЙ ЛИГИ: «ЕЛИМАЙ» ПОВТОРНО ОБЫГРАЛ «КАЙРАТ», ГАБЕЛИЯ НЕ ЗАБИЛА",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b8c836cf-b1cb-4bd5-87de-ad07f29488cc",
+      "representative_news_id": 262,
+      "representative_title": "Первая лига: определены лучший игрок и тренер июня",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f1b6be9b-e9be-4188-a4a4-7cc3ea006c9e",
+      "representative_news_id": 261,
+      "representative_title": "ИТОГИ 17-ГО ТУРА КПЛ: РАЗГРОМ ОТ «АСТАНЫ» И ПЕРВАЯ ЗА 4 МЕСЯЦА ПОБЕДА «АТЫРАУ»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "83641620-03b1-43b6-b918-f94765c00b6d",
+      "representative_news_id": 259,
+      "representative_title": "ИТОГИ 14-ГО ТУРА ПЕРВОЙ ЛИГИ: «КАСПИЙ» ОСТУПИЛСЯ, ПРЕСЛЕДОВАТЕЛИ ДРУЖНО ВОСПОЛЬЗОВАЛИСЬ ОСЕЧКОЙ ЛИДЕРА",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "20504cd0-e693-450f-aa4e-d270df4ce303",
+      "representative_news_id": 257,
+      "representative_title": "Дидар Есемов: «Красно-белых» устроит только победа",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "be251db3-b6a4-4a0d-b51c-c36e495ec1e3",
+      "representative_news_id": 256,
+      "representative_title": "Батыхан Камарадинов: Алға қойған мақсатым біртіндеп орындалып келе жатыр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "98cdf645-4218-44a8-ada9-41cb8445ddf2",
+      "representative_news_id": 255,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 13-ГО ТУРА ВТОРОЙ ЛИГИ: НЕПРОСТАЯ ПОБЕДА «АСТАНЫ-М» И СЕНСАЦИОННОЕ ПОРАЖЕНИЕ «АРЫСА»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "82fa888d-4caf-48b1-b09d-b16d0fcff9a4",
+      "representative_news_id": 254,
+      "representative_title": "14-Й ТУР ПЕРВОЙ ЛИГИ: ФАВОРИТЫ ПРОТИВ АУТСАЙДЕРОВ И АЛМАТИНСКОЕ ДЕРБИ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c772e974-68d0-419b-ab23-e284f203e72b",
+      "representative_news_id": 252,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 13-ГО ТУРА ЖЕНСКОЙ ЛИГИ: НОВЫЕ РАЗГРОМЫ ОТ ЛИДЕРОВ И СЕНСАЦИЯ В ТУРКЕСТАНЕ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "23a15a1a-7131-4921-abc4-105dfeb8e567",
+      "representative_news_id": 251,
+      "representative_title": "16-Й ТУР КПЛ: «АСТАНА» ОСТАЛАСЬ ПЕРВОЙ, НО ОНА УЖЕ НЕ ЛИДЕР ПО ПОТЕРЯННЫМ ОЧКАМ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ba7d5154-2cba-4df9-a083-25a7f5e0f8f6",
+      "representative_news_id": 248,
+      "representative_title": "Виктор Кирилюк:«Астана» может обыграть Шымкент с разницей в два мяча",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "264d6e7d-6762-4836-b373-60dc8b2d617b",
+      "representative_news_id": 247,
+      "representative_title": "ҚПЛ-дің 16-ТУРЫ: «ОРДАБАСЫ» КЛУБЫН ЕУРОКУБОКТАН КЕЙІНГІ СЫН КҮТІП ТҰР",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "cd6eb512-e694-4028-8f74-585125578729",
+      "representative_news_id": 246,
+      "representative_title": "Павел Демян – 65 жаста!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "cd04edf8-9783-4153-909d-07b18e6c9695",
+      "representative_news_id": 245,
+      "representative_title": "ЕКІНШІ ЛИГАДАҒЫ СЕНСАЦИЯ: 12-ТУРДА «АСТАНА-Ж» МАУСЫМДАҒЫ АЛҒАШҚЫ ҰПАЙЫН ЖОҒАЛТТЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "44190faa-244b-4097-8155-0d54d6d32ac2",
+      "representative_news_id": 244,
+      "representative_title": "Бірінші лиганың 13-туры: Алғашқы төрттік өзара кездеседі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "74866b48-f3fc-4469-8745-5281d8094d19",
+      "representative_news_id": 243,
+      "representative_title": "ВИКТОР ЧЕЧЕТ: ҚЫЗДАР ОЙЫНДЫ ОЙЛАУ ЖАҒЫНАН КЕЙДЕ ЖІГІТТЕРДЕН АСЫП ТҮСЕДІ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "127e2264-4e58-4fda-a28d-01f299fa4e38",
+      "representative_news_id": 242,
+      "representative_title": "Адлет Садыбеков: Молодежи нужно больше практики – у нас в Академии растут талантливые ребята",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0e39205a-2d43-4976-bc3b-085017f5bb3d",
+      "representative_news_id": 241,
+      "representative_title": "Әйелдер лигасы: БИІК пен  «Ақтөбе» қарсыластарынан ұзап барады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "84c9119c-e5db-46ff-8ab0-890bc6cbd7b3",
+      "representative_news_id": 239,
+      "representative_title": "ҚПЛ: 15-турда көшбасшылар сенімді жеңіске жетіп, Семейдегі ойын триллерге ұласты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "1bbfe2e4-7f74-42dd-8aca-0861c746a87e",
+      "representative_news_id": 236,
+      "representative_title": "12-Й ТУР ПЕРВОЙ ЛИГИ: «КАСПИЙ» И «ШАХТЕР» ОСТУПАЮТСЯ, ERTIS ВЫХОДИТ НА ВТОРОЕ МЕСТО",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "92e2a02d-a4a7-49c2-a3fa-7ad129058cae",
+      "representative_news_id": 235,
+      "representative_title": "ҚПЛ 15-ТУР: СЕМЕЙДЕГІ ТУРДЫҢ ОРТАЛЫҚ ОЙЫНЫ ЖӘНЕ СОЛТҮСТІК ПЕН ОҢТҮСТІКТІҢ ТАРТЫСЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "caf1bb50-54d7-4a50-af1a-8779d0ed12be",
+      "representative_news_id": 234,
+      "representative_title": "КФФ и акимат Туркестанской области обсудили развитие футбола в регионе",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "705bdf53-e0a2-4cba-8c73-6ffe2007c9d2",
+      "representative_news_id": 233,
+      "representative_title": "Айбек Кабылша: У «Тобыла» чемпионские амбиции, они планомерно идут к этому",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0374aede-4db6-45f7-ac36-a7c0a469702a",
+      "representative_news_id": 231,
+      "representative_title": "Екінші лига: 11-турда «Оңтүстік-батыс» конференциясының көшбасшысы ауысты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b8f60e6d-64f7-4e0a-bc17-ba7c7a292dca",
+      "representative_news_id": 226,
+      "representative_title": "Асхат Тағыберген: «Футболшы ретіндегі мансабымды аяқтауға дайындалуға тырысып жүрмін»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7a5af137-5974-44f0-9126-6d06cc495a4a",
+      "representative_news_id": 224,
+      "representative_title": "ҚПЛ-дің 14-туры: екінші айналым басталады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "170bdf02-7e03-4bef-8bec-52766110448c",
+      "representative_news_id": 222,
+      "representative_title": "Олжас Байбосын: «Қайрат» Шымкенттен ұпайсыз қайтпайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "55fcff15-6a35-4ec3-a354-aada08fb4006",
+      "representative_news_id": 221,
+      "representative_title": "10-Й ТУР ВТОРОЙ ЛИГИ: ДЕЖУРНЫЙ РАЗГРОМ ОТ «АСТАНЫ-М» НА «СЕВЕРО-ВОСТОКЕ» И ЛИДЕРСТВО «ЖАЙЫКА» НА «ЮГО-ЗАПАДЕ»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "6082f41c-0512-4ebc-bffa-3b4e56e243a1",
+      "representative_news_id": 220,
+      "representative_title": "ИТОГИ ПЕРВЫХ ПОЛУФИНАЛОВ КУБКА РК: ТЯЖЕЛАЯ ПОБЕДА «ТОБОЛА» И НУЛЕВАЯ НИЧЬЯ В ПЕТРОПАВЛОВСКЕ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a33032da-6f58-41d6-a650-c909f0d0e57f",
+      "representative_news_id": 218,
+      "representative_title": "11-Й ТУР ПЕРВОЙ ЛИГИ: НЕБОЛЬШАЯ ПЕРЕДЫШКА ДЛЯ ЛИДЕРОВ?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "04faf4f4-5281-48ab-91ff-93a980bdc33f",
+      "representative_news_id": 216,
+      "representative_title": "ПЕРВЫЕ ПОЛУФИНАЛЫ КУБКА РК: СЕВЕР СРАЗИТСЯ С ЮГОМ, А ФАВОРИТ ТУРНИРА – С НЕУДОБНЫМ СОПЕРНИКОМ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "33278371-1392-4bc7-994d-e192eea9b914",
+      "representative_news_id": 215,
+      "representative_title": "Евстафий Пехлеваниди: Побольше Сатпаевых – и все будет нормально",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3fe48da0-9139-4645-aa9c-a3ab5b7333df",
+      "representative_news_id": 214,
+      "representative_title": "10-Й ТУР ЖЕНСКОЙ ЛИГИ: В ТАБЛИЦЕ – ДВОЕВЛАСТИЕ, А В ГОНКЕ СНАЙПЕРОВ – НОВЫЙ ЛИДЕР",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b1a0ae8f-659a-4e1f-95ba-3447f5360374",
+      "representative_news_id": 213,
+      "representative_title": "Каролина Гук: После поражений команда собралась и показала характер",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "9bd7fdae-6775-4b9c-bbb1-012770334e9e",
+      "representative_news_id": 212,
+      "representative_title": "В Талгаре стартовало строительство KFF Academy by Almaty International Airport",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d04d0e29-7b5d-4e98-bec9-68cf0e6820b2",
+      "representative_news_id": 210,
+      "representative_title": "10-Й ТУР ПЕРВОЙ ЛИГИ: ERTIS И «КАСПИЙ» ГРОМЯТ СВОИХ СОПЕРНИКОВ, «АЛТАЙ» ОСТУПАЕТСЯ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a2233341-86b1-4738-a4d7-c09a219d23a5",
+      "representative_news_id": 209,
+      "representative_title": "Әлімжан Асқар: «Астана» қазір ҚПЛ-дағы ең тұрақты ойын көрсетіп жатқан команда, «Ақтөбеден» жеңілмейді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5f7d3944-c07f-4fcb-8b73-2d25ff1585a0",
+      "representative_news_id": 208,
+      "representative_title": "13-Й ТУР КПЛ: ЧЕМ ЗАВЕРШИТСЯ ПЕРВЫЙ КРУГ ЧЕМПИОНАТА?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4d4d7719-a64d-4b9e-a245-9e9a08f32736",
+      "representative_news_id": 207,
+      "representative_title": "ВИКТОР БРАГА: Қостанайда өзімді үйде жүргендей сезінемін",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "9f4a42a6-1262-4456-a780-49cc263a4d71",
+      "representative_news_id": 206,
+      "representative_title": "ИТОГИ 9-ГО ТУРА ВТОРОЙ ЛИГИ: «АСТАНА-М» ОЧКОВ НЕ ТЕРЯЕТ, JEYRAN НИКАК НЕ МОЖЕТ ИХ НАБРАТЬ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "12cce85c-7281-461b-a11b-13f947889d60",
+      "representative_news_id": 205,
+      "representative_title": "Alatau City Bank – новый генеральный спонсор Казахстанской федерации футбола",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f0965d4f-2310-4166-bcad-5fa72268939a",
+      "representative_news_id": 204,
+      "representative_title": "Дәурен Жұмат: Маусымды сәтті аяқтап, еурокубокқа жолдама алғымыз келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fef59d7a-949b-4579-aa51-81064263ff01",
+      "representative_news_id": 203,
+      "representative_title": "Бірінші лиганың 10-туры: фавориттерді қиын сынақ күтіп тұр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "153ddefe-54bf-48f2-bc5a-2ae0268ac09a",
+      "representative_news_id": 200,
+      "representative_title": "КПЛ: Названы лучший игрок и тренер мая",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4e0e9447-9c72-4273-9401-5c31f558ce38",
+      "representative_news_id": 199,
+      "representative_title": "ӘЙЕЛДЕР ЛИГАСЫНЫҢ 9-ТУРЫ:  «Ақтөбе»  МАУСЫМНЫҢ РЕКОРДЫН ЖАҢАРТТЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "8b2b1e6e-7ea1-44fc-99f8-886546e732cf",
+      "representative_news_id": 198,
+      "representative_title": "Премьер-лиганың 12-туры: «Астана» камбэк жасап, алға ұзап шықты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2a36d0df-fd8b-41e0-a8e5-65b2ef2ba73a",
+      "representative_news_id": 195,
+      "representative_title": "Бірінші лига: ERTIS алғаш рет жеңіліп, «КАСПИЙ»  қарсыластарынан ұзап кетті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e2085a45-d2eb-45cc-9e6d-3577a5b52671",
+      "representative_news_id": 193,
+      "representative_title": "Бақытжан Пазылхайыр:  Семей — футболдың тұрақты даму моделінің үлгісі болуы мүмкін",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4dcca2b9-7926-4964-9b0b-76b23faa6404",
+      "representative_news_id": 192,
+      "representative_title": "Премьер-лиганың 12-туры: «Оқжетпесті» нағыз сынақ күтіп тұр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3a88399e-d4a6-4e05-8975-b95139b5fd23",
+      "representative_news_id": 191,
+      "representative_title": "Султан Аскаров: Попасть в сборную – моя главная цель",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c2cb9660-c066-42ac-9c23-9c4ecfd42418",
+      "representative_news_id": 190,
+      "representative_title": "Әйелдер лигасының 8-туры: «Томирис-Тұран» Ақтөбеде жеңілді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "825dd75b-f5c1-4324-a14a-d08072f7a071",
+      "representative_news_id": 189,
+      "representative_title": "Состоялось совещание с участием первых руководителей профессиональных футбольных клубов",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "02033801-e725-4f3a-9387-35a77e0dba26",
+      "representative_news_id": 188,
+      "representative_title": "Бірінші лиганың тоғызыншы туры: Павлодарда қос көшбасшы кездеседі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b90035f6-57fd-4186-8cb9-d81cc14a8676",
+      "representative_news_id": 187,
+      "representative_title": "Андрей Ферапонтов:  «Оқжетпесті» әр қарсылас санасатындай деңгейге жеткізгім келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "bd23493f-ddfe-4243-95b3-c092e0298e82",
+      "representative_news_id": 183,
+      "representative_title": "ҚПЛ-дың көктемдегі қаһармандары кімдер?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7f35c88b-e7ef-40fb-a085-2a5889b7df00",
+      "representative_news_id": 397,
+      "representative_title": "Выражаем соболезнования",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "aedbedcd-c4c9-4cf0-acc2-deed20e6d382",
+      "representative_news_id": 396,
+      "representative_title": "Бек Шымат: «Астана» продолжит борьбу за чемпионство до последнего тура",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "08af3c83-5e1f-4a63-95ae-eafb9a6ad547",
+      "representative_news_id": 395,
+      "representative_title": "ҚПЛ: Жеңімпаз 25-турда анықтала ма?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "08467c0c-c029-4f4f-8f6a-8ae8783b8364",
+      "representative_news_id": 394,
+      "representative_title": "Бірінші лиганың 25-туры: Орталық ойындар Ақтау мен Өскеменде өтеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "94ada268-243d-42f9-b592-583e282612f6",
+      "representative_news_id": 393,
+      "representative_title": "Никита Калмыков: Ertis ҚПЛ-дағы заңды орнына оралды!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "18309aba-5bca-422d-96d1-0a4f9fbee467",
+      "representative_news_id": 392,
+      "representative_title": "«Ақтөбе» әйелдер арасындағы Қазақстан чемпионатында топ жарды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "03aa2d2f-8342-47aa-8903-714597d66a4e",
+      "representative_news_id": 391,
+      "representative_title": "АСТАНА-М» – СИЛЬНЕЙШИЙ КЛУБ ВТОРОЙ ЛИГИ!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "15486712-cb4b-41bf-8480-2730c5f00777",
+      "representative_news_id": 390,
+      "representative_title": "Арсен Ахметов: Бұл маусым өз-өзіңе сенсең, бәрі де мүмкін екенін дәлелдеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ee924e9b-195b-47f4-a077-2e556c9fae07",
+      "representative_news_id": 389,
+      "representative_title": "Руслан Оталиев: Біздің басты артықшылығымыз – ұжымдық бірлік пен соңына дейін күресе алатынымызда",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "43a6d139-0d93-43ab-9dd7-03f56ad50695",
+      "representative_news_id": 388,
+      "representative_title": "Алзия Жамбыл: Сезон получился новым, но очень полезным",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "00387c9a-bc0b-4a42-99b3-e9a9dac67b08",
+      "representative_news_id": 387,
+      "representative_title": "ӘЙЕЛДЕР ЛИГАСЫНЫҢ 25-ТУРЫ: БАС ЖҮЛДЕГЕ ТАЛАС ӘЛІ ЖАЛҒАСУДА",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "9af6f2c7-9231-441d-a39b-57cda2570b5e",
+      "representative_news_id": 386,
+      "representative_title": "ДИАС АҢДЫРМАШ: «ТАРАЗДА» ПРЕМЬЕР-ЛИГА ЖАЙЛЫ ОЙ БАР",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fee0c151-7034-4a04-9346-dd496c55aa46",
+      "representative_news_id": 385,
+      "representative_title": "Диана Жаксыбекова: Для дебютного сезона команда показала себя достойно",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ae188f0c-ba36-4cad-bcef-516fe923bb64",
+      "representative_news_id": 384,
+      "representative_title": "Вторая Лига: Победители двух дивизионов сыграют между собой",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3d97ff9a-4dab-44c1-b470-7cfc018f67c4",
+      "representative_news_id": 383,
+      "representative_title": "«Тобыл» 2025 жылғы Қазақстан кубогының иегері атанды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0771dd8f-0da8-44e6-af68-bea7f1101ee3",
+      "representative_news_id": 382,
+      "representative_title": "Қазақстан кубогының финалы: «Ордабасы» мен «Тобылдың» жолы қалай түйісті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ecf551ce-9b41-4943-94d9-776c45165a77",
+      "representative_news_id": 379,
+      "representative_title": "Нұрбол Жұмасқалиев: Қызылордан трофеймен қайтқымыз келеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "70e03e12-c516-4538-ab5b-0e55995cf95a",
+      "representative_news_id": 377,
+      "representative_title": "Құнды трофейді жеңіп алғымыз келеді - Андрей Мартин",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "400e96c8-f79a-48d3-af4d-d2178472bee3",
+      "representative_news_id": 375,
+      "representative_title": "Наурызбек Жагоров: Мұндай кесте тәртіпті талап етеді, өйткені бұл – жоғары деңгейдегі футболдың талабы",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5c67c9c4-cedb-4525-a5a1-dd11a6d3aa7b",
+      "representative_news_id": 374,
+      "representative_title": "Қазақстан кубогының финалына швейцариялық төрешілер қазылық етеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "66bf3849-232e-4abb-b8b4-6a74eb6ba99e",
+      "representative_news_id": 373,
+      "representative_title": "РОМАН АСРАНҚҰЛОВ: «ТОБЫЛ» ЖАНКҮЙЕРЛЕРІ ҮЛКЕН ЖЕҢІСТІ САҒЫНДЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "568d0db4-9a84-4609-a990-b5e600b71376",
+      "representative_news_id": 372,
+      "representative_title": "Екінші лигада маусым аяқталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "1585ac0e-b8e6-476e-a47e-61fabdbdff98",
+      "representative_news_id": 370,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 24-ГО ТУРА ЖЕНСКОЙ ЛИГИ: «АКТОБЕ» ВСЕ БЛИЖЕ К ЧЕМПИОНСТВУ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "33b1b571-0b1b-46ef-babb-d54dc20fee5e",
+      "representative_news_id": 369,
+      "representative_title": "Бірінші лиганың 24-туры: Ertis жоғары топқа шығу үшін «Каспийге» ілесе ала ма?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4d19a232-9705-4796-8dac-5c7ed5a3449f",
+      "representative_news_id": 368,
+      "representative_title": "Қазақстан Кубогының финалының билеттері сатылымға шықты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "563a4fdd-3dda-42c7-a36c-60db24788781",
+      "representative_news_id": 365,
+      "representative_title": "НЕМАНЬЯ ЦАВНИЧ: БҰЛ МЕНІҢ МАНСАБЫМДАҒЫ АЛҒАШҚЫ ФИНАЛ БОЛАДЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7370c31d-d40b-4233-b778-39227604c757",
+      "representative_news_id": 367,
+      "representative_title": "Қазақстан Кубогының финалына аккредитациялау басталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fa45d433-ca91-464b-9af5-7c73f61e7497",
+      "representative_news_id": 366,
+      "representative_title": "ҚПЛ-ДЫҢ 24-ТУРЫ: «АСТАНА» КӨШ БАСТАП, АУТСАЙДЕРЛЕР ОРЫН АУЫСТЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "84224b76-de19-4bac-bdf3-7d3bad0d40ad",
+      "representative_news_id": 363,
+      "representative_title": "Маргулан Жакып: «Красно-белые» сделают всё ради выхода в еврокубки",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4277a83b-7c09-4321-9ce2-e3d23dd28454",
+      "representative_news_id": 362,
+      "representative_title": "ҚПЛ-дың 24-туры: «Елімай» Семейде «Ордабасыны» қабылдаса, «Астана Көкшетауға қонаққа барады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "e8230e0e-2a6e-43e7-b378-e617637a2889",
+      "representative_news_id": 361,
+      "representative_title": "Әлішер Аплсалямов: «Тобыл» Премьер-лига мен Кубокта ең жоғары нәтижені көрсетуді көздейді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ee22fe0a-6ae4-4237-a0bf-2833f413331b",
+      "representative_news_id": 360,
+      "representative_title": "Қазақстан кубогының финалы–2025: «Ордабасы» мен «Тобыл» жаңа стадионда ойнайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "00dd8546-cd71-4577-997b-40883aa08025",
+      "representative_news_id": 359,
+      "representative_title": "Екінші лига: 21-турда «Астана-Ж»  қарсыласын ірі есеппен жеңді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "8e6e6d73-ce8a-4c89-8b0c-4b55422ba62c",
+      "representative_news_id": 358,
+      "representative_title": "БІРІНШІ ЛИГАНЫҢ 23-ТУРЫ: ДАУЫЛ АЛДЫНДАҒЫ ТЫНЫШТЫҚ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "20ff0993-0062-4efd-a2e6-1266d88261f1",
+      "representative_news_id": 357,
+      "representative_title": "Первая лига: определены лучшие игрок и тренер августа",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ebba5184-af2b-42d5-8dbb-0d6d64f3aba3",
+      "representative_news_id": 356,
+      "representative_title": "Көңіл айтамыз",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "24915a47-a7c6-4720-879a-5e97e7d14957",
+      "representative_news_id": 355,
+      "representative_title": "ҚПЛ: Тамыз айының үздіктері анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "0b49a491-61d9-459f-9f73-b5da4fdff1ad",
+      "representative_news_id": 353,
+      "representative_title": "Әйелдер лигасының 23-туры: жүлдегер атанатын үш команда толығымен анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "925dc034-ee83-4922-8bda-4781c9caf47f",
+      "representative_news_id": 351,
+      "representative_title": "Иван Свиридов: Жанкүйерлерді әдемі ойынмен қуанта білдік",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ec1ecf02-f43d-4fa1-9ba3-f4dd79b896d5",
+      "representative_news_id": 350,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 20-ГО ТУРА ВТОРОЙ ЛИГИ: «ЖАЙЫК»  ПРОИГРАЛ, НО СТАЛ ПОБЕДИТЕЛЕМ «ЮГО-ЗАПАДА»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "6bdfc193-c1a8-4516-b361-029847421c70",
+      "representative_news_id": 349,
+      "representative_title": "Назми Грипши: Чемпиондық үшін соңғы турға дейін таласамыз",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c8720c01-0c6a-4fd0-b558-9ad0dfda189f",
+      "representative_news_id": 348,
+      "representative_title": "Бірінші лиганың 22-туры: «Алтай» мен «Шахтерді» маңызды кездесулер күтіп тұр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "69300fdc-da53-490c-9ab9-58aeb522a056",
+      "representative_news_id": 345,
+      "representative_title": "ҚПЛ-дың 23-туры: Атыраудағы сенсация, Алматыдағы тартыс және Астанадағы голдар шоуы",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2fce00e5-2fd6-4239-9a21-2741488095b1",
+      "representative_news_id": 342,
+      "representative_title": "23-Й ТУР КПЛ: ПРИНЦИПИАЛЬНОЕ СРАЖЕНИЕ В АЛМАТЫ И ИНТЕРЕСНЕЙШИЙ МАТЧ В СТОЛИЦЕ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c931cc08-adfc-46c3-9d2c-9b7d41a2f835",
+      "representative_news_id": 341,
+      "representative_title": "21-Й ТУР ПЕРВОЙ ЛИГИ: СРАЖЕНИЕ ЛИДЕРОВ В АКТАУ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ecaaa64f-57e0-41b8-b10d-5aaec57078f9",
+      "representative_news_id": 340,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 21-ГО ТУРА ЖЕНСКОЙ ЛИГИ: «АКТОБЕ» СОХРАНИЛ ЛИДЕРСТВО, ЛИТВИНЕНКО СТАЛА ПЕРВОЙ В СПОРЕ СНАЙПЕРОВ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "494e795f-9dd3-48e7-8287-0f97138295b8",
+      "representative_news_id": 339,
+      "representative_title": "АДИЛЕТ САДЫБЕКОВ: ЧТОБЫ ИГРАТЬ В ЕВРОПЕ, НАДО БЫТЬ СИЛЬНЫМ В КПЛ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3ecbc61b-34ad-4de5-9b73-d4690f87699c",
+      "representative_news_id": 337,
+      "representative_title": "АЛЕКСАНДР ЗУЕВ: КОМАНДАҒА ПАЙДАМ ТИГЕНІНЕ ҚУАНЫШТЫМЫН",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c003b74f-d56e-494f-9a69-1c9612013502",
+      "representative_news_id": 336,
+      "representative_title": "Қазақстан кубогының финалында  «Ордабасы» мен «Тобыл» ойнайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "528f5955-7a4c-4b15-8c38-9376f4b6a0ee",
+      "representative_news_id": 335,
+      "representative_title": "Бірінші лига: «Шахтер» Қарағандыда «Алтаймен» ұпай айырмашылығын қысқартты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ecd50b7f-958c-43fd-a9cc-02e6d5cfaddc",
+      "representative_news_id": 333,
+      "representative_title": "Анель Бланк: Соперник воспользовался нашими ошибками и вышел вперёд",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "6dd2bdcb-7054-447c-9539-3af621363c18",
+      "representative_news_id": 332,
+      "representative_title": "Екінші лига: «Астана» жастары «Солтүстік-шығыс» конференциясында топ жарды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "34015891-d694-4489-a1c7-33d093a113fd",
+      "representative_news_id": 331,
+      "representative_title": "Қазақстан кубогы: жартылай финалдың қарымта матчы қызыққа толы болмақ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f588f6c1-4487-4f13-9db9-89fd4f2cf9e6",
+      "representative_news_id": 330,
+      "representative_title": "Бірінші лиганың 20-туры: ҚПЛ жолдамасына тартыс қыза түсті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4a9322c0-2945-482b-93b3-6e21b1deed7e",
+      "representative_news_id": 329,
+      "representative_title": "Сергей Гридин: Футболға деген мотивациям әлі өшкен жоқ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c7eb010a-72f9-4893-95dd-ca49d1159adc",
+      "representative_news_id": 328,
+      "representative_title": "Вторая лига: определены лучшие игроки и тренеры июля",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c146d717-593a-495d-bdad-77e29797f926",
+      "representative_news_id": 326,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 19-ГО ТУРА ЖЕНСКОЙ ЛИГИ: «АКТОБЕ» ВЫШЕЛ В ЕДИНОЛИЧНЫЕ ЛИДЕРЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "18ba3f57-1320-438c-8323-0a08e01b1e13",
+      "representative_news_id": 325,
+      "representative_title": "Вахид Масудов: Өскемен жанкүйерлері командасы ҚПЛ-да ойнағанын армандайды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c9524931-6e5b-4c48-9118-ffa0be0c8f85",
+      "representative_news_id": 320,
+      "representative_title": "Премьер-лиганың 22-туры: Жанкүйерлерді «астаналық» дерби күтіп тұр",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fe7de4bc-cfea-49f0-b5ae-91923615e612",
+      "representative_news_id": 319,
+      "representative_title": "«Алтай-Өскемен»- Turkistan матчы өтпейді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "938e642a-0fbb-4d8c-b973-75f86946c7fe",
+      "representative_news_id": 318,
+      "representative_title": "Екінші лиганың 18-туры: Конференция көшбасшылары ірі есеппен жеңді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5e0748d1-f2e4-41d1-9478-cea3cc95ae5f",
+      "representative_news_id": 317,
+      "representative_title": "Первая лига: определены лучший игрок и тренер июля",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "59e68e90-cbc1-41e1-828c-2ad98af34841",
+      "representative_news_id": 316,
+      "representative_title": "19-Й ТУР ПЕРВОЙ ЛИГИ: ВАЖНЕЙШИЙ МАТЧ ДЛЯ «ШАХТЕРА»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "1f204723-63aa-4cd9-bacb-6a0e1941e6ba",
+      "representative_news_id": 315,
+      "representative_title": "ҚПЛ: Шілде айының үздіктері анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7d6a3177-ca67-4496-a8a0-667c2d2f13b5",
+      "representative_news_id": 314,
+      "representative_title": "ҚУАНДЫҚ БЕКЕНОВ: ҰЛТТЫҚ ҚҰРАМА САПЫНДА ОЙНАҒЫМ КЕЛЕДІ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "680cc4aa-abb8-416a-9c6f-af856961bb46",
+      "representative_news_id": 312,
+      "representative_title": "ҚПЛ-дың 21-туры: Алматыдағы сенсация, Астанадағы ірі жеңіс және Шымкентте жүзеге аспай қалған камбэк",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f3c996e6-0a1f-447a-81b7-ca76b71cf64e",
+      "representative_news_id": 309,
+      "representative_title": "ҚПЛ: 21-ТУРДА АЛМАТЫ МЕН ШЫМКЕНТТЕ ӨТЕТІН ТАРТЫСТЫ МАТЧТАРҒА КУӘ БОЛАМЫЗ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "45934f8e-cec2-46a5-9d67-c1f06ff7bc0e",
+      "representative_news_id": 308,
+      "representative_title": "Дмитрий Непогодов о матчах за сборную, вызовах КПЛ и подготовке к роли тренера",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "250355ae-b8ab-4223-bf93-5a9ae83913b2",
+      "representative_news_id": 306,
+      "representative_title": "Екінші лига:  Конференция көшбасшыларына өзге командалар жақындай бастады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2414c704-245b-43c5-9d81-6cbc98463e6f",
+      "representative_news_id": 305,
+      "representative_title": "БІРІНШІ ЛИГАНЫҢ 18-ТУРЫ: «ҚАЙРАТ-ЖАСТАР» «АЛТАЙДЫ» ТОҚТАТА АЛА МА?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5018dc89-e036-4302-a0a9-88d636ad6374",
+      "representative_news_id": 304,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 17-ГО ТУРА ЖЕНСКОЙ ЛИГИ: «АКТОБЕ» и БИИК ПРОДОЛЖАЮТ ЧЕМПИОНСКУЮ ГОНКУ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3adf49f3-8474-486a-8388-af1df2b26f54",
+      "representative_news_id": 299,
+      "representative_title": "ИБРАГИМ ДАДАЕВ: «КАСПИЙ» ҚАҚПАСЫНА ХЕТ-ТРИК ЖАСАУЫМ – КӘСІБИ МАНСАБЫМДАҒЫ ЕҢ ЖАРҚЫН СӘТ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "1a474be3-4679-40bc-9512-1ff031a74425",
+      "representative_news_id": 297,
+      "representative_title": "ИТОГИ 20-ГО ТУРА КПЛ: ВОЛЕВАЯ ПОБЕДА «ЕЛИМАЯ» И ДОМАШНЕЕ ПОРАЖЕНИЕ «ОКЖЕТПЕСА» В БОЛЬШИНСТВЕ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "9ccdaa59-c5f8-438d-9b82-b580c2069ef8",
+      "representative_news_id": 294,
+      "representative_title": "Лейла Садыкова: Нам не хватило опыта – в следующем году дадим бой",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3568a13e-4753-43f8-9a78-e165cefb7bfb",
+      "representative_news_id": 292,
+      "representative_title": "20-Й ТУР КПЛ: В ЦЕНТРЕ ВНИМАНИЕ – СРАЖЕНИЕ В СЕМЕЕ!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "73a25836-a0dc-4238-90dd-4c608f874724",
+      "representative_news_id": 291,
+      "representative_title": "Карина Жумабайкызы: Чемпионат еще не закончен – каждая победа сейчас важна",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "75b258d0-c55a-48e5-abcd-ee12a4e70242",
+      "representative_news_id": 290,
+      "representative_title": "САМОЕ ВАЖНОЕ ИЗ 16-ГО ТУРА ВТОРОЙ ЛИГИ: JEYRAN ОДЕРЖИВАЕТ ПЕРВУЮ ПОБЕДУ!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "80351530-e5b2-4d56-a002-b3d7562a20d3",
+      "representative_news_id": 289,
+      "representative_title": "БІРІНШІ ЛИГАНЫҢ 17-ТУРЫ: ӨСКЕМЕНДЕГІ ОРТАЛЫҚ МАТЧ ЖӘНЕ ҚАРАҒАНДЫДАҒЫ «КЕНШІЛЕР» ДЕРБИІ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ab90904e-43b2-43b4-bed8-9e8c7a1c08b6",
+      "representative_news_id": 426,
+      "representative_title": "«АТЫРАУ»: ТАРЫҚҚАНДА ТАБЫЛҒАН ЖОЛ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fb5e985a-9f82-43ce-8be2-7cdefbff9de4",
+      "representative_news_id": 425,
+      "representative_title": "KFF LEAGUE AWARDS-2025: МАРАПАТТАР ӨЗ ҚАҺАРМАНДАРЫН ТАПТЫ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a2fde073-195a-4ada-9766-5aae651e0f3c",
+      "representative_news_id": 419,
+      "representative_title": "Көңіл айту",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "1f102fb8-779e-4f0b-8a47-18ec89aae546",
+      "representative_news_id": 417,
+      "representative_title": "АНДРЕЙ КАРПОВИЧ: В «ЕЛИМАЕ» НЕТ ПОНЯТИЯ «Я» ЕСТЬ ТОЛЬКО «МЫ»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a8c7eebf-34e5-4438-a69d-8d9502a93298",
+      "representative_news_id": 415,
+      "representative_title": "ВТОРАЯ ЛИГА: ЮНОШЕСКИЙ ЗАДОР НА «СЕВЕРО-ВОСТОКЕ» И МУЖСКАЯ БОРЬБА НА «ЮГО-ЗАПАДЕ»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "dace2fc2-60e7-4077-ba65-03bbba943310",
+      "representative_news_id": 414,
+      "representative_title": "ЕЛИСЕЙ ГОРШУНОВ: МЕНІҢ ҮШІН ЕҢ БАСТЫСЫ – КОМАНДАҒА ПАЙДА КЕЛТІРУ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b0021116-9f3c-4a2a-b23e-b6607b8c32a9",
+      "representative_news_id": 413,
+      "representative_title": "«КРАСНО-БЕЛЫЕ», КОТОРЫЕ СМОГЛИ!  «АКТОБЕ» – ЧЕМПИОН ЖЕНСКОЙ ЛИГИ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7904ab41-4f7e-4173-a000-1c3bcfb5af97",
+      "representative_news_id": 411,
+      "representative_title": "НАРТАЙ ЧАМБИЛОВ: «АЛТАЙ» – ЭТО КОЛЛЕКТИВ ЕДИНОМЫШЛЕННИКОВ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "21a41e7d-d189-4b95-8784-3ddea6d68b55",
+      "representative_news_id": 410,
+      "representative_title": "«Қайсар» Премьер-лигада өз әлеуетіне сай ойнап берді – Виктор Кумыков",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a29934c7-f2a1-465b-b3f2-a086b9a3225b",
+      "representative_news_id": 408,
+      "representative_title": "«КАЙРАТ» – ЧЕМПИОН!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "37f28eef-f5c4-49df-aabc-02a74482308b",
+      "representative_news_id": 407,
+      "representative_title": "«Шахтер» – «Turkistan» ойыны бойынша шешім қабылданды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "777eab29-3b67-438b-bdd2-05eaa73f4da6",
+      "representative_news_id": 406,
+      "representative_title": "Бірінші лига мәреге жетті: «Алтай» Премьер-лигаға жолдама алды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7563d4a6-fc7b-4919-9462-db7e4c85d653",
+      "representative_news_id": 404,
+      "representative_title": "26-Й ТУР КПЛ: КТО СТАНЕТ ЧЕМПИОНОМ, КТО ВЫЛЕТИТ, КТО ПОЛУЧИТ ПУТЕВКУ В ЕВРОПУ?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "5d15696b-bd18-440f-a105-3acbb3e461b2",
+      "representative_news_id": 403,
+      "representative_title": "ҚПЛ: Қыркүйек айының үздіктері анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "81074a0b-616a-4a88-adfb-f416d2294c62",
+      "representative_news_id": 402,
+      "representative_title": "«КАЙРАТ» – «АСТАНА»: «ЗОЛОТОЙ» МАТЧ В РАМКАХ ЧЕМПИОНАТА",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4fe7a935-d67a-429c-8f8f-c9a12b92da3f",
+      "representative_news_id": 401,
+      "representative_title": "ФИНИШ ПЕРВОЙ ЛИГИ: КТО ЗАБЕРЕТ ПОСЛЕДНЮЮ ПУТЕВКУ В КПЛ?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fbfd8851-b1ca-49b2-a930-8e082c3e001c",
+      "representative_news_id": 400,
+      "representative_title": "ИТОГИ 25-ГО ТУРА КПЛ: ЧЕМПИОН ОПРЕДЕЛИТСЯ В ОЧНОМ СПОРЕ «КАЙРАТА» И «АСТАНЫ»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "8b03ff1a-5b21-4cf4-bf2b-ec1129960b90",
+      "representative_news_id": 398,
+      "representative_title": "Максим Галкин: Мы верим, что можем добиться своей цели",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "2e15b475-c89a-4fc5-9bb7-d30621fd7448",
+      "representative_news_id": 76,
+      "representative_title": "16 жастағы Дастан Сәтпаев 49 секундта гол соқты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a7f232d9-8a22-49b9-a358-99ffc81372a5",
+      "representative_news_id": 21,
+      "representative_title": "Премьер-лиганың 2-тур матчтар кестесі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b0427589-c85a-458d-9e2d-17e2c9731661",
+      "representative_news_id": 17,
+      "representative_title": "Olimpbet Қазақстан Кубогы: Алдын ала іріктеу кезеңінің жеребесі тартылды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "16394e41-10a2-4216-af4c-2f2dd9883d93",
+      "representative_news_id": 3,
+      "representative_title": "Игорь Леонов: «Завтра увидим, насколько хорошо подготовились»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "f5b82128-23ac-4191-9478-ef06de022c5a",
+      "representative_news_id": 18,
+      "representative_title": "Olimpbet Қазақстан Кубогы: Негізгі кезеңінің жеребесі тартылды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7c7f59ee-14a7-4548-82a7-35ddfbbe5ee3",
+      "representative_news_id": 10,
+      "representative_title": "1-турдың қорытындысы: «Астана» мен «Қайрат» алғашқы турда тең түсті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "aef8d604-612f-4be9-8cb6-6ac3de2f33be",
+      "representative_news_id": 11,
+      "representative_title": "Бақытжан Пазылхайыр: «Жанкүйерлер сапалы футбол көруі үшін белсенді жұмыс істеп жатырмыз»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "8a363cfd-4796-47d8-92fc-fe9836b2e95f",
+      "representative_news_id": 8,
+      "representative_title": "Бақытжан Пазылхайыр жұмыс сапарымен Атырау облысына барды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "030d5311-92ee-49cc-894b-03896ffd4ce3",
+      "representative_news_id": 7,
+      "representative_title": "Бақытжан Пазылхайыр Қарағанды облысындағы футболдың қазіргі жағдайымен танысты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3f3b9c6a-bc9d-4a4a-86cb-a72a8c939974",
+      "representative_news_id": 16,
+      "representative_title": "Ертең Olimpbet Қазақстан Кубогының жеребе тарту рәсімі өтеді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "61cec91a-4ad0-4c82-92e6-2868bea54222",
+      "representative_news_id": 9,
+      "representative_title": "Дирекция басшысы Атырау облысының әкімі Серік Шәпкеновпен кездесті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b5c550d3-492b-4688-8feb-f5326a8535b2",
+      "representative_news_id": 14,
+      "representative_title": "Қазақстан Премьер-лигасында жаңа рекорд: «Астана» мен «Қайрат» матчын 26 153 жанкүйер тамашалады!",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4482253a-3625-41b1-a9fa-ccc12cfa871f",
+      "representative_news_id": 6,
+      "representative_title": "КФФ, Qazsport и Sport Plus Qazaqstan договорились о показе матчей Премьер-лиги",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "73866f57-6a2c-40a4-905f-8009c3758595",
+      "representative_news_id": 12,
+      "representative_title": "Премьер-лиганың 1-тур матчтар кестесі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d58c07dd-24d6-4b0b-a02b-92bfaba2b2f3",
+      "representative_news_id": 5,
+      "representative_title": "ҚФФ Премьер-лига ойындарын көрсету бойынша екі арнамен келісті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "947e91c4-23e3-4feb-b8fe-cd9e641f5a6f",
+      "representative_news_id": 2,
+      "representative_title": "Рафаэль Уразбахтин: «Не хотелось бы доводить матч до серии пенальти»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "54fbaef2-2ef9-4b98-a826-f0776c22ea8c",
+      "representative_news_id": 4,
+      "representative_title": "2-турдың қорытындысы: Алматыда ҚПЛ-дың соңғы екі жылдағы чемпиондары кездесті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "091e8780-babf-4562-85c2-45ba0acc1f5a",
+      "representative_news_id": 399,
+      "representative_title": "ИТОГИ 25-ГО ТУРА ПЕРВОЙ ЛИГИ: «КАСПИЙ» – ПЕРВЫЙ, ERTIS – ВТОРОЙ, БОРЬБА ЗА ТРЕТЬЕ МЕСТО ПРОДОЛЖАЕТСЯ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d47b0ec3-e301-443a-a1ef-b8f97cf05c76",
+      "representative_news_id": 344,
+      "representative_title": "ҚФФ Атқару комитетінің отырысы өтті",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "8d2166e9-b08b-413d-b9a5-27be49d3e92c",
+      "representative_news_id": 334,
+      "representative_title": "Бауыржан Жаров: Девочки быстрее схватывают тактические задумки, чем мальчики",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4c2f0a21-0815-4fa0-91ba-45c01a9a0297",
+      "representative_news_id": 327,
+      "representative_title": "Әйелдер лигасының 19-туры: «Ақтөбе» жеке-дара көш бастады",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7e818120-02df-410d-b200-9c058b10e2b4",
+      "representative_news_id": 272,
+      "representative_title": "Екінші лига: маусым айының үздіктері анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "3879b60c-5bb2-465a-b780-0dbafe47ba0c",
+      "representative_news_id": 271,
+      "representative_title": "15-Й ТУР ПЕРВОЙ ЛИГИ: ЛИДЕРЫ ДРУЖНО ДОБИЛИСЬ УВЕРЕННЫХ ПОБЕД",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4b25e1d5-c29f-417e-85ba-26af8813f8ec",
+      "representative_news_id": 258,
+      "representative_title": "17-Й ТУР КПЛ: БОЛЕЛЬЩИКОВ ЖДЕТ ПРИНЦИПИАЛЬНЕЙШИЙ СПОР «АКТОБЕ» И «ТОБОЛА»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4e289bae-5e6f-4009-8fb0-58dd4df2f283",
+      "representative_news_id": 250,
+      "representative_title": "ИТОГИ 13-ГО ТУРА ПЕРВОЙ ЛИГИ: «КАСПИЙ» УБЕГАЕТ, ERTIS И «ШАХТЕР» ОТСТАЮТ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "54a0db9d-116d-4505-9bb0-00c44d0dc717",
+      "representative_news_id": 240,
+      "representative_title": "Рикардиньо: Когда «Кайрат» вышел на связь, я сразу захотел перейти",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "36f83392-e26a-4f4a-9773-05be78cc6a58",
+      "representative_news_id": 232,
+      "representative_title": "12-Й ТУР ПЕРВОЙ ЛИГИ: ЦЕНТРАЛЬНЫЙ МАТЧ В АКТАУ И ВСТРЕЧА СТАРЫХ ЗНАКОМЫХ В ТАРАЗЕ",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "543747aa-dbf5-4b49-8f32-46d06c2b2e43",
+      "representative_news_id": 217,
+      "representative_title": "Айкуним Рысбекова: Я не ожидала, все так резко произошло",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "b254b4aa-667e-440f-805f-d80f7761d873",
+      "representative_news_id": 202,
+      "representative_title": "Стахинья Йованчич: «Окжетпес» может всех удивить и добиться многого",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "c932ecd5-d591-419f-a541-dbf1209a41b6",
+      "representative_news_id": 201,
+      "representative_title": "Бірінші лига: мамыр айының үздік ойыншысы мен үздік жаттықтырушысы анықталды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4d2454d1-a703-4af6-bcaa-5924b359e340",
+      "representative_news_id": 196,
+      "representative_title": "Дирекция басшысы Қызылордадағы жаңа стадионның соңғы дайындықтарымен танысты",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "a7f45aef-3415-4c71-a84a-85c743d8984c",
+      "representative_news_id": 186,
+      "representative_title": "Аян Байдаулетов: Буду стараться оправдать доверие тренерского штаба",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fda065a1-f382-4d6a-a4ce-6eb1b9a04694",
+      "representative_news_id": 169,
+      "representative_title": "«АКТОБЕ» – «КАЙРАТ»: ГЛАВНЫЕ ВЕХИ 33-ЛЕТНЕГО СОПЕРНИЧЕСТВА",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "32df6374-999a-468e-8dd1-8feb2c669fed",
+      "representative_news_id": 166,
+      "representative_title": "«Елімай» мен «Астана» матчынан не күтеміз?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "146ce0c3-066a-4424-b68b-fccd8aa4ee15",
+      "representative_news_id": 148,
+      "representative_title": "Вахид Масудов: Өскемен футболы бұрынғы биігіне қайта оралуға тиіс",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "42e3fb18-4d16-4449-87e5-c7f2b82b733e",
+      "representative_news_id": 128,
+      "representative_title": "Әйелдер лигасы: Бесінші турдан кейін көшбасшы ауысып, «Астана» клубы алғашқы жеңісіне қол жеткізді",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d829ee03-f169-4060-a6a7-ee5cfad4844f",
+      "representative_news_id": 121,
+      "representative_title": "1992 жылдан бері Қазақстан премьер-лигасында ең көп гол соққан кімдер?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "ac4da05e-bd27-4040-a11e-9f78cfc2199e",
+      "representative_news_id": 116,
+      "representative_title": "Бақытжан Пазылхайыр жұмыс сапарымен Маңғыстау облысына барды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "7ba2be5c-7f26-4595-a283-137bdf6126b6",
+      "representative_news_id": 92,
+      "representative_title": "Алтыншы тур: «Қайрат» пен «Тобыл» матчында кім жеңіске жетеді?",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "fc8c22ce-468b-40a9-b2d9-bd425e4b599c",
+      "representative_news_id": 89,
+      "representative_title": "Ertis биыл Премьер-лигаға шығуды мақсат етіп отыр - Қайрат Нұрдәулетов",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "6d7cce25-c74d-4790-9575-f222d21f6cb0",
+      "representative_news_id": 57,
+      "representative_title": "Премьер-лиганың 4-турындағы матчтар кестесі",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "4919cf00-00b6-45f9-89c1-4bd5c2d61867",
+      "representative_news_id": 56,
+      "representative_title": "Бақытжан Пазылхайыр Қызылорда облысына жұмыс сапарымен барды",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "d80844c9-dac9-4d3a-ad05-b67908f2866d",
+      "representative_news_id": 40,
+      "representative_title": "Судьи 3-го тура Премьер-лиги-2025",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    },
+    {
+      "group_id": "69dcc7fe-99a7-49cc-9d1f-c8a802871649",
+      "representative_news_id": 29,
+      "representative_title": "Бахытжан Пазылхайыр: «Мы работаем в режиме нон-стоп, чтобы болельщики увидели качественный футбол»",
+      "confidence": 0.0,
+      "source": "ai",
+      "reason": "openai_disabled"
+    }
+  ],
+  "updated_group_ids": [
+    "1aaf4a40-273e-442e-9c3d-f658a000169c",
+    "3ec42ba9-22d6-406c-bc0c-81d1500e6122",
+    "c1e4e812-199c-4501-bac0-4198dedab3e9",
+    "bf8fd4b5-ced0-4293-af1d-8c4f0ae36e79",
+    "82729fd8-74c9-4603-8849-e1bc663eafe9",
+    "bde1a2be-2e7a-4141-9f04-bc24b9d5cd02",
+    "fd6f9f71-8d3f-42d6-b394-57827a85f1ff",
+    "aa024070-e15d-4d41-ac3d-a0c04a58526e",
+    "29b4b239-3c75-428a-927e-c685cb3e7470",
+    "83e62b78-ec30-4384-969a-c3559e1bba1f",
+    "cedcf22d-3c6c-4e38-8437-ce17714c81a5"
+  ]
+}
