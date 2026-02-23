@@ -6,7 +6,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/qfl_db
       - REDIS_URL=redis://redis:6379/0
-      - CURRENT_SEASON_ID=61
+      - CURRENT_SEASON_ID=200
       # MinIO
       - MINIO_ENDPOINT=minio:9000
       - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
@@ -71,7 +71,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/qfl_db
       - REDIS_URL=redis://redis:6379/0
-      - CURRENT_SEASON_ID=61
+      - CURRENT_SEASON_ID=200
       - MINIO_ENDPOINT=minio:9000
       - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
       - MINIO_ACCESS_KEY=minioadmin
@@ -91,7 +91,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/qfl_db
       - REDIS_URL=redis://redis:6379/0
-      - CURRENT_SEASON_ID=61
+      - CURRENT_SEASON_ID=200
       - MINIO_ENDPOINT=minio:9000
       - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
       - MINIO_ACCESS_KEY=minioadmin

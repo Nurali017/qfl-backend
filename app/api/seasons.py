@@ -380,6 +380,37 @@ async def calculate_dynamic_table(
     return table_list
 
 
+async def _read_score_table(db: AsyncSession, season_id: int, group_team_ids: list[int] | None, lang: str):
+    """Read standings from the score_table (pre-computed standings)."""
+    query = (
+        select(ScoreTable)
+        .where(ScoreTable.season_id == season_id)
+        .options(selectinload(ScoreTable.team))
+    )
+    if group_team_ids is not None:
+        query = query.where(ScoreTable.team_id.in_(group_team_ids))
+    query = query.order_by(ScoreTable.position)
+
+    result = await db.execute(query)
+    entries = result.scalars().all()
+
+    return [{
+        "position": i if group_team_ids else e.position,
+        "team_id": e.team_id,
+        "team_name": get_localized_field(e.team, "name", lang) if e.team else None,
+        "team_logo": e.team.logo_url if e.team else None,
+        "games_played": e.games_played,
+        "wins": e.wins,
+        "draws": e.draws,
+        "losses": e.losses,
+        "goals_scored": e.goals_scored,
+        "goals_conceded": e.goals_conceded,
+        "goal_difference": e.goal_difference,
+        "points": e.points,
+        "form": e.form,
+    } for i, e in enumerate(entries, 1)]
+
+
 @router.get("/{season_id}/table")
 async def get_season_table(
     season_id: int,
@@ -433,36 +464,12 @@ async def get_season_table(
             group_team_ids=group_team_ids,
             final_stage_ids=final_stage_ids,
         )
+        # Fallback: if dynamic calculation returned nothing (e.g. no games played yet),
+        # fall back to score_table
+        if not table_data:
+            table_data = await _read_score_table(db, season_id, group_team_ids, lang)
     else:
-        query = (
-            select(ScoreTable)
-            .where(ScoreTable.season_id == season_id)
-            .options(selectinload(ScoreTable.team))
-        )
-        if group_team_ids is not None:
-            query = query.where(ScoreTable.team_id.in_(group_team_ids))
-        query = query.order_by(ScoreTable.position)
-
-        result = await db.execute(query)
-        entries = result.scalars().all()
-
-        table_data = []
-        for i, e in enumerate(entries, 1):
-            table_data.append({
-                "position": i if group_team_ids else e.position,
-                "team_id": e.team_id,
-                "team_name": get_localized_field(e.team, "name", lang) if e.team else None,
-                "team_logo": e.team.logo_url if e.team else None,
-                "games_played": e.games_played,
-                "wins": e.wins,
-                "draws": e.draws,
-                "losses": e.losses,
-                "goals_scored": e.goals_scored,
-                "goals_conceded": e.goals_conceded,
-                "goal_difference": e.goal_difference,
-                "points": e.points,
-                "form": e.form,
-            })
+        table_data = await _read_score_table(db, season_id, group_team_ids, lang)
 
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)

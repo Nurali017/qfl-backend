@@ -523,8 +523,8 @@ async def get_games(
     - team_ids: Filter by multiple teams (home or away) - use ?team_ids=1&team_ids=5
     - tour: Filter by single tour/round number
     - tours: Filter by multiple tours - use ?tours=18&tours=19&tours=20
-    - month: Filter by month (1-12, requires year)
-    - year: Year for month filter
+    - month: Filter by month (1-12). Works independently or with year
+    - year: Year for month filter (used when month is provided)
     - date_from: Start of date range
     - date_to: End of date range
     - status: Filter by match status (upcoming, finished, live, all)
@@ -584,12 +584,15 @@ async def get_games(
 
     # Date range filtering
     if month is not None and year is not None:
-        # Calculate first and last day of the month
+        # Calculate first and last day of the month for a specific year
         from calendar import monthrange
         first_day = date_type(year, month, 1)
         last_day_num = monthrange(year, month)[1]
         last_day = date_type(year, month, last_day_num)
         query = query.where(Game.date >= first_day, Game.date <= last_day)
+    elif month is not None:
+        # Month-only filtering across years (still scoped by season_id)
+        query = query.where(func.extract("month", Game.date) == month)
     else:
         if date_from:
             query = query.where(Game.date >= date_from)

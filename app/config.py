@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Current season (default for API when season_id not specified)
-    current_season_id: int = 61
+    current_season_id: int = 200
 
     # CORS
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kff.1sportkz.com"

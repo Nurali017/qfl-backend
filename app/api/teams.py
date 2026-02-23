@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import (
+    Championship,
     Game,
     GamePlayerStats,
     Player,
@@ -36,7 +37,9 @@ from app.schemas.team import (
     TeamOverviewSummary,
     TeamOverviewTeam,
     TeamResponse,
+    TeamSeasonEntry,
     TeamSeasonStatsResponse,
+    TeamSeasonsResponse,
 )
 from app.schemas.player import PlayerWithTeamResponse
 from app.schemas.game import GameResponse, GameListResponse
@@ -241,6 +244,40 @@ async def get_team(
         "club_id": team.club_id,
         "club_name": get_localized_field(team.club, "name", lang) if team.club else None,
     }
+
+
+@router.get("/{team_id}/seasons", response_model=TeamSeasonsResponse)
+async def get_team_seasons(
+    team_id: int,
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all seasons a team has participated in, based on games data."""
+    # Subquery to get distinct season IDs for this team
+    season_ids_subq = (
+        select(Game.season_id)
+        .where(or_(Game.home_team_id == team_id, Game.away_team_id == team_id))
+        .distinct()
+        .subquery()
+    )
+    result = await db.execute(
+        select(Season.id, Season, Championship)
+        .join(Championship, Season.championship_id == Championship.id)
+        .where(Season.id.in_(select(season_ids_subq.c.season_id)))
+        .order_by(Season.date_start.desc().nullslast(), Season.id.desc())
+    )
+    rows = result.all()
+
+    items = [
+        TeamSeasonEntry(
+            season_id=season.id,
+            season_name=get_localized_name(season, lang),
+            championship_name=get_localized_name(championship, lang),
+        )
+        for _, season, championship in rows
+    ]
+
+    return TeamSeasonsResponse(items=items, total=len(items))
 
 
 @router.get("/{team_id}/overview", response_model=TeamOverviewResponse)
