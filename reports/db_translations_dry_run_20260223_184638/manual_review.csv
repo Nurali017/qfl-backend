@@ -1,0 +1,3 @@
+table,sheet,id,column,db_value,xlsx_value,reason
+teams,Teams,595,name,Иртыш,Ertіs,excluded_policy_id
+teams,Teams,595,name_kz,Ертіс,Ertis,excluded_policy_id

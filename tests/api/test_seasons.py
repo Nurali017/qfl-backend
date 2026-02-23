@@ -190,6 +190,7 @@ class TestSeasonsAPI:
         data = response.json()
         assert len(data["items"]) == 1
         assert data["total"] == 1
+        assert data["items"][0]["is_schedule_tentative"] is False
 
     async def test_get_season_games_by_tour(
         self, client: AsyncClient, sample_season, sample_game
@@ -204,6 +205,17 @@ class TestSeasonsAPI:
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 0
+
+    async def test_get_season_games_includes_schedule_tentative_flag_when_true(
+        self, client: AsyncClient, test_session, sample_game
+    ):
+        sample_game.is_schedule_tentative = True
+        await test_session.commit()
+
+        response = await client.get("/api/v1/seasons/61/games")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"][0]["is_schedule_tentative"] is True
 
     async def test_get_player_stats_includes_position_code(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_player

@@ -1,0 +1,165 @@
+{
+  "generated_at_utc": "2026-02-23T18:46:39.252400+00:00",
+  "mode": "dry_run",
+  "sources": {
+    "xlsx_path": "/Users/nuralisagyndykuly/qfl/qfl-website/db_translations.xlsx"
+  },
+  "policies": {
+    "match_key": "id",
+    "skip_empty_excel_cells": true,
+    "transliterate_en": false,
+    "excluded_auto_update_ids": [
+      {
+        "table": "teams",
+        "id": 595
+      }
+    ]
+  },
+  "tables": {
+    "championships": {
+      "sheet": "Championships",
+      "xlsx_rows": 7,
+      "db_rows_total": 7,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "seasons": {
+      "sheet": "Seasons",
+      "xlsx_rows": 7,
+      "db_rows_total": 8,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 1,
+      "extra_in_db_by_id_sample": [
+        200
+      ],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "stages": {
+      "sheet": "Stages",
+      "xlsx_rows": 113,
+      "db_rows_total": 117,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 4,
+      "extra_in_db_by_id_sample": [
+        120,
+        121,
+        122,
+        123
+      ],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "teams": {
+      "sheet": "Teams",
+      "xlsx_rows": 119,
+      "db_rows_total": 119,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 2
+    },
+    "clubs": {
+      "sheet": "Clubs",
+      "xlsx_rows": 54,
+      "db_rows_total": 54,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "players": {
+      "sheet": "Players",
+      "xlsx_rows": 2259,
+      "db_rows_total": 2259,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "coaches": {
+      "sheet": "Coaches",
+      "xlsx_rows": 234,
+      "db_rows_total": 234,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "referees": {
+      "sheet": "Referees",
+      "xlsx_rows": 264,
+      "db_rows_total": 264,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "stadiums": {
+      "sheet": "Stadiums",
+      "xlsx_rows": 110,
+      "db_rows_total": 110,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "countries": {
+      "sheet": "Countries",
+      "xlsx_rows": 249,
+      "db_rows_total": 249,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    },
+    "cities": {
+      "sheet": "Cities",
+      "xlsx_rows": 100,
+      "db_rows_total": 100,
+      "missing_in_db_by_id_count": 0,
+      "missing_in_db_by_id_sample": [],
+      "extra_in_db_by_id_count": 0,
+      "extra_in_db_by_id_sample": [],
+      "candidate_updates_count": 0,
+      "manual_review_count": 0
+    }
+  },
+  "totals": {
+    "candidate_updates_count": 0,
+    "manual_review_count": 2,
+    "quality_issues_count": 174,
+    "quality_issues_by_type": {
+      "non_latin_in_en": 169,
+      "mixed_latin_cyrillic_in_en": 5
+    }
+  },
+  "artifacts": {
+    "summary_json": "/Users/nuralisagyndykuly/qfl/backend/reports/db_translations_dry_run_20260223_184638/summary.json",
+    "fill_rate_csv": "/Users/nuralisagyndykuly/qfl/backend/reports/db_translations_dry_run_20260223_184638/fill_rate.csv",
+    "quality_issues_csv": "/Users/nuralisagyndykuly/qfl/backend/reports/db_translations_dry_run_20260223_184638/quality_issues.csv",
+    "candidate_updates_csv": "/Users/nuralisagyndykuly/qfl/backend/reports/db_translations_dry_run_20260223_184638/candidate_updates.csv",
+    "candidate_updates_sql": "/Users/nuralisagyndykuly/qfl/backend/reports/db_translations_dry_run_20260223_184638/candidate_updates.sql",
+    "manual_review_csv": "/Users/nuralisagyndykuly/qfl/backend/reports/db_translations_dry_run_20260223_184638/manual_review.csv"
+  }
+}

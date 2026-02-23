@@ -1,6 +1,12 @@
 from pydantic import BaseModel
 
 
+class SeasonOption(BaseModel):
+    season_id: int
+    year: int
+    name: str | None = None
+
+
 class FrontMapEntry(BaseModel):
     season_id: int | None = None
     name: str | None = None
@@ -15,6 +21,7 @@ class FrontMapEntry(BaseModel):
     current_round: int | None = None
     total_rounds: int | None = None
     sort_order: int = 0
+    seasons: list[SeasonOption] = []
 
 
 class FrontMapResponse(BaseModel):

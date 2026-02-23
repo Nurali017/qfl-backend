@@ -140,6 +140,42 @@ class TestTeamsAPI:
         assert data["name"] == "Astana"
         assert data["id"] == 91
 
+    async def test_get_team_seasons_includes_frontend_code_and_season_year(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_season,
+        sample_game,
+    ):
+        """Team seasons endpoint should expose frontend_code and season_year."""
+        sample_season.frontend_code = "pl"
+        await test_session.commit()
+
+        response = await client.get("/api/v1/teams/91/seasons?lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["items"][0]["frontend_code"] == "pl"
+        assert data["items"][0]["season_year"] == 2025
+
+    async def test_get_team_seasons_season_year_fallbacks_to_name_when_date_start_missing(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_season,
+        sample_game,
+    ):
+        """When date_start is missing, season_year should be parsed from season name."""
+        sample_season.date_start = None
+        sample_season.name = "Сезон 2024"
+        await test_session.commit()
+
+        response = await client.get("/api/v1/teams/91/seasons?lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["items"][0]["season_year"] == 2024
+
     async def test_get_team_not_found(self, client: AsyncClient):
         """Test 404 for non-existent team."""
         response = await client.get("/api/v1/teams/99999")
