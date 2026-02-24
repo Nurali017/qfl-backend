@@ -14,6 +14,10 @@ class H2HOverallStats(BaseModel):
     team2_wins: int
     team1_goals: int
     team2_goals: int
+    team1_home_wins: int
+    team1_away_wins: int
+    team2_home_wins: int
+    team2_away_wins: int
 
 
 class FormGuideMatch(BaseModel):
@@ -65,6 +69,8 @@ class PreviousMeeting(BaseModel):
     away_score: int | None
     tour: int | None
     season_name: str | None
+    home_team_logo: str | None
+    away_team_logo: str | None
 
 
 # --- Phase 1: Fun Facts & Aggregated Match Stats ---
@@ -95,6 +101,8 @@ class H2HFunFacts(BaseModel):
     team1_unbeaten_streak: int  # Max consecutive matches without loss
     team2_unbeaten_streak: int
     goals_by_half: H2HGoalsByHalf | None  # None if no GameEvent data
+    team1_worst_defeat: H2HBiggestWin | None
+    team2_worst_defeat: H2HBiggestWin | None
 
 
 class H2HTeamMatchStats(BaseModel):

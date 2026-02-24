@@ -44,6 +44,7 @@ from app.schemas.stats import (
 from app.schemas.team import TeamInGame
 from app.utils.date_helpers import format_match_date, get_localized_field
 from app.utils.numbers import to_finite_float
+from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.config import get_settings
 from app.services.season_visibility import ensure_visible_season_or_404
 
@@ -657,7 +658,7 @@ async def get_games(
             "name": get_localized_field(team, "name", lang),
             "name_kz": team.name_kz,
             "name_en": team.name_en,
-            "logo_url": team.logo_url,
+            "logo_url": resolve_team_logo_url(team),
             "primary_color": team.primary_color,
             "secondary_color": team.secondary_color,
             "accent_color": team.accent_color,
@@ -758,7 +759,7 @@ async def get_game(
         home_team = {
             "id": game.home_team.id,
             "name": game.home_team.name,
-            "logo_url": game.home_team.logo_url,
+            "logo_url": resolve_team_logo_url(game.home_team),
             "score": game.home_score,
             "primary_color": game.home_team.primary_color,
             "secondary_color": game.home_team.secondary_color,
@@ -768,7 +769,7 @@ async def get_game(
         away_team = {
             "id": game.away_team.id,
             "name": game.away_team.name,
-            "logo_url": game.away_team.logo_url,
+            "logo_url": resolve_team_logo_url(game.away_team),
             "score": game.away_score,
             "primary_color": game.away_team.primary_color,
             "secondary_color": game.away_team.secondary_color,
@@ -871,7 +872,7 @@ async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
         team_stats_response.append({
             "team_id": ts.team_id,
             "team_name": ts.team.name if ts.team else None,
-            "logo_url": ts.team.logo_url if ts.team else None,
+            "logo_url": resolve_team_logo_url(ts.team),
             "primary_color": ts.team.primary_color if ts.team else None,
             "secondary_color": ts.team.secondary_color if ts.team else None,
             "accent_color": ts.team.accent_color if ts.team else None,
