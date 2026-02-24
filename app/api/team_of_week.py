@@ -14,7 +14,7 @@ router = APIRouter(prefix="/team-of-week", tags=["team-of-week"])
 async def get_team_of_week(
     season_id: int = Query(...),
     tour_key: str | None = Query(default=None),
-    locale: str = Query(default="ru"),
+    locale: str = Query(default="kz"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get team of the week / season entries."""

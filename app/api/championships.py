@@ -42,7 +42,7 @@ def _pick_current_season(seasons: list[Season]) -> Season | None:
 
 @router.get("", response_model=ChampionshipListResponse)
 async def get_championships(
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all championships sorted by sort_order."""
@@ -71,7 +71,7 @@ async def get_championships(
 
 @router.get("/tree", response_model=ChampionshipTreeListResponse)
 async def get_championships_tree(
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get full tree: Championship → Seasons."""
@@ -88,7 +88,7 @@ async def get_championships_tree(
         seasons = [
             SeasonBrief(
                 id=s.id,
-                name=s.name,
+                name=get_localized_field(s, "name", lang),
                 date_start=s.date_start,
                 date_end=s.date_end,
                 sync_enabled=s.sync_enabled,
@@ -114,7 +114,7 @@ async def get_championships_tree(
 
 @router.get("/front-map", response_model=FrontMapResponse)
 async def get_front_map(
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return current season mapping for frontend tournament IDs.
@@ -167,11 +167,7 @@ async def get_front_map(
     for code, selected in selected_by_code.items():
         seasons = by_code[code]
 
-        sponsor = (
-            get_localized_field(selected, "sponsor_name", lang)
-            if lang == "kz" and selected.sponsor_name_kz
-            else selected.sponsor_name
-        )
+        sponsor = get_localized_field(selected, "sponsor_name", lang)
         total_rounds = (
             selected.total_rounds
             if selected.total_rounds is not None
@@ -183,7 +179,7 @@ async def get_front_map(
             year = s.date_start.year if s.date_start else None
             if year:
                 season_options.append(
-                    SeasonOption(season_id=s.id, year=year, name=s.name)
+                    SeasonOption(season_id=s.id, year=year, name=get_localized_field(s, "name", lang))
                 )
 
         front_map_items[code] = FrontMapEntry(
@@ -209,7 +205,7 @@ async def get_front_map(
 @router.get("/{championship_id}", response_model=ChampionshipResponse)
 async def get_championship(
     championship_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get championship by ID."""

@@ -1,8 +1,15 @@
 from datetime import datetime, date
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any
 
 from app.utils.file_urls import FileUrl
+
+
+class NewsImageResponse(BaseModel):
+    id: str
+    filename: str | None = None
+    url: str | None = None
+    size: int | None = None
 
 
 class NewsResponse(BaseModel):
@@ -22,6 +29,7 @@ class NewsResponse(BaseModel):
     slider_order: int | None = None
     publish_date: date | None = None
     structured_data: dict[str, Any] | None = None
+    images: list[NewsImageResponse] = Field(default_factory=list)
     updated_at: datetime
 
     model_config = {"from_attributes": True}

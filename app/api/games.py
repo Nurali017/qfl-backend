@@ -510,7 +510,7 @@ async def get_games(
     status: str | None = Query(default=None, pattern="^(upcoming|finished|live|all)$"),
     hide_past: bool = False,
     group_by_date: bool = False,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
     db: AsyncSession = Depends(get_db),
@@ -732,7 +732,7 @@ async def get_games(
 @router.get("/{game_id}")
 async def get_game(
     game_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get game by ID."""
@@ -758,7 +758,7 @@ async def get_game(
     if game.home_team:
         home_team = {
             "id": game.home_team.id,
-            "name": game.home_team.name,
+            "name": get_localized_field(game.home_team, "name", lang),
             "logo_url": resolve_team_logo_url(game.home_team),
             "score": game.home_score,
             "primary_color": game.home_team.primary_color,
@@ -768,7 +768,7 @@ async def get_game(
     if game.away_team:
         away_team = {
             "id": game.away_team.id,
-            "name": game.away_team.name,
+            "name": get_localized_field(game.away_team, "name", lang),
             "logo_url": resolve_team_logo_url(game.away_team),
             "score": game.away_score,
             "primary_color": game.away_team.primary_color,
@@ -1003,7 +1003,7 @@ async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/{game_id}/lineup")
 async def get_game_lineup(
     game_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """

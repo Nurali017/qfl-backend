@@ -94,7 +94,7 @@ def localize_player(player: Any, lang: str = "kz") -> dict:
         "country_code": player.country_code,
         "photo_url": player.photo_url,
         "age": player.age,
-        "top_role": player.top_role,
+        "top_role": get_localized_field(player, "top_role", lang),
     }
 
 

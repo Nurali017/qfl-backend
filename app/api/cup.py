@@ -73,7 +73,7 @@ async def _load_games(db: AsyncSession, season_id: int) -> list[Game]:
 @router.get("/{season_id}/overview", response_model=CupOverviewResponse)
 async def get_cup_overview(
     season_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     recent_limit: int = Query(default=5, ge=1, le=20),
     upcoming_limit: int = Query(default=5, ge=1, le=20),
     db: AsyncSession = Depends(get_db),
@@ -189,7 +189,7 @@ async def get_cup_overview(
 @router.get("/{season_id}/schedule", response_model=CupScheduleResponse)
 async def get_cup_schedule(
     season_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     round_key: str | None = Query(default=None, description="Filter by round key (e.g. '1_4', 'group_1')"),
     db: AsyncSession = Depends(get_db),
 ):

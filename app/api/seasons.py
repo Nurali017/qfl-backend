@@ -435,7 +435,7 @@ async def get_season_table(
     tour_from: int | None = Query(default=None, description="From matchweek (inclusive)"),
     tour_to: int | None = Query(default=None, description="To matchweek (inclusive)"),
     home_away: str | None = Query(default=None, pattern="^(home|away)$", description="Filter home/away games"),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -521,7 +521,7 @@ async def get_results_grid(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
     final: bool = Query(default=False, description="Show only final stage matches"),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -674,7 +674,7 @@ async def get_results_grid(
 async def get_season_games(
     season_id: int,
     tour: int | None = None,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get games for a season."""
@@ -759,7 +759,7 @@ async def get_player_stats_table(
     nationality: str | None = Query(default=None, pattern="^(kz|foreign)$"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1097,7 +1097,7 @@ async def get_team_stats_table(
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1402,7 +1402,7 @@ async def get_team_stats_table(
 @router.get("/{season_id}/stages", response_model=StageListResponse)
 async def get_season_stages(
     season_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get stages/tours for a season."""
@@ -1433,7 +1433,7 @@ async def get_season_stages(
 async def get_stage_games(
     season_id: int,
     stage_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get games for a specific stage/tour."""
@@ -1495,7 +1495,7 @@ async def get_stage_games(
 @router.get("/{season_id}/bracket", response_model=PlayoffBracketResponse)
 async def get_season_bracket(
     season_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get playoff bracket for a season, derived from games and stages."""
@@ -1534,7 +1534,7 @@ async def get_season_bracket(
 @router.get("/{season_id}/teams", response_model=SeasonParticipantListResponse)
 async def get_season_teams(
     season_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all teams participating in a season."""
@@ -1562,7 +1562,7 @@ async def get_season_teams(
 @router.get("/{season_id}/groups", response_model=SeasonGroupsResponse)
 async def get_season_groups(
     season_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get teams grouped by group_name for a season."""
@@ -1599,7 +1599,7 @@ async def get_season_groups(
 async def get_league_performance(
     season_id: int,
     team_ids: str | None = Query(default=None, description="Comma-separated team IDs to filter"),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """

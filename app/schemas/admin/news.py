@@ -23,14 +23,30 @@ class AdminNewsTranslationPayload(BaseModel):
     source_url: str | None = None
 
 
+class AdminNewsTranslationPatchPayload(BaseModel):
+    title: str | None = None
+    excerpt: str | None = None
+    content: str | None = None
+    content_text: str | None = None
+    image_url: str | None = None
+    video_url: str | None = None
+    category: str | None = None
+    championship_code: str | None = None
+    article_type: str | None = None
+    is_slider: bool | None = None
+    slider_order: int | None = None
+    publish_date: date | None = None
+    source_url: str | None = None
+
+
 class AdminNewsMaterialCreateRequest(BaseModel):
     ru: AdminNewsTranslationPayload
     kz: AdminNewsTranslationPayload
 
 
 class AdminNewsMaterialUpdateRequest(BaseModel):
-    ru: AdminNewsTranslationPayload | None = None
-    kz: AdminNewsTranslationPayload | None = None
+    ru: AdminNewsTranslationPatchPayload | None = None
+    kz: AdminNewsTranslationPatchPayload | None = None
 
 
 class AdminNewsTranslationCreateRequest(BaseModel):
