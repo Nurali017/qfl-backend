@@ -1,6 +1,8 @@
 import pytest
 from httpx import AsyncClient
 
+from app.models import Language, Page
+
 
 @pytest.mark.asyncio
 class TestPagesAPI:
@@ -52,3 +54,57 @@ class TestPagesAPI:
         """Test leadership shortcut endpoint."""
         response = await client.get("/api/v1/pages/leadership/ru")
         assert response.status_code in [200, 404]
+
+    async def test_get_leadership_page_normalizes_member_photo_urls(
+        self,
+        client: AsyncClient,
+        test_session,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Leadership endpoint normalizes localhost/object-name photos to public URLs."""
+        from app.services.file_storage import FileStorageService
+
+        leadership_page = Page(
+            slug="rukovodstvo",
+            language=Language.RU,
+            title="Руководство",
+            content_text="Руководство",
+            structured_data={
+                "members": [
+                    {
+                        "id": 1,
+                        "name": "Member One",
+                        "position": "Role One",
+                        "photo": "http://localhost:9000/qfl-files/leadership/test.jpg",
+                    },
+                    {
+                        "id": 2,
+                        "name": "Member Two",
+                        "position": "Role Two",
+                        "photo": "leadership/test-2.jpg",
+                    },
+                ]
+            },
+        )
+        test_session.add(leadership_page)
+        await test_session.commit()
+
+        async def fake_list_files(*args, **kwargs):
+            return []
+
+        class FakeSettings:
+            minio_public_endpoint = "https://kffleague.kz/storage"
+            minio_bucket = "qfl-files"
+
+        monkeypatch.setattr(FileStorageService, "list_files", fake_list_files)
+        monkeypatch.setattr("app.utils.file_urls.get_settings", lambda: FakeSettings())
+
+        response = await client.get("/api/v1/pages/leadership/ru")
+        assert response.status_code == 200
+
+        payload = response.json()
+        members = payload["structured_data"]["members"]
+
+        assert members[0]["photo"] == "https://kffleague.kz/storage/qfl-files/leadership/test.jpg"
+        assert "localhost" not in members[0]["photo"]
+        assert members[1]["photo"] == "https://kffleague.kz/storage/qfl-files/leadership/test-2.jpg"

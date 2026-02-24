@@ -6,7 +6,7 @@ from app.api.deps import get_db
 from app.models import Page, Language
 from app.schemas.page import PageResponse, PageListResponse
 from app.services.file_storage import FileStorageService
-from app.utils.file_urls import get_file_data_with_url, resolve_file_url
+from app.utils.file_urls import get_file_data_with_url, resolve_file_url, to_object_name
 from app.utils.error_messages import get_error_message
 
 router = APIRouter(prefix="/pages", tags=["pages"])
@@ -110,8 +110,9 @@ async def get_leadership(
             members = (response.get("structured_data") or {}).get("members")
             if members:
                 for member in members:
-                    if member.get("photo"):
-                        member["photo"] = resolve_file_url(member["photo"])
+                    photo = member.get("photo")
+                    if photo:
+                        member["photo"] = resolve_file_url(to_object_name(photo))
 
             return response
     raise HTTPException(status_code=404, detail="Leadership page not found")
