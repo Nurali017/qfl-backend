@@ -224,6 +224,38 @@ class TestGamesAPI:
         assert data["protocol_url"] is None
         assert data["is_schedule_tentative"] is False
 
+    async def test_get_game_by_id_uses_backend_logo_fallback_for_kairat(
+        self,
+        client: AsyncClient,
+        sample_game,
+    ):
+        """Game detail should return fallback API logo URL when team.logo_url is empty."""
+        response = await client.get(f"/api/v1/games/{sample_game.id}")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["away_team"]["id"] == 13
+        assert data["away_team"]["logo_url"] == "/api/v1/files/teams/kairat/logo"
+        assert data["away_team"]["logo_url"] is not None
+
+    async def test_get_game_by_id_keeps_explicit_team_logo_url(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_game,
+        sample_teams,
+    ):
+        """Explicit team.logo_url should not be overwritten by fallback."""
+        sample_teams[1].logo_url = "https://cdn.example.com/kairat.png"
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games/{sample_game.id}")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["away_team"]["id"] == 13
+        assert data["away_team"]["logo_url"] == "https://cdn.example.com/kairat.png"
+
     async def test_get_game_by_id_includes_protocol_url(
         self,
         client: AsyncClient,

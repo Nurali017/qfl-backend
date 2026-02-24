@@ -69,6 +69,7 @@ from app.services.season_participants import resolve_season_participants
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
 from app.utils.error_messages import get_error_message
+from app.utils.team_logo_fallback import resolve_team_logo_url
 
 settings = get_settings()
 
@@ -127,12 +128,12 @@ def _build_overview_match(game: Game, lang: str) -> TeamOverviewMatch:
         home_team=TeamOverviewMatchTeam(
             id=home_team.id if home_team else (game.home_team_id or 0),
             name=get_localized_name(home_team, lang) if home_team else "—",
-            logo_url=home_team.logo_url if home_team else None,
+            logo_url=resolve_team_logo_url(home_team),
         ),
         away_team=TeamOverviewMatchTeam(
             id=away_team.id if away_team else (game.away_team_id or 0),
             name=get_localized_name(away_team, lang) if away_team else "—",
-            logo_url=away_team.logo_url if away_team else None,
+            logo_url=resolve_team_logo_url(away_team),
         ),
         stadium=stadium,
     )
@@ -208,7 +209,7 @@ async def get_teams(
             items.append({
                 "id": team.id,
                 "name": get_localized_name(team, lang),
-                "logo_url": team.logo_url,
+                "logo_url": resolve_team_logo_url(team),
                 "primary_color": team.primary_color,
                 "secondary_color": team.secondary_color,
                 "accent_color": team.accent_color,
@@ -221,7 +222,7 @@ async def get_teams(
         {
             "id": t.id,
             "name": get_localized_name(t, lang),
-            "logo_url": t.logo_url,
+            "logo_url": resolve_team_logo_url(t),
             "primary_color": t.primary_color,
             "secondary_color": t.secondary_color,
             "accent_color": t.accent_color,
@@ -262,7 +263,7 @@ async def get_team(
         "id": team.id,
         "name": get_localized_name(team, lang),
         "city": get_localized_city(team, lang),
-        "logo_url": team.logo_url,
+        "logo_url": resolve_team_logo_url(team),
         "primary_color": team.primary_color,
         "secondary_color": team.secondary_color,
         "accent_color": team.accent_color,
@@ -416,7 +417,7 @@ async def get_team_overview(
                 game_id=str(game.id),
                 is_home=is_home,
                 opponent_name=get_localized_name(opponent, lang),
-                opponent_logo=opponent.logo_url,
+                opponent_logo=resolve_team_logo_url(opponent),
                 team_score=team_score,
                 opponent_score=opponent_score,
                 result=result,
@@ -444,7 +445,7 @@ async def get_team_overview(
                     position=entry.position or 0,
                     team_id=entry.team_id,
                     team_name=get_localized_name(entry.team, lang),
-                    team_logo=entry.team.logo_url if entry.team else None,
+                    team_logo=resolve_team_logo_url(entry.team),
                     games_played=_safe_int(entry.games_played),
                     points=_safe_int(entry.points),
                     goal_difference=_safe_int(entry.goal_difference),
@@ -525,7 +526,7 @@ async def get_team_overview(
                         position=position,
                         team_id=current_team_id,
                         team_name=get_localized_name(current_team, lang) if current_team else str(current_team_id),
-                        team_logo=current_team.logo_url if current_team else None,
+                        team_logo=resolve_team_logo_url(current_team),
                         games_played=values["games_played"],
                         points=values["points"],
                         goal_difference=values["goals_scored"] - values["goals_conceded"],
@@ -557,7 +558,7 @@ async def get_team_overview(
                 photo_url=row_player.photo_url,
                 team_id=row_team.id if row_team else row_stats.team_id,
                 team_name=get_localized_name(row_team, lang) if row_team else None,
-                team_logo=row_team.logo_url if row_team else None,
+                team_logo=resolve_team_logo_url(row_team),
                 position=get_localized_field(row_player, "top_role", lang),
                 games_played=_safe_int(row_stats.games_played),
                 goals=_safe_int(row_stats.goals),
@@ -626,7 +627,7 @@ async def get_team_overview(
         id=team.id,
         name=get_localized_name(team, lang),
         city=get_localized_city(team, lang),
-        logo_url=team.logo_url,
+        logo_url=resolve_team_logo_url(team),
         website=team.website,
         stadium=TeamOverviewStadium(
             name=get_localized_name(team.stadium, lang),
@@ -740,14 +741,14 @@ async def get_team_games(
             home_team = {
                 "id": g.home_team.id,
                 "name": get_localized_name(g.home_team, lang),
-                "logo_url": g.home_team.logo_url,
+                "logo_url": resolve_team_logo_url(g.home_team),
                 "score": g.home_score,
             }
         if g.away_team:
             away_team = {
                 "id": g.away_team.id,
                 "name": get_localized_name(g.away_team, lang),
-                "logo_url": g.away_team.logo_url,
+                "logo_url": resolve_team_logo_url(g.away_team),
                 "score": g.away_score,
             }
 
@@ -1003,6 +1004,10 @@ async def get_head_to_head(
     draws = 0
     team1_goals = 0
     team2_goals = 0
+    team1_home_wins = 0
+    team1_away_wins = 0
+    team2_home_wins = 0
+    team2_away_wins = 0
 
     for game in all_h2h_games:
         if game.home_team_id == team1_id:
@@ -1010,8 +1015,10 @@ async def get_head_to_head(
             team2_goals += game.away_score or 0
             if game.home_score > game.away_score:
                 team1_wins += 1
+                team1_home_wins += 1
             elif game.home_score < game.away_score:
                 team2_wins += 1
+                team2_away_wins += 1
             else:
                 draws += 1
         else:
@@ -1019,8 +1026,10 @@ async def get_head_to_head(
             team2_goals += game.home_score or 0
             if game.away_score > game.home_score:
                 team1_wins += 1
+                team1_away_wins += 1
             elif game.away_score < game.home_score:
                 team2_wins += 1
+                team2_home_wins += 1
             else:
                 draws += 1
 
@@ -1031,6 +1040,10 @@ async def get_head_to_head(
         team2_wins=team2_wins,
         team1_goals=team1_goals,
         team2_goals=team2_goals,
+        team1_home_wins=team1_home_wins,
+        team1_away_wins=team1_away_wins,
+        team2_home_wins=team2_home_wins,
+        team2_away_wins=team2_away_wins,
     )
 
     # 2. FORM GUIDE (last 5 matches in current season)
@@ -1072,7 +1085,7 @@ async def get_head_to_head(
                 result=result,
                 opponent_id=opponent.id,
                 opponent_name=get_localized_name(opponent, lang),
-                opponent_logo_url=opponent.logo_url,
+                opponent_logo_url=resolve_team_logo_url(opponent),
                 home_score=game.home_score,
                 away_score=game.away_score,
                 was_home=is_home,
@@ -1122,7 +1135,7 @@ async def get_head_to_head(
             position=entry.position,
             team_id=entry.team_id,
             team_name=get_localized_name(entry.team, lang),
-            logo_url=entry.team.logo_url if entry.team else None,
+            logo_url=resolve_team_logo_url(entry.team),
             games_played=entry.games_played or 0,
             wins=entry.wins or 0,
             draws=entry.draws or 0,
@@ -1168,21 +1181,74 @@ async def get_head_to_head(
             away_score=game.away_score,
             tour=game.tour,
             season_name=get_localized_field(game.season, "name", lang) if game.season else None,
+            home_team_logo=resolve_team_logo_url(game.home_team),
+            away_team_logo=resolve_team_logo_url(game.away_team),
         ))
 
-    # 5. FUN FACTS (computed from all_h2h_games + GameEvent)
+    # 5. FUN FACTS
+    # H2H rates/streaks are computed from all-time H2H games,
+    # while biggest win / worst defeat are computed from the selected tournament season.
     fun_facts = None
     if all_h2h_games:
+        tournament_games_result = await db.execute(
+            select(Game).where(
+                Game.season_id == season_id,
+                or_(
+                    Game.home_team_id.in_([team1_id, team2_id]),
+                    Game.away_team_id.in_([team1_id, team2_id]),
+                ),
+                Game.home_score.is_not(None),
+                Game.away_score.is_not(None),
+            )
+        )
+        tournament_games = tournament_games_result.scalars().all()
+
+        def get_team_extreme_results(team_id: int) -> tuple[H2HBiggestWin | None, H2HBiggestWin | None]:
+            biggest_win: H2HBiggestWin | None = None
+            worst_defeat: H2HBiggestWin | None = None
+            biggest_win_diff = 0
+            worst_defeat_diff = 0
+
+            for game in tournament_games:
+                if game.home_team_id == team_id:
+                    team_score = game.home_score or 0
+                    opp_score = game.away_score or 0
+                elif game.away_team_id == team_id:
+                    team_score = game.away_score or 0
+                    opp_score = game.home_score or 0
+                else:
+                    continue
+
+                diff = team_score - opp_score
+                if diff > biggest_win_diff:
+                    biggest_win_diff = diff
+                    biggest_win = H2HBiggestWin(
+                        game_id=game.id,
+                        date=game.date,
+                        score=f"{team_score}-{opp_score}",
+                        goal_difference=diff,
+                    )
+
+                if diff < 0 and abs(diff) > worst_defeat_diff:
+                    worst_defeat_diff = abs(diff)
+                    worst_defeat = H2HBiggestWin(
+                        game_id=game.id,
+                        date=game.date,
+                        score=f"{team_score}-{opp_score}",
+                        goal_difference=abs(diff),
+                    )
+
+            return biggest_win, worst_defeat
+
+        team1_biggest_win, team1_worst_defeat = get_team_extreme_results(team1_id)
+        team2_biggest_win, team2_worst_defeat = get_team_extreme_results(team2_id)
+
         total_goals = team1_goals + team2_goals
         total_matches = len(all_h2h_games)
         avg_goals = round(total_goals / total_matches, 2) if total_matches else 0
 
         over_2_5_count = 0
         btts_count = 0
-        team1_best_diff = 0
-        team2_best_diff = 0
-        team1_best_win = None
-        team2_best_win = None
         team1_streak = 0
         team2_streak = 0
         team1_max_streak = 0
@@ -1204,24 +1270,7 @@ async def get_head_to_head(
             else:
                 t1_score, t2_score = aws, hs
 
-            # Biggest wins
             diff = t1_score - t2_score
-            if diff > team1_best_diff:
-                team1_best_diff = diff
-                team1_best_win = H2HBiggestWin(
-                    game_id=game.id,
-                    date=game.date,
-                    score=f"{t1_score}-{t2_score}",
-                    goal_difference=diff,
-                )
-            if -diff > team2_best_diff:
-                team2_best_diff = -diff
-                team2_best_win = H2HBiggestWin(
-                    game_id=game.id,
-                    date=game.date,
-                    score=f"{t2_score}-{t1_score}",
-                    goal_difference=-diff,
-                )
 
             # Unbeaten streaks (sorted by date ascending for streak calc)
             if t1_score >= t2_score:
@@ -1289,11 +1338,13 @@ async def get_head_to_head(
             avg_goals_per_match=avg_goals,
             over_2_5_percent=over_2_5_pct,
             btts_percent=btts_pct,
-            team1_biggest_win=team1_best_win,
-            team2_biggest_win=team2_best_win,
+            team1_biggest_win=team1_biggest_win,
+            team2_biggest_win=team2_biggest_win,
             team1_unbeaten_streak=team1_max_streak,
             team2_unbeaten_streak=team2_max_streak,
             goals_by_half=goals_by_half,
+            team1_worst_defeat=team1_worst_defeat,
+            team2_worst_defeat=team2_worst_defeat,
         )
 
     # 6. AGGREGATED MATCH STATS (from GameTeamStats)

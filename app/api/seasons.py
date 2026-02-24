@@ -1593,3 +1593,111 @@ async def get_season_groups(
         groups.setdefault(group_key, []).append(item)
 
     return SeasonGroupsResponse(season_id=season_id, groups=groups)
+
+
+@router.get("/{season_id}/league-performance")
+async def get_league_performance(
+    season_id: int,
+    team_ids: str | None = Query(default=None, description="Comma-separated team IDs to filter"),
+    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get league position for each team at each matchweek.
+    Returns positions over time for the league performance chart.
+    """
+    await _ensure_visible_season(db, season_id)
+
+    filter_team_ids: set[int] | None = None
+    if team_ids:
+        filter_team_ids = {
+            int(x.strip()) for x in team_ids.split(",") if x.strip().isdigit()
+        }
+
+    query = (
+        select(Game)
+        .where(
+            Game.season_id == season_id,
+            Game.home_score.isnot(None),
+            Game.away_score.isnot(None),
+            Game.tour.isnot(None),
+        )
+        .options(selectinload(Game.home_team), selectinload(Game.away_team))
+        .order_by(Game.tour, Game.date, Game.time)
+    )
+
+    result = await db.execute(query)
+    games = result.scalars().all()
+
+    if not games:
+        return {"season_id": season_id, "max_tour": 0, "teams": []}
+
+    max_tour = max(g.tour for g in games)
+
+    games_by_tour: dict[int, list] = defaultdict(list)
+    for g in games:
+        games_by_tour[g.tour].append(g)
+
+    # Collect all team IDs and info
+    team_info: dict[int, dict] = {}
+    for game in games:
+        if game.home_team_id not in team_info and game.home_team:
+            team_info[game.home_team_id] = {
+                "name": get_localized_field(game.home_team, "name", lang),
+                "logo": game.home_team.logo_url,
+            }
+        if game.away_team_id not in team_info and game.away_team:
+            team_info[game.away_team_id] = {
+                "name": get_localized_field(game.away_team, "name", lang),
+                "logo": game.away_team.logo_url,
+            }
+
+    # Initialize cumulative stats for all teams
+    cumulative: dict[int, dict] = {
+        tid: {"points": 0, "gd": 0, "gs": 0}
+        for tid in team_info
+    }
+    positions_by_team: dict[int, list[int]] = {tid: [] for tid in team_info}
+
+    for tour in range(1, max_tour + 1):
+        for game in games_by_tour.get(tour, []):
+            h_id, a_id = game.home_team_id, game.away_team_id
+            h_score, a_score = game.home_score, game.away_score
+
+            cumulative[h_id]["gs"] += h_score
+            cumulative[h_id]["gd"] += h_score - a_score
+            cumulative[a_id]["gs"] += a_score
+            cumulative[a_id]["gd"] += a_score - h_score
+
+            if h_score > a_score:
+                cumulative[h_id]["points"] += 3
+            elif h_score < a_score:
+                cumulative[a_id]["points"] += 3
+            else:
+                cumulative[h_id]["points"] += 1
+                cumulative[a_id]["points"] += 1
+
+        standings = sorted(
+            cumulative.items(),
+            key=lambda x: (-x[1]["points"], -x[1]["gd"], -x[1]["gs"]),
+        )
+        for pos, (tid, _) in enumerate(standings, 1):
+            positions_by_team[tid].append(pos)
+
+    teams_result = []
+    for tid, positions in positions_by_team.items():
+        if filter_team_ids and tid not in filter_team_ids:
+            continue
+        info = team_info.get(tid, {"name": None, "logo": None})
+        teams_result.append({
+            "team_id": tid,
+            "team_name": info["name"],
+            "team_logo": info["logo"],
+            "positions": positions,
+        })
+
+    teams_result.sort(
+        key=lambda t: t["positions"][-1] if t["positions"] else 999
+    )
+
+    return {"season_id": season_id, "max_tour": max_tour, "teams": teams_result}

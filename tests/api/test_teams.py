@@ -419,3 +419,175 @@ class TestTeamsAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["team"]["name"] == "Қайрат"
+
+    async def test_head_to_head_uses_logo_fallback_in_form_guide_table_and_meetings(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_season,
+        sample_score_table,
+    ):
+        """H2H response should expose fallback logo URLs when teams.logo_url is empty."""
+        h2h_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 6, 1),
+            time=time(18, 0),
+            tour=5,
+            season_id=sample_season.id,
+            home_team_id=13,
+            away_team_id=90,
+            home_score=3,
+            away_score=1,
+            has_stats=True,
+            stadium="Central Stadium",
+            visitors=12000,
+        )
+        test_session.add(h2h_game)
+        await test_session.commit()
+
+        response = await client.get("/api/v1/teams/13/vs/90/head-to-head?season_id=61&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        team1_form = data["form_guide"]["team1"]["matches"]
+        team2_form = data["form_guide"]["team2"]["matches"]
+        assert any(
+            match["opponent_id"] == 90
+            and match["opponent_logo_url"] == "/api/v1/files/teams/tobol/logo"
+            for match in team1_form
+        )
+        assert any(
+            match["opponent_id"] == 13
+            and match["opponent_logo_url"] == "/api/v1/files/teams/kairat/logo"
+            for match in team2_form
+        )
+
+        table_by_team_id = {entry["team_id"]: entry for entry in data["season_table"]}
+        assert table_by_team_id[13]["logo_url"] == "/api/v1/files/teams/kairat/logo"
+        assert table_by_team_id[90]["logo_url"] == "/api/v1/files/teams/tobol/logo"
+
+        assert any(
+            meeting["home_team_id"] == 13
+            and meeting["away_team_id"] == 90
+            and meeting["home_team_logo"] == "/api/v1/files/teams/kairat/logo"
+            and meeting["away_team_logo"] == "/api/v1/files/teams/tobol/logo"
+            for meeting in data["previous_meetings"]
+        )
+
+    async def test_head_to_head_fun_facts_biggest_results_use_whole_tournament(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_season,
+        sample_game,
+    ):
+        """Biggest win/loss in H2H fun facts should be taken from full season games, not only mutual meetings."""
+        h2h_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 6, 1),
+            time=time(18, 0),
+            tour=5,
+            season_id=sample_season.id,
+            home_team_id=13,
+            away_team_id=90,
+            home_score=1,
+            away_score=0,
+            has_stats=True,
+            stadium="H2H Stadium",
+            visitors=12000,
+        )
+        team1_big_win_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 6, 5),
+            time=time(18, 0),
+            tour=6,
+            season_id=sample_season.id,
+            home_team_id=13,
+            away_team_id=91,
+            home_score=5,
+            away_score=1,
+            has_stats=True,
+            stadium="Big Win Stadium",
+            visitors=14000,
+        )
+        team1_worst_defeat_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 6, 10),
+            time=time(18, 0),
+            tour=7,
+            season_id=sample_season.id,
+            home_team_id=91,
+            away_team_id=13,
+            home_score=3,
+            away_score=0,
+            has_stats=True,
+            stadium="Worst Defeat Stadium",
+            visitors=13000,
+        )
+        team2_big_win_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 6, 12),
+            time=time(18, 0),
+            tour=8,
+            season_id=sample_season.id,
+            home_team_id=90,
+            away_team_id=91,
+            home_score=4,
+            away_score=0,
+            has_stats=True,
+            stadium="Team2 Big Win Stadium",
+            visitors=11000,
+        )
+        team2_worst_defeat_game = Game(
+            sota_id=uuid4(),
+            date=date(2025, 6, 14),
+            time=time(18, 0),
+            tour=9,
+            season_id=sample_season.id,
+            home_team_id=91,
+            away_team_id=90,
+            home_score=4,
+            away_score=1,
+            has_stats=True,
+            stadium="Team2 Worst Defeat Stadium",
+            visitors=9000,
+        )
+        test_session.add_all(
+            [
+                h2h_game,
+                team1_big_win_game,
+                team1_worst_defeat_game,
+                team2_big_win_game,
+                team2_worst_defeat_game,
+            ]
+        )
+        await test_session.commit()
+
+        response = await client.get("/api/v1/teams/13/vs/90/head-to-head?season_id=61&lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["overall"]["total_matches"] == 1
+
+        team1_biggest_win = data["fun_facts"]["team1_biggest_win"]
+        team2_biggest_win = data["fun_facts"]["team2_biggest_win"]
+        team1_worst_defeat = data["fun_facts"]["team1_worst_defeat"]
+        team2_worst_defeat = data["fun_facts"]["team2_worst_defeat"]
+
+        assert team1_biggest_win["game_id"] == team1_big_win_game.id
+        assert team1_biggest_win["score"] == "5-1"
+        assert team1_biggest_win["goal_difference"] == 4
+        assert team1_biggest_win["game_id"] != h2h_game.id
+
+        assert team2_biggest_win["game_id"] == team2_big_win_game.id
+        assert team2_biggest_win["score"] == "4-0"
+        assert team2_biggest_win["goal_difference"] == 4
+        assert team2_biggest_win["game_id"] != h2h_game.id
+
+        assert team1_worst_defeat["game_id"] == team1_worst_defeat_game.id
+        assert team1_worst_defeat["score"] == "0-3"
+        assert team1_worst_defeat["goal_difference"] == 3
+
+        assert team2_worst_defeat["game_id"] == team2_worst_defeat_game.id
+        assert team2_worst_defeat["score"] == "1-4"
+        assert team2_worst_defeat["goal_difference"] == 3
