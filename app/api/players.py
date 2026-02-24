@@ -197,6 +197,7 @@ async def get_player_games(
     player_id: int,
     season_id: int = Query(default=None),
     limit: int = Query(default=50, le=100),
+    lang: str = Query(default="kz", description="Language: kz, ru, or en"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get games a player participated in."""
@@ -232,14 +233,14 @@ async def get_player_games(
         if g.home_team:
             home_team = TeamInGame(
                 id=g.home_team.id,
-                name=g.home_team.name,
+                name=get_localized_field(g.home_team, "name", lang),
                 logo_url=g.home_team.logo_url,
                 score=g.home_score,
             )
         if g.away_team:
             away_team = TeamInGame(
                 id=g.away_team.id,
-                name=g.away_team.name,
+                name=get_localized_field(g.away_team, "name", lang),
                 logo_url=g.away_team.logo_url,
                 score=g.away_score,
             )
@@ -258,7 +259,7 @@ async def get_player_games(
                 visitors=g.visitors,
                 home_team=home_team,
                 away_team=away_team,
-                season_name=g.season.name if g.season else None,
+                season_name=get_localized_field(g.season, "name", lang) if g.season else None,
             )
         )
 

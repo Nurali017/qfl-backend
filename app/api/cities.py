@@ -13,7 +13,7 @@ router = APIRouter(prefix="/cities", tags=["cities"])
 
 @router.get("", response_model=CityListResponse)
 async def get_cities(
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all cities."""

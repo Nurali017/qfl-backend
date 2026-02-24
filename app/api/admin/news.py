@@ -20,6 +20,7 @@ from app.schemas.admin.news import (
     AdminNewsMaterialResponse,
     AdminNewsMaterialUpdateRequest,
     AdminNewsTranslationCreateRequest,
+    AdminNewsTranslationPatchPayload,
     AdminNewsTranslationPayload,
     AdminNewsTranslationResponse,
 )
@@ -64,24 +65,55 @@ async def _next_news_id(db: AsyncSession) -> int:
     return (current or 0) + 1
 
 
-def _apply_payload(item: News, payload: AdminNewsTranslationPayload, admin_id: int) -> None:
-    parsed_article_type = _article_type_from_str(payload.article_type)
-    if parsed_article_type == "UNCLASSIFIED":
-        raise HTTPException(status_code=400, detail="article_type must be NEWS or ANALYTICS")
+def _apply_payload(
+    item: News,
+    payload: AdminNewsTranslationPayload | AdminNewsTranslationPatchPayload,
+    admin_id: int,
+    *,
+    partial: bool = False,
+) -> None:
+    changed_fields = payload.model_fields_set if partial else None
 
-    item.title = payload.title
-    item.excerpt = payload.excerpt
-    item.content = payload.content
-    item.content_text = payload.content_text
-    item.image_url = payload.image_url
-    item.video_url = payload.video_url
-    item.category = payload.category
-    item.championship_code = payload.championship_code
-    item.article_type = parsed_article_type
-    item.is_slider = payload.is_slider
-    item.slider_order = payload.slider_order
-    item.publish_date = payload.publish_date
-    item.source_url = payload.source_url
+    def should_update(field_name: str) -> bool:
+        return not partial or field_name in (changed_fields or set())
+
+    if should_update("title"):
+        if payload.title is None:
+            raise HTTPException(status_code=400, detail="title cannot be null")
+        item.title = payload.title
+
+    if should_update("is_slider"):
+        if payload.is_slider is None:
+            raise HTTPException(status_code=400, detail="is_slider cannot be null")
+        item.is_slider = payload.is_slider
+
+    if should_update("article_type"):
+        parsed_article_type = _article_type_from_str(payload.article_type)
+        if parsed_article_type == "UNCLASSIFIED":
+            raise HTTPException(status_code=400, detail="article_type must be NEWS or ANALYTICS")
+        item.article_type = parsed_article_type
+
+    if should_update("excerpt"):
+        item.excerpt = payload.excerpt
+    if should_update("content"):
+        item.content = payload.content
+    if should_update("content_text"):
+        item.content_text = payload.content_text
+    if should_update("image_url"):
+        item.image_url = payload.image_url
+    if should_update("video_url"):
+        item.video_url = payload.video_url
+    if should_update("category"):
+        item.category = payload.category
+    if should_update("championship_code"):
+        item.championship_code = payload.championship_code
+    if should_update("slider_order"):
+        item.slider_order = payload.slider_order
+    if should_update("publish_date"):
+        item.publish_date = payload.publish_date
+    if should_update("source_url"):
+        item.source_url = payload.source_url
+
     item.updated_by_admin_id = admin_id
 
 
@@ -341,13 +373,13 @@ async def update_material(
         ru_item = by_lang.get(Language.RU)
         if not ru_item:
             raise HTTPException(status_code=400, detail="RU translation is missing. Use add translation endpoint")
-        _apply_payload(ru_item, payload.ru, current_admin.id)
+        _apply_payload(ru_item, payload.ru, current_admin.id, partial=True)
 
     if payload.kz is not None:
         kz_item = by_lang.get(Language.KZ)
         if not kz_item:
             raise HTTPException(status_code=400, detail="KZ translation is missing. Use add translation endpoint")
-        _apply_payload(kz_item, payload.kz, current_admin.id)
+        _apply_payload(kz_item, payload.kz, current_admin.id, partial=True)
 
     await db.commit()
 

@@ -19,7 +19,7 @@ router = APIRouter(prefix="/clubs", tags=["clubs"])
 @router.get("", response_model=ClubListResponse)
 async def get_clubs(
     city_id: int | None = Query(default=None),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all clubs with optional city filter."""
@@ -54,7 +54,7 @@ async def get_clubs(
 @router.get("/{club_id}", response_model=ClubWithTeamsResponse)
 async def get_club(
     club_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a club with its teams."""

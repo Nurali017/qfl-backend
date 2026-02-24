@@ -11,6 +11,7 @@ from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse, NewsR
 from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
 from app.utils.error_messages import get_error_message
+from app.utils.news_html_normalizer import normalize_news_html_content, normalize_news_media_url
 
 
 def get_client_ip(request: Request) -> str:
@@ -54,7 +55,7 @@ def _news_order_by(sort: str):
 
 @router.get("", response_model=NewsListResponse)
 async def get_news_list(
-    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
     article_type: str | None = Query(None, description="Filter by type: news or analytics"),
     search: str | None = Query(None, description="Search in title/excerpt/content"),
@@ -123,7 +124,7 @@ async def get_news_list(
 
 @router.get("/article-types", response_model=dict[str, int])
 async def get_article_types(
-    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get count of articles by type."""
@@ -141,7 +142,7 @@ async def get_article_types(
 
 @router.get("/latest", response_model=list[NewsListItem])
 async def get_latest_news(
-    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
     limit: int = Query(10, ge=1, le=50, description="Number of news items"),
     db: AsyncSession = Depends(get_db),
@@ -163,7 +164,7 @@ async def get_latest_news(
 
 @router.get("/slider", response_model=list[NewsListItem])
 async def get_slider_news(
-    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -185,7 +186,7 @@ async def get_slider_news(
 @router.get("/{news_id}/navigation")
 async def get_news_navigation(
     news_id: int,
-    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get previous and next news articles for navigation."""
@@ -323,10 +324,10 @@ async def get_news_reactions(
     return NewsReactionsResponse(views=news.views_count, likes=news.likes_count, liked=liked)
 
 
-@router.get("/{news_id}")
+@router.get("/{news_id}", response_model=NewsResponse)
 async def get_news_item(
     news_id: int,
-    lang: str = Query("ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get single news article by ID with images from MinIO."""
@@ -342,5 +343,26 @@ async def get_news_item(
     images = await FileStorageService.get_files_by_news_id(str(news_id))
 
     response = NewsResponse.model_validate(news).model_dump()
-    response["images"] = [get_file_data_with_url(img) for img in images]
+    response["image_url"] = normalize_news_media_url(
+        response.get("image_url"),
+        source_url=response.get("source_url"),
+    )
+
+    normalized_content = await normalize_news_html_content(
+        response.get("content"),
+        source_url=response.get("source_url"),
+        db=db,
+    )
+    response["content"] = normalized_content.content
+
+    normalized_images: list[dict] = []
+    for img in images:
+        image_data = get_file_data_with_url(img)
+        image_data["url"] = normalize_news_media_url(
+            image_data.get("url"),
+            source_url=response.get("source_url"),
+        )
+        normalized_images.append(image_data)
+
+    response["images"] = normalized_images
     return response

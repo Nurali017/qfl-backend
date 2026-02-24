@@ -102,6 +102,9 @@ async def test_news_material_create_update_and_add_translation(
             "title": "RU title",
             "excerpt": "RU excerpt",
             "content": "RU content",
+            "content_text": "RU content text",
+            "image_url": "https://cdn.example.com/ru.jpg",
+            "source_url": "https://kffleague.kz/ru/news/100",
             "publish_date": "2026-01-01",
             "is_slider": False,
         },
@@ -109,6 +112,9 @@ async def test_news_material_create_update_and_add_translation(
             "title": "KZ title",
             "excerpt": "KZ excerpt",
             "content": "KZ content",
+            "content_text": "KZ content text",
+            "image_url": "https://cdn.example.com/kz.jpg",
+            "source_url": "https://kffleague.kz/kz/news/100",
             "publish_date": "2026-01-01",
             "is_slider": False,
         },
@@ -133,7 +139,22 @@ async def test_news_material_create_update_and_add_translation(
     assert patch_response.status_code == 200, patch_response.text
     updated = patch_response.json()
     assert updated["ru"]["title"] == "RU title updated"
+    assert updated["ru"]["excerpt"] == "RU excerpt"
+    assert updated["ru"]["content_text"] == "RU content text"
+    assert updated["ru"]["image_url"] == "https://cdn.example.com/ru.jpg"
+    assert updated["ru"]["source_url"] == "https://kffleague.kz/ru/news/100"
     assert updated["kz"]["title"] == "KZ title"
+    assert updated["kz"]["image_url"] == "https://cdn.example.com/kz.jpg"
+
+    clear_image_response = await client.patch(
+        f"/api/v1/admin/news/materials/{group_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ru": {"image_url": None}},
+    )
+    assert clear_image_response.status_code == 200, clear_image_response.text
+    cleared = clear_image_response.json()
+    assert cleared["ru"]["image_url"] is None
+    assert cleared["ru"]["title"] == "RU title updated"
 
     legacy_group = uuid4()
     legacy_ru = News(

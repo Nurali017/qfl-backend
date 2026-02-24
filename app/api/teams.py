@@ -277,7 +277,7 @@ async def get_team(
 @router.get("/{team_id}/seasons", response_model=TeamSeasonsResponse)
 async def get_team_seasons(
     team_id: int,
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all seasons a team has participated in, based on games data."""
@@ -322,7 +322,7 @@ async def get_team_overview(
     season_id: int | None = Query(default=None),
     fixtures_limit: int = Query(default=5, ge=1, le=10),
     leaders_limit: int = Query(default=8, ge=3, le=20),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get aggregated team overview data for the team page."""
@@ -785,7 +785,7 @@ async def get_team_games(
 async def get_team_stats(
     team_id: int,
     season_id: int = Query(default=None),
-    lang: str = Query(default="ru", pattern="^(kz|ru|en)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get team statistics for a season from local DB."""
@@ -959,7 +959,7 @@ async def get_head_to_head(
     team1_id: int,
     team2_id: int,
     season_id: int = Query(default=None),
-    lang: str = Query(default="ru", description="Language: kz, ru, or en"),
+    lang: str = Query(default="kz", description="Language: kz, ru, or en"),
     db: AsyncSession = Depends(get_db),
 ):
     """
