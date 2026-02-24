@@ -1,0 +1,65 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 22
+          command_timeout: 10m
+          script: |
+            set -e
+            cd /home/debian/qfl
+
+            echo "=== Pulling backend ==="
+            cd backend && git fetch origin main && git reset --hard origin/main && cd ..
+
+            echo "=== Building backend image ==="
+            docker compose -f docker-compose.prod.yml build backend
+
+            echo "=== Running migrations ==="
+            docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
+
+            echo "=== Restarting backend ==="
+            docker compose -f docker-compose.prod.yml up -d --no-deps backend
+
+            echo "=== Waiting for backend health ==="
+            set +e
+            HEALTHY=false
+            for i in $(seq 1 30); do
+              docker compose -f docker-compose.prod.yml exec -T backend \
+                curl -sf http://localhost:8000/health > /dev/null 2>&1
+              if [ $? -eq 0 ]; then
+                echo "Backend healthy after ${i} checks"
+                HEALTHY=true
+                break
+              fi
+              echo "Waiting... ($i/30)"
+              sleep 3
+            done
+            set -e
+            if [ "$HEALTHY" = "false" ]; then
+              echo "Backend health check failed!"
+              docker compose -f docker-compose.prod.yml logs --tail=20 backend
+              exit 1
+            fi
+
+            echo "=== Restarting workers ==="
+            docker compose -f docker-compose.prod.yml up -d --no-deps celery_worker celery_beat
+
+            echo "=== Cleanup ==="
+            docker image prune -f
+            docker compose -f docker-compose.prod.yml ps backend celery_worker celery_beat
