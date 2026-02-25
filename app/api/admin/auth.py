@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.models import AdminSession, AdminUser
 from app.schemas.admin.auth import AuthUserResponse, LoginRequest, LoginResponse, MeResponse
 from app.security import create_access_token, generate_refresh_token, hash_refresh_token, verify_password
+from app.utils.timestamps import utcnow
 
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["admin-auth"])
@@ -49,7 +50,7 @@ async def _create_session(
 ) -> tuple[str, AdminSession]:
     refresh_token = generate_refresh_token()
     token_hash = hash_refresh_token(refresh_token)
-    expires_at = datetime.utcnow() + timedelta(days=settings.admin_refresh_ttl_days)
+    expires_at = utcnow() + timedelta(days=settings.admin_refresh_ttl_days)
 
     session = AdminSession(
         user_id=user.id,
@@ -95,7 +96,7 @@ async def refresh(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
 
     token_hash = hash_refresh_token(refresh_token)
-    now = datetime.utcnow()
+    now = utcnow()
 
     result = await db.execute(
         select(AdminSession, AdminUser)
@@ -140,7 +141,7 @@ async def logout(
         )
         session = result.scalar_one_or_none()
         if session:
-            session.revoked_at = datetime.utcnow()
+            session.revoked_at = utcnow()
             await db.commit()
 
     _clear_refresh_cookie(response)

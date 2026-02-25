@@ -5,6 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.sql_types import PLAYER_ID_SQL_TYPE, GAME_ID_SQL_TYPE
+from app.utils.timestamps import utcnow
 
 
 class GameEventType(str, enum.Enum):
@@ -63,7 +64,7 @@ class GameEvent(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utcnow, nullable=False
     )
 
     # Relationships

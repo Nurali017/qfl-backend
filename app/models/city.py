@@ -3,6 +3,7 @@ from sqlalchemy import Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.timestamps import utcnow
 
 
 class City(Base):
@@ -19,9 +20,9 @@ class City(Base):
     name_kz: Mapped[str | None] = mapped_column(String(255))
     name_en: Mapped[str | None] = mapped_column(String(255))
     country_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("countries.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships

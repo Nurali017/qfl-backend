@@ -22,17 +22,16 @@ def resolve_file_url(value: str | None) -> str | None:
       (external URL from SOTA API, YouTube, etc.).
     * Otherwise it is treated as a MinIO object name and expanded using
       ``MINIO_PUBLIC_ENDPOINT`` + ``MINIO_BUCKET``.
+
+    Delegates to :func:`app.minio_client.get_public_url` for the actual
+    URL construction to avoid duplicating the logic.
     """
     if not value:
         return None
     if value.startswith("http://") or value.startswith("https://"):
         return value
-    settings = get_settings()
-    endpoint = settings.minio_public_endpoint
-    bucket = settings.minio_bucket
-    if endpoint.startswith("http://") or endpoint.startswith("https://"):
-        return f"{endpoint}/{bucket}/{value}"
-    return f"https://{endpoint}/{bucket}/{value}"
+    from app.minio_client import get_public_url
+    return get_public_url(value)
 
 
 def to_object_name(url: str | None) -> str | None:

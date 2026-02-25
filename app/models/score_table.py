@@ -3,6 +3,7 @@ from sqlalchemy import Integer, String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.timestamps import utcnow
 
 
 class ScoreTable(Base):
@@ -25,7 +26,7 @@ class ScoreTable(Base):
     points: Mapped[int | None] = mapped_column(Integer)
     form: Mapped[str | None] = mapped_column(String(20))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships

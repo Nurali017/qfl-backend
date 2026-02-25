@@ -45,6 +45,7 @@ from app.schemas.team import TeamInGame
 from app.utils.date_helpers import format_match_date, get_localized_field
 from app.utils.numbers import to_finite_float
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from app.utils.game_status import compute_game_status
 from app.config import get_settings
 from app.services.season_visibility import ensure_visible_season_or_404
 
@@ -90,27 +91,6 @@ async def get_player_names_fallback(
 
     return event_names
 
-
-def compute_game_status(game: Game, today: date_type | None = None) -> str:
-    """
-    Compute game status based on data.
-
-    Returns:
-        "live" - Game is currently in progress
-        "finished" - Game has ended
-        "upcoming" - Game is scheduled for the future
-    """
-    if today is None:
-        today = date_type.today()
-
-    if game.is_live:
-        return "live"
-    elif game.home_score is not None and game.away_score is not None:
-        return "finished"
-    elif game.date and game.date < today:
-        return "finished"  # Past game, treat as finished even without score
-    else:
-        return "upcoming"
 
 
 def group_games_by_date(

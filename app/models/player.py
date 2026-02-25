@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from app.models.sql_types import PLAYER_ID_SQL_TYPE
 from app.utils.file_urls import FileUrlType
+from app.utils.timestamps import utcnow
 
 
 class Player(Base):
@@ -33,7 +34,7 @@ class Player(Base):
     top_role_kz: Mapped[str | None] = mapped_column(String(100))
     top_role_en: Mapped[str | None] = mapped_column(String(100))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships

@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 import enum
 
 from app.database import Base
+from app.utils.timestamps import utcnow
 
 
 class Language(str, enum.Enum):
@@ -31,9 +32,9 @@ class Page(Base):
     structured_data: Mapped[dict | None] = mapped_column(JSONB)
     created_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"))
     updated_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     __table_args__ = (

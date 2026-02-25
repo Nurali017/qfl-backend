@@ -5,6 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.utils.file_urls import FileUrlType
+from app.utils.timestamps import utcnow
 
 
 class CoachRole(str, enum.Enum):
@@ -32,9 +33,9 @@ class Coach(Base):
     last_name_en: Mapped[str | None] = mapped_column(String(100))
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)
     country_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("countries.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships
@@ -59,7 +60,7 @@ class TeamCoach(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     start_date: Mapped[datetime | None] = mapped_column(DateTime)
     end_date: Mapped[datetime | None] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     # Relationships
     team: Mapped["Team"] = relationship("Team", back_populates="coaches")

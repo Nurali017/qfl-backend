@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from app.models.sql_types import GAME_ID_SQL_TYPE
 from app.utils.file_urls import FileUrlType
+from app.utils.timestamps import utcnow
 
 
 class Game(Base):
@@ -54,7 +55,7 @@ class Game(Base):
     video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships

@@ -59,8 +59,7 @@ from app.schemas.country import CountryInPlayer
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
 
-async def _ensure_visible_season(db: AsyncSession, season_id: int) -> None:
-    await ensure_visible_season_or_404(db, season_id)
+_ensure_visible_season = ensure_visible_season_or_404
 
 
 def _build_season_response(s: Season) -> SeasonResponse:

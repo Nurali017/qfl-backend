@@ -3,6 +3,7 @@ from sqlalchemy import Integer, String, Date, DateTime, ForeignKey, Boolean, JSO
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.timestamps import utcnow
 
 
 class Season(Base):
@@ -23,7 +24,7 @@ class Season(Base):
     date_end: Mapped[date | None] = mapped_column(Date)
     sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Tournament configuration (managed via admin panel)

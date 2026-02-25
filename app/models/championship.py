@@ -3,6 +3,7 @@ from sqlalchemy import Integer, String, Text, DateTime, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.timestamps import utcnow
 
 
 class Championship(Base):
@@ -25,9 +26,9 @@ class Championship(Base):
     sota_ids: Mapped[str | None] = mapped_column(Text)  # "7" or "74;75;139"
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships

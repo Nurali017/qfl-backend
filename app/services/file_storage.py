@@ -1,8 +1,10 @@
 """File storage service using MinIO S3-compatible storage."""
 
+import asyncio
 import io
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from functools import partial
 from typing import BinaryIO
 
 from minio.error import S3Error
@@ -11,6 +13,11 @@ from app.minio_client import get_minio_client, get_public_url
 from app.config import get_settings
 
 settings = get_settings()
+
+
+def _run_sync(fn, *args, **kwargs):
+    """Helper to run a sync function in a thread pool (non-blocking)."""
+    return asyncio.to_thread(partial(fn, *args, **kwargs))
 
 
 class FileStorageService:
@@ -32,27 +39,19 @@ class FileStorageService:
         category: str = "uploads",
         metadata: dict | None = None,
     ) -> dict:
-        """
-        Upload a file to MinIO.
-
-        Args:
-            file_data: File content as bytes or file-like object
-            filename: Original filename
-            content_type: MIME type of the file
-            category: Category/folder (team_logo, news_image, document)
-            metadata: Optional additional metadata
-
-        Returns:
-            Dict with file_id, url, and metadata
-        """
+        """Upload a file to MinIO."""
         client = get_minio_client()
         bucket = settings.minio_bucket
 
-        # Generate unique object name
         file_id = str(uuid.uuid4())
-        object_name = FileStorageService._get_object_name(category, filename, file_id)
 
-        # Prepare data
+        # If news-id is in metadata, include it in the path for prefix-based lookup
+        news_id = (metadata or {}).get("news-id")
+        if news_id and category == "news_image":
+            object_name = f"news_image/{news_id}/{file_id}.{filename.rsplit('.', 1)[-1]}" if "." in filename else f"news_image/{news_id}/{file_id}"
+        else:
+            object_name = FileStorageService._get_object_name(category, filename, file_id)
+
         if isinstance(file_data, bytes):
             data = io.BytesIO(file_data)
             size = len(file_data)
@@ -61,16 +60,16 @@ class FileStorageService:
             data = io.BytesIO(content)
             size = len(content)
 
-        # Prepare metadata
         file_metadata = {
             "original-filename": filename,
-            "uploaded-at": datetime.utcnow().isoformat(),
+            "uploaded-at": datetime.now(timezone.utc).isoformat(),
             "category": category,
             **(metadata or {}),
         }
 
         try:
-            client.put_object(
+            await _run_sync(
+                client.put_object,
                 bucket_name=bucket,
                 object_name=object_name,
                 data=data,
@@ -94,26 +93,17 @@ class FileStorageService:
 
     @staticmethod
     async def get_file(object_name: str) -> tuple[bytes, dict] | None:
-        """
-        Retrieve a file from MinIO.
-
-        Args:
-            object_name: Full object path (category/file_id.ext)
-
-        Returns:
-            Tuple of (file_content, metadata) or None if not found
-        """
+        """Retrieve a file from MinIO."""
         client = get_minio_client()
         bucket = settings.minio_bucket
 
         try:
-            response = client.get_object(bucket, object_name)
+            response = await _run_sync(client.get_object, bucket, object_name)
             content = response.read()
             response.close()
             response.release_conn()
 
-            # Get object stat for metadata
-            stat = client.stat_object(bucket, object_name)
+            stat = await _run_sync(client.stat_object, bucket, object_name)
             metadata = {
                 "filename": stat.metadata.get("x-amz-meta-original-filename", object_name),
                 "content_type": stat.content_type,
@@ -131,20 +121,12 @@ class FileStorageService:
 
     @staticmethod
     async def delete_file(object_name: str) -> bool:
-        """
-        Delete a file from MinIO.
-
-        Args:
-            object_name: Full object path
-
-        Returns:
-            True if deleted, False otherwise
-        """
+        """Delete a file from MinIO."""
         client = get_minio_client()
         bucket = settings.minio_bucket
 
         try:
-            client.remove_object(bucket, object_name)
+            await _run_sync(client.remove_object, bucket, object_name)
             return True
         except S3Error:
             return False
@@ -154,83 +136,86 @@ class FileStorageService:
         category: str | None = None,
         limit: int = 100,
     ) -> list[dict]:
-        """
-        List files with optional category filtering.
+        """List files with optional category filtering.
 
-        Args:
-            category: Filter by category (folder prefix)
-            limit: Maximum number of results
-
-        Returns:
-            List of file metadata dictionaries
+        Uses only list_objects metadata (no extra stat_object per file).
         """
         client = get_minio_client()
         bucket = settings.minio_bucket
 
         prefix = f"{category}/" if category else ""
 
-        files = []
-        objects = client.list_objects(bucket, prefix=prefix)
-
-        for obj in objects:
-            if len(files) >= limit:
-                break
-
-            try:
-                stat = client.stat_object(bucket, obj.object_name)
+        def _list():
+            files = []
+            for obj in client.list_objects(bucket, prefix=prefix):
+                if len(files) >= limit:
+                    break
                 file_id = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
                 files.append({
                     "_id": file_id,
                     "object_name": obj.object_name,
                     "url": get_public_url(obj.object_name),
-                    "filename": stat.metadata.get("x-amz-meta-original-filename", obj.object_name),
-                    "content_type": stat.content_type,
+                    "filename": obj.object_name.split("/")[-1],
+                    "content_type": obj.content_type,
                     "size": obj.size,
                     "last_modified": obj.last_modified,
-                    "category": stat.metadata.get("x-amz-meta-category"),
-                    "language": stat.metadata.get("x-amz-meta-language"),
-                    "news_id": stat.metadata.get("x-amz-meta-news-id"),
                 })
-            except S3Error:
-                continue
+            return files
 
-        return files
+        return await asyncio.to_thread(_list)
 
     @staticmethod
     async def get_files_by_news_id(news_id: str) -> list[dict]:
-        """
-        Get all files for a specific news article.
+        """Get all files for a specific news article.
 
-        Args:
-            news_id: News article ID
-
-        Returns:
-            List of file metadata dictionaries
+        Uses prefix-based lookup: news_image/{news_id}/.
+        Falls back to scanning news_image/ with stat_object for legacy files.
         """
         client = get_minio_client()
         bucket = settings.minio_bucket
 
-        files = []
-        # Search in news_image category
-        objects = client.list_objects(bucket, prefix="news_image/")
+        def _get_files():
+            files = []
 
-        for obj in objects:
-            try:
-                stat = client.stat_object(bucket, obj.object_name)
-                if stat.metadata.get("x-amz-meta-news-id") == news_id:
-                    file_id = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
-                    files.append({
-                        "_id": file_id,
-                        "object_name": obj.object_name,
-                        "url": get_public_url(obj.object_name),
-                        "filename": stat.metadata.get("x-amz-meta-original-filename", obj.object_name),
-                        "content_type": stat.content_type,
-                        "size": obj.size,
-                    })
-            except S3Error:
-                continue
+            # Fast path: prefix-based lookup (new upload format)
+            for obj in client.list_objects(bucket, prefix=f"news_image/{news_id}/"):
+                file_id = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
+                files.append({
+                    "_id": file_id,
+                    "object_name": obj.object_name,
+                    "url": get_public_url(obj.object_name),
+                    "filename": obj.object_name.split("/")[-1],
+                    "content_type": obj.content_type,
+                    "size": obj.size,
+                })
 
-        return files
+            if files:
+                return files
+
+            # Slow fallback: scan all news_image/ and check metadata (legacy files)
+            for obj in client.list_objects(bucket, prefix="news_image/"):
+                # Skip sub-prefixed files (already handled above)
+                parts = obj.object_name.removeprefix("news_image/").split("/")
+                if len(parts) > 1:
+                    continue
+                try:
+                    stat = client.stat_object(bucket, obj.object_name)
+                    if stat.metadata.get("x-amz-meta-news-id") == news_id:
+                        file_id = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
+                        files.append({
+                            "_id": file_id,
+                            "object_name": obj.object_name,
+                            "url": get_public_url(obj.object_name),
+                            "filename": stat.metadata.get("x-amz-meta-original-filename", obj.object_name),
+                            "content_type": stat.content_type,
+                            "size": obj.size,
+                        })
+                except S3Error:
+                    continue
+
+            return files
+
+        return await asyncio.to_thread(_get_files)
 
     @staticmethod
     async def upload_team_logo(
@@ -238,21 +223,10 @@ class FileStorageService:
         team_name: str,
         content_type: str = "image/webp",
     ) -> dict:
-        """
-        Upload team logo with standardized naming.
-
-        Args:
-            file_data: Image content as bytes
-            team_name: Team name (lowercase, no spaces)
-            content_type: Image MIME type
-
-        Returns:
-            Dict with url and metadata
-        """
+        """Upload team logo with standardized naming."""
         client = get_minio_client()
         bucket = settings.minio_bucket
 
-        # Standardize team name
         safe_name = team_name.lower().replace(" ", "-")
         ext = "webp" if "webp" in content_type else "png"
         object_name = f"public/team-logos/{safe_name}.{ext}"
@@ -261,7 +235,8 @@ class FileStorageService:
         size = len(file_data)
 
         try:
-            client.put_object(
+            await _run_sync(
+                client.put_object,
                 bucket_name=bucket,
                 object_name=object_name,
                 data=data,
@@ -282,25 +257,16 @@ class FileStorageService:
 
     @staticmethod
     async def get_team_logo(team_name: str) -> tuple[bytes, dict] | None:
-        """
-        Get team logo by team name.
-
-        Args:
-            team_name: Team name
-
-        Returns:
-            Tuple of (file_content, metadata) or None
-        """
+        """Get team logo by team name."""
         client = get_minio_client()
         bucket = settings.minio_bucket
 
         safe_name = team_name.lower().replace(" ", "-")
 
-        # Try webp first, then png
         for ext in ["webp", "png", "jpg"]:
             object_name = f"public/team-logos/{safe_name}.{ext}"
             try:
-                response = client.get_object(bucket, object_name)
+                response = await _run_sync(client.get_object, bucket, object_name)
                 content = response.read()
                 response.close()
                 response.release_conn()
@@ -321,19 +287,19 @@ class FileStorageService:
         client = get_minio_client()
         bucket = settings.minio_bucket
 
-        logos = []
-        objects = client.list_objects(bucket, prefix="public/team-logos/")
+        def _list():
+            logos = []
+            for obj in client.list_objects(bucket, prefix="public/team-logos/"):
+                name = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
+                logos.append({
+                    "object_name": obj.object_name,
+                    "url": get_public_url(obj.object_name),
+                    "team_name": name,
+                    "size": obj.size,
+                })
+            return logos
 
-        for obj in objects:
-            name = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
-            logos.append({
-                "object_name": obj.object_name,
-                "url": get_public_url(obj.object_name),
-                "team_name": name,
-                "size": obj.size,
-            })
-
-        return logos
+        return await asyncio.to_thread(_list)
 
     @staticmethod
     async def upload_country_flag(
@@ -341,17 +307,7 @@ class FileStorageService:
         country_code: str,
         content_type: str = "image/webp",
     ) -> dict:
-        """
-        Upload country flag with standardized naming.
-
-        Args:
-            file_data: Image content as bytes
-            country_code: ISO 3166-1 alpha-2 code (e.g., "KZ")
-            content_type: Image MIME type
-
-        Returns:
-            Dict with url and metadata
-        """
+        """Upload country flag with standardized naming."""
         client = get_minio_client()
         bucket = settings.minio_bucket
 
@@ -363,7 +319,8 @@ class FileStorageService:
         size = len(file_data)
 
         try:
-            client.put_object(
+            await _run_sync(
+                client.put_object,
                 bucket_name=bucket,
                 object_name=object_name,
                 data=data,
@@ -384,15 +341,7 @@ class FileStorageService:
 
     @staticmethod
     async def get_country_flag(country_code: str) -> tuple[bytes, dict] | None:
-        """
-        Get country flag by country code.
-
-        Args:
-            country_code: ISO 3166-1 alpha-2 code
-
-        Returns:
-            Tuple of (file_content, metadata) or None
-        """
+        """Get country flag by country code."""
         client = get_minio_client()
         bucket = settings.minio_bucket
 
@@ -401,7 +350,7 @@ class FileStorageService:
         for ext in ["webp", "png", "svg"]:
             object_name = f"public/country-flags/{safe_code}.{ext}"
             try:
-                response = client.get_object(bucket, object_name)
+                response = await _run_sync(client.get_object, bucket, object_name)
                 content = response.read()
                 response.close()
                 response.release_conn()
@@ -422,16 +371,16 @@ class FileStorageService:
         client = get_minio_client()
         bucket = settings.minio_bucket
 
-        flags = []
-        objects = client.list_objects(bucket, prefix="public/country-flags/")
+        def _list():
+            flags = []
+            for obj in client.list_objects(bucket, prefix="public/country-flags/"):
+                code = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
+                flags.append({
+                    "object_name": obj.object_name,
+                    "url": get_public_url(obj.object_name),
+                    "country_code": code.upper(),
+                    "size": obj.size,
+                })
+            return flags
 
-        for obj in objects:
-            code = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
-            flags.append({
-                "object_name": obj.object_name,
-                "url": get_public_url(obj.object_name),
-                "country_code": code.upper(),
-                "size": obj.size,
-            })
-
-        return flags
+        return await asyncio.to_thread(_list)
