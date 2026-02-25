@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
+from app.caching import invalidate_pattern
 from app.models import AdminUser, Language, News
 from app.models.news import ArticleType
 from app.schemas.admin.news import (
@@ -290,6 +291,7 @@ async def classify_materials(
 
     if payload.apply and updated_group_ids:
         await db.commit()
+        await invalidate_pattern("*app.api.news*")
 
     summary = AdminNewsClassifySummary(
         dry_run=not payload.apply,
@@ -348,6 +350,7 @@ async def create_material(
     await db.commit()
     await db.refresh(ru_item)
     await db.refresh(kz_item)
+    await invalidate_pattern("*app.api.news*")
 
     return _to_material_response([ru_item, kz_item])
 
@@ -382,6 +385,7 @@ async def update_material(
         _apply_payload(kz_item, payload.kz, current_admin.id, partial=True)
 
     await db.commit()
+    await invalidate_pattern("*app.api.news*")
 
     refreshed = await db.execute(select(News).where(News.translation_group_id == group_id))
     return _to_material_response(refreshed.scalars().all())
@@ -407,6 +411,7 @@ async def set_material_article_type(
         item.updated_by_admin_id = current_admin.id
 
     await db.commit()
+    await invalidate_pattern("*app.api.news*")
     refreshed = await db.execute(select(News).where(News.translation_group_id == group_id))
     return _to_material_response(refreshed.scalars().all())
 
@@ -439,6 +444,7 @@ async def create_missing_translation(
 
     db.add(item)
     await db.commit()
+    await invalidate_pattern("*app.api.news*")
 
     refreshed = await db.execute(select(News).where(News.translation_group_id == group_id))
     return _to_material_response(refreshed.scalars().all())
@@ -459,4 +465,5 @@ async def delete_material(
         await db.delete(row)
 
     await db.commit()
+    await invalidate_pattern("*app.api.news*")
     return {"message": "Material deleted"}

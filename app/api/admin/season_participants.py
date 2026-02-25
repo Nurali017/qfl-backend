@@ -4,6 +4,7 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
+from app.caching import invalidate_pattern
 from app.models import Season, SeasonParticipant
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.schemas.admin.season_participants import (
@@ -53,6 +54,7 @@ async def create_season_participant(
     db.add(obj)
     await db.commit()
     await db.refresh(obj)
+    await invalidate_pattern("*app.api.seasons*")
     return AdminSeasonParticipantResponse.model_validate(obj)
 
 
@@ -79,6 +81,7 @@ async def update_season_participant(
 
     await db.commit()
     await db.refresh(obj)
+    await invalidate_pattern("*app.api.seasons*")
     return AdminSeasonParticipantResponse.model_validate(obj)
 
 
@@ -98,3 +101,4 @@ async def delete_season_participant(id: int, db: AsyncSession = Depends(get_db))
 
     await db.delete(obj)
     await db.commit()
+    await invalidate_pattern("*app.api.seasons*")

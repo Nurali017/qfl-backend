@@ -17,6 +17,7 @@ from app.schemas.championship import (
     SeasonBrief,
 )
 from app.schemas.front_map import FrontMapEntry, FrontMapResponse, SeasonOption
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/championships", tags=["championships"])
 
@@ -70,6 +71,7 @@ async def get_championships(
 
 
 @router.get("/tree", response_model=ChampionshipTreeListResponse)
+@cache(expire=14400)
 async def get_championships_tree(
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
@@ -113,6 +115,7 @@ async def get_championships_tree(
 
 
 @router.get("/front-map", response_model=FrontMapResponse)
+@cache(expire=14400)
 async def get_front_map(
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),

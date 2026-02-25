@@ -16,6 +16,7 @@ from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
 from app.utils.error_messages import get_error_message
 from app.utils.news_html_normalizer import normalize_news_html_content, normalize_news_media_url
+from fastapi_cache.decorator import cache
 
 
 def get_client_ip(request: Request) -> str:
@@ -58,6 +59,7 @@ def _news_order_by(sort: str):
 
 
 @router.get("", response_model=NewsListResponse)
+@cache(expire=900)
 async def get_news_list(
     lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),

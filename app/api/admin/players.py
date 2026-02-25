@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
+from app.caching import invalidate_pattern
 from app.models import (
     AdminUser,
     Country,
@@ -315,6 +316,7 @@ async def create_player(
     await _replace_team_bindings(db, player.id, payload.team_bindings)
     await db.commit()
     await db.refresh(player)
+    await invalidate_pattern("*app.api.seasons*")
 
     bindings_map = await _get_player_bindings(db, [player.id])
     return _serialize_player(player, bindings_map.get(player.id, []))
@@ -343,6 +345,7 @@ async def update_player(
 
     await db.commit()
     await db.refresh(player)
+    await invalidate_pattern("*app.api.seasons*")
 
     bindings_map = await _get_player_bindings(db, [player.id])
     return _serialize_player(player, bindings_map.get(player.id, []))
@@ -402,4 +405,5 @@ async def delete_player(
     await db.execute(delete(PlayerTeam).where(PlayerTeam.player_id == player_id))
     await db.delete(player)
     await db.commit()
+    await invalidate_pattern("*app.api.seasons*")
     return {"message": "Player deleted"}

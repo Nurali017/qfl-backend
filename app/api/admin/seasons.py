@@ -4,6 +4,7 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
+from app.caching import invalidate_pattern
 from app.models import Season
 from app.services.season_visibility import is_season_visible_clause
 from app.schemas.admin.seasons import (
@@ -70,4 +71,5 @@ async def update_season(
 
     await db.commit()
     await db.refresh(obj)
+    await invalidate_pattern("*app.api.seasons*")
     return AdminSeasonResponse.model_validate(obj)

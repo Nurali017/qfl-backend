@@ -41,6 +41,10 @@ class Season(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     colors: Mapped[dict | None] = mapped_column(JSON)
     final_stage_ids: Mapped[list[int] | None] = mapped_column(JSON)
+    # Table zones configuration
+    champion_spots: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    euro_cup_spots: Mapped[int] = mapped_column(Integer, nullable=False, server_default="2")
+    relegation_spots: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     # Relationships
     championship: Mapped["Championship"] = relationship("Championship", back_populates="seasons")

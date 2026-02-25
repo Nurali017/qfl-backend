@@ -8,13 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.models import Game, ScoreTable, Team
+from app.models import Game, ScoreTable, Season, Team
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids
 from app.services.standings import (
     calculate_dynamic_table,
     read_score_table,
     get_next_games_for_teams,
 )
+from app.services.table_zones import resolve_table_zone
 from app.services.season_visibility import ensure_visible_season_or_404
 from app.utils.localization import get_localized_field
 from app.schemas.stats import (
@@ -24,6 +25,7 @@ from app.schemas.stats import (
     ResultsGridResponse,
     TeamResultsGridEntry,
 )
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -31,6 +33,7 @@ _ensure_visible_season = ensure_visible_season_or_404
 
 
 @router.get("/{season_id}/table")
+@cache(expire=7200)
 async def get_season_table(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
@@ -94,6 +97,19 @@ async def get_season_table(
 
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)
+    total_rows = len(table_data)
+
+    season_config_result = await db.execute(
+        select(
+            Season.champion_spots,
+            Season.euro_cup_spots,
+            Season.relegation_spots,
+        ).where(Season.id == season_id)
+    )
+    season_config = season_config_result.one_or_none()
+    champion_spots = season_config.champion_spots if season_config else 0
+    euro_cup_spots = season_config.euro_cup_spots if season_config else 0
+    relegation_spots = season_config.relegation_spots if season_config else 0
 
     table = []
     for entry in table_data:
@@ -112,6 +128,13 @@ async def get_season_table(
                 goal_difference=entry["goal_difference"],
                 points=entry["points"],
                 form=entry["form"],
+                zone=resolve_table_zone(
+                    position=entry["position"],
+                    total_rows=total_rows,
+                    champion_spots=champion_spots,
+                    euro_cup_spots=euro_cup_spots,
+                    relegation_spots=relegation_spots,
+                ),
                 next_game=next_games.get(entry["team_id"]),
             )
         )
@@ -120,6 +143,7 @@ async def get_season_table(
 
 
 @router.get("/{season_id}/results-grid", response_model=ResultsGridResponse)
+@cache(expire=7200)
 async def get_results_grid(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
@@ -274,6 +298,7 @@ async def get_results_grid(
 
 
 @router.get("/{season_id}/league-performance")
+@cache(expire=7200)
 async def get_league_performance(
     season_id: int,
     team_ids: str | None = Query(default=None, description="Comma-separated team IDs to filter"),
