@@ -168,3 +168,88 @@ class TestNewsAPI:
 
         assert data["image_url"] == "https://kffleague.kz/internal/main.jpg"
         assert data["images"][0]["url"] == "https://kffleague.kz/media/inside.jpg"
+
+    async def test_get_news_item_normalizes_minio_urls_in_content(
+        self,
+        client: AsyncClient,
+        sample_news,
+        test_session,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """MinIO localhost URLs in content get /storage/ prefix for correct proxying."""
+        from app.services.file_storage import FileStorageService
+
+        class FakeSettings:
+            minio_public_endpoint = "https://kffleague.kz/storage"
+            minio_bucket = "qfl-files"
+
+        monkeypatch.setattr(
+            "app.utils.news_html_normalizer.get_settings", lambda: FakeSettings()
+        )
+        monkeypatch.setattr(
+            "app.utils.news_html_normalizer.resolve_file_url",
+            lambda obj: f"https://kffleague.kz/storage/qfl-files/{obj}",
+        )
+
+        sample = sample_news[0]
+        sample.content = (
+            '<p><img src="http://localhost:9000/qfl-files/news/abc123.png" /></p>'
+            '<p><a href="http://localhost:9000/qfl-files/news/doc.pdf">PDF</a></p>'
+            '<p><img src="http://localhost:9000/qfl-files/news/photo.webp" /></p>'
+        )
+        await test_session.commit()
+
+        async def fake_get_files(_news_id: str):
+            return []
+
+        monkeypatch.setattr(FileStorageService, "get_files_by_news_id", fake_get_files)
+
+        response = await client.get("/api/v1/news/1?lang=ru")
+        assert response.status_code == 200
+
+        data = response.json()
+        content = data["content"]
+
+        assert "localhost:9000" not in content
+        assert 'src="https://kffleague.kz/storage/qfl-files/news/abc123.png"' in content
+        assert 'src="https://kffleague.kz/storage/qfl-files/news/photo.webp"' in content
+        # href is made relative by _to_relative_if_internal since it's an internal host
+        assert "/storage/qfl-files/news/doc.pdf" in content
+
+    async def test_get_news_item_non_minio_internal_url_unchanged(
+        self,
+        client: AsyncClient,
+        sample_news,
+        test_session,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Non-MinIO internal URLs (e.g. /uploads/) resolve to base origin without /storage/."""
+        from app.services.file_storage import FileStorageService
+
+        class FakeSettings:
+            minio_public_endpoint = "https://kffleague.kz/storage"
+            minio_bucket = "qfl-files"
+
+        monkeypatch.setattr(
+            "app.utils.news_html_normalizer.get_settings", lambda: FakeSettings()
+        )
+
+        sample = sample_news[0]
+        sample.content = (
+            '<p><img src="http://localhost:9000/uploads/photo.jpg" /></p>'
+        )
+        await test_session.commit()
+
+        async def fake_get_files(_news_id: str):
+            return []
+
+        monkeypatch.setattr(FileStorageService, "get_files_by_news_id", fake_get_files)
+
+        response = await client.get("/api/v1/news/1?lang=ru")
+        assert response.status_code == 200
+
+        data = response.json()
+        content = data["content"]
+
+        assert "localhost" not in content
+        assert 'src="https://kffleague.kz/uploads/photo.jpg"' in content

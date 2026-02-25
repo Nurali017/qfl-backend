@@ -23,7 +23,7 @@ tenacity==8.2.3
 # Validation and settings
 pydantic==2.5.3
 pydantic-settings==2.1.0
-python-jose[cryptography]==3.3.0
+PyJWT==2.9.0
 passlib[bcrypt]==1.7.4
 
 # Background tasks

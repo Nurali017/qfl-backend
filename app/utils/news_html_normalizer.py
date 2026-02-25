@@ -10,7 +10,9 @@ from bs4 import BeautifulSoup
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models import Player, Team
+from app.utils.file_urls import resolve_file_url
 
 DEFAULT_NEWS_BASE_URL = "https://kffleague.kz"
 _EXTERNAL_LINK_REL = "noopener noreferrer nofollow"
@@ -110,6 +112,15 @@ def _ensure_public_http_url(url: str, *, base_origin: str, internal_hosts: set[s
             path = f"{path}?{parsed.query}"
         if parsed.fragment:
             path = f"{path}#{parsed.fragment}"
+
+        settings = get_settings()
+        bucket_prefix = f"/{settings.minio_bucket}/"
+        if path.startswith(bucket_prefix):
+            object_name = path[len(bucket_prefix):]
+            resolved = resolve_file_url(object_name)
+            if resolved:
+                return resolved
+
         return urljoin(base_origin, path)
     return url
 
