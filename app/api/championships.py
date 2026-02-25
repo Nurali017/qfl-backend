@@ -97,7 +97,7 @@ async def get_championships_tree(
                 frontend_code=s.frontend_code,
                 tournament_type=s.tournament_type,
             )
-            for s in sorted(c.seasons, key=lambda s: s.date_start or s.id, reverse=True)
+            for s in sorted(c.seasons, key=lambda s: (s.date_start or date_type.min, s.id), reverse=True)
             if s.is_visible
         ]
 
