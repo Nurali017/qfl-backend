@@ -3,6 +3,7 @@ from sqlalchemy import Integer, String, DateTime, Boolean, ForeignKey, UniqueCon
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.timestamps import utcnow
 
 
 class SeasonParticipant(Base):
@@ -26,9 +27,9 @@ class SeasonParticipant(Base):
     fine_points: Mapped[int] = mapped_column(Integer, default=0)
     stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships

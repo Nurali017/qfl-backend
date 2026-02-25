@@ -8,6 +8,7 @@ import enum
 
 from app.database import Base
 from app.utils.file_urls import FileUrlType
+from app.utils.timestamps import utcnow
 from app.models.page import Language
 
 
@@ -18,7 +19,7 @@ class NewsLike(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     news_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     client_ip: Mapped[str] = mapped_column(String(45), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     __table_args__ = (
         UniqueConstraint("news_id", "client_ip", name="uq_news_likes_news_id_client_ip"),
@@ -61,9 +62,9 @@ class News(Base):
     updated_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"))
     views_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     likes_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     __table_args__ = (

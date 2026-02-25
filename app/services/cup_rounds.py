@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import date as date_type
 
-from app.api.games import compute_game_status
+from app.utils.game_status import compute_game_status
 from app.models import Game, Stage
 from app.schemas.cup import CupGameBrief, CupRound, CupTeamBrief
 from app.schemas.playoff_bracket import (

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.api.games import compute_game_status
+from app.utils.game_status import compute_game_status
 from app.api.seasons import calculate_dynamic_table
 from app.models import (
     Game,

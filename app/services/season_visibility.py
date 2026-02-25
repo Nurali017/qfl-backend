@@ -36,3 +36,15 @@ async def ensure_visible_season_or_404(db: AsyncSession, season_id: int) -> None
     )
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Season not found")
+
+
+async def resolve_visible_season_id(db: AsyncSession, season_id: int | None) -> int:
+    """Resolve optional season_id to a concrete visible season.
+
+    Falls back to current_season_id from settings when season_id is None.
+    Raises 404 if the resolved season is hidden or missing.
+    """
+    from app.config import get_settings
+    resolved = season_id if season_id is not None else get_settings().current_season_id
+    await ensure_visible_season_or_404(db, resolved)
+    return resolved

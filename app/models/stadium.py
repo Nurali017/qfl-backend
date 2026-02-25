@@ -4,6 +4,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.utils.file_urls import FileUrlType
+from app.utils.timestamps import utcnow
 
 
 class Stadium(Base):
@@ -26,9 +27,9 @@ class Stadium(Base):
     address_kz: Mapped[str | None] = mapped_column(String(500))
     address_en: Mapped[str | None] = mapped_column(String(500))
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
     # Relationships

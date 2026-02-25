@@ -17,20 +17,12 @@ from app.schemas.player import (
 )
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.team import TeamInGame
-from app.config import get_settings
-from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
+from app.services.season_visibility import ensure_visible_season_or_404, resolve_visible_season_id
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.numbers import sanitize_non_finite_numbers
 
-settings = get_settings()
-
 router = APIRouter(prefix="/players", tags=["players"])
 
-
-async def _resolve_visible_season_id(db: AsyncSession, season_id: int | None) -> int:
-    resolved_season_id = season_id if season_id is not None else settings.current_season_id
-    await ensure_visible_season_or_404(db, resolved_season_id)
-    return resolved_season_id
 
 
 @router.get("", response_model=PlayerListResponse)
@@ -171,7 +163,7 @@ async def get_player_stats(
     - Passes, key passes
     - And more in extra_stats
     """
-    season_id = await _resolve_visible_season_id(db, season_id)
+    season_id = await resolve_visible_season_id(db, season_id)
 
     # Get from player_season_stats table
     result = await db.execute(
@@ -201,7 +193,7 @@ async def get_player_games(
     db: AsyncSession = Depends(get_db),
 ):
     """Get games a player participated in."""
-    season_id = await _resolve_visible_season_id(db, season_id)
+    season_id = await resolve_visible_season_id(db, season_id)
 
     # Get game IDs where player has stats
     game_ids_result = await db.execute(
@@ -278,7 +270,7 @@ async def get_player_teammates(
     Get teammates of a player from the same team in the current season.
     Excludes the player themselves from the result.
     """
-    season_id = await _resolve_visible_season_id(db, season_id)
+    season_id = await resolve_visible_season_id(db, season_id)
 
     # 1. Find player's team_id in the current season
     player_team_result = await db.execute(
@@ -335,10 +327,14 @@ async def get_player_tournament_history(
     Get player's tournament history (stats by season).
     Returns all seasons where the player has stats.
     """
-    # Get all PlayerSeasonStats for this player
+    # Single query with eager loading — no N+1
     stats_result = await db.execute(
         select(PlayerSeasonStats)
         .where(PlayerSeasonStats.player_id == player_id)
+        .options(
+            selectinload(PlayerSeasonStats.season).selectinload(Season.championship),
+            selectinload(PlayerSeasonStats.team),
+        )
         .order_by(PlayerSeasonStats.season_id.desc())
     )
     all_stats = stats_result.scalars().all()
@@ -346,36 +342,18 @@ async def get_player_tournament_history(
     if not all_stats:
         return PlayerTournamentHistoryResponse(items=[], total=0)
 
-    # Get season and team info for each stat entry
     items = []
     for stat in all_stats:
-        # Get season info
-        season_result = await db.execute(
-            select(Season)
-            .where(Season.id == stat.season_id)
-            .where(is_season_visible_clause())
-            .options(selectinload(Season.championship))
-        )
-        season = season_result.scalar_one_or_none()
-        if season is None:
+        season = stat.season
+        if season is None or not season.is_visible:
             continue
 
-        # Get team info
-        team_name = None
-        if stat.team_id:
-            team_result = await db.execute(
-                select(Team).where(Team.id == stat.team_id)
-            )
-            team = team_result.scalar_one_or_none()
-            if team:
-                team_name = get_localized_field(team, "name", lang) if hasattr(team, "name_kz") else team.name
-
-        championship_name = None
-        season_name = None
-        if season:
-            season_name = get_localized_field(season, "name", lang) if hasattr(season, "name_kz") else season.name
-            if season.championship:
-                championship_name = get_localized_field(season.championship, "name", lang) if hasattr(season.championship, "name_kz") else season.championship.name
+        team_name = get_localized_field(stat.team, "name", lang) if stat.team else None
+        season_name = get_localized_field(season, "name", lang)
+        championship_name = (
+            get_localized_field(season.championship, "name", lang)
+            if season.championship else None
+        )
 
         items.append(
             PlayerTournamentHistoryEntry(
@@ -384,7 +362,7 @@ async def get_player_tournament_history(
                 championship_name=championship_name,
                 team_id=stat.team_id,
                 team_name=team_name,
-                position=None,  # Can be added later if needed
+                position=None,
                 games_played=stat.games_played,
                 minutes_played=stat.minutes_played,
                 goals=stat.goals,
