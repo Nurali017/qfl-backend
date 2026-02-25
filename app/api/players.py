@@ -84,7 +84,7 @@ async def get_players(
     return {"items": items, "total": total}
 
 
-@router.get("/{player_id}")
+@router.get("/{player_id}", response_model=PlayerDetailResponse)
 async def get_player(
     player_id: int,
     season_id: int | None = Query(default=None),

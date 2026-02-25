@@ -13,9 +13,13 @@ from app.models import (
 )
 from app.models.coach import Coach, TeamCoach
 from app.schemas.team import (
+    TeamDetailResponse,
+    TeamListResponse,
     TeamSeasonEntry,
     TeamSeasonsResponse,
+    TeamStadiumInfo,
 )
+from app.models import Championship
 from app.services.season_participants import resolve_season_participants
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause, resolve_visible_season_id
 from app.services.team_overview import _extract_year
@@ -26,7 +30,7 @@ from app.utils.team_logo_fallback import resolve_team_logo_url
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
-@router.get("")
+@router.get("", response_model=TeamListResponse)
 async def get_teams(
     season_id: int | None = None,
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),
@@ -70,7 +74,7 @@ async def get_teams(
     return {"items": items, "total": len(items)}
 
 
-@router.get("/{team_id}")
+@router.get("/{team_id}", response_model=TeamDetailResponse)
 async def get_team(
     team_id: int,
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),

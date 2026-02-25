@@ -25,9 +25,15 @@ class TeamListResponse(BaseModel):
     total: int
 
 
+class TeamStadiumInfo(BaseModel):
+    name: str | None = None
+    city: str | None = None
+
+
 class TeamDetailResponse(TeamResponse):
     city: str | None = None
     website: str | None = None
+    stadium: TeamStadiumInfo | None = None
     club_id: int | None = None
     club_name: str | None = None
 

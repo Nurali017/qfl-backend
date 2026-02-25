@@ -62,3 +62,18 @@ class NewsReactionsResponse(BaseModel):
     views: int
     likes: int
     liked: bool = False
+
+
+class NewsNavigationItem(BaseModel):
+    id: int
+    title: str
+
+
+class NewsNavigationResponse(BaseModel):
+    previous: NewsNavigationItem | None = None
+    next: NewsNavigationItem | None = None
+
+
+class NewsLikeResponse(BaseModel):
+    likes: int
+    liked: bool

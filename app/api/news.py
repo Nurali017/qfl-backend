@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.models import News, Language
 from app.models.news import ArticleType, NewsLike
-from app.schemas.news import NewsResponse, NewsListItem, NewsListResponse, NewsReactionsResponse
+from app.schemas.news import (
+    NewsResponse, NewsListItem, NewsListResponse, NewsReactionsResponse,
+    NewsNavigationResponse, NewsNavigationItem, NewsLikeResponse,
+)
+from app.schemas.common import OkResponse
 from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
 from app.utils.error_messages import get_error_message
@@ -183,7 +187,7 @@ async def get_slider_news(
     return result.scalars().all()
 
 
-@router.get("/{news_id}/navigation")
+@router.get("/{news_id}/navigation", response_model=NewsNavigationResponse)
 async def get_news_navigation(
     news_id: int,
     lang: str = Query("kz", pattern="^(kz|ru|en)$"),
@@ -200,7 +204,8 @@ async def get_news_navigation(
     if not current:
         raise HTTPException(status_code=404, detail=get_error_message("news_not_found", lang))
 
-    result = {}
+    previous = None
+    next_item = None
 
     # Previous article (older: publish_date < current OR same date with smaller id)
     prev_query = (
@@ -215,7 +220,7 @@ async def get_news_navigation(
     )
     prev_row = (await db.execute(prev_query)).first()
     if prev_row:
-        result["previous"] = {"id": prev_row.id, "title": prev_row.title}
+        previous = NewsNavigationItem(id=prev_row.id, title=prev_row.title)
 
     # Next article (newer: publish_date > current OR same date with larger id)
     next_query = (
@@ -230,12 +235,12 @@ async def get_news_navigation(
     )
     next_row = (await db.execute(next_query)).first()
     if next_row:
-        result["next"] = {"id": next_row.id, "title": next_row.title}
+        next_item = NewsNavigationItem(id=next_row.id, title=next_row.title)
 
-    return result
+    return NewsNavigationResponse(previous=previous, next=next_item)
 
 
-@router.post("/{news_id}/view")
+@router.post("/{news_id}/view", response_model=OkResponse)
 async def record_news_view(
     news_id: int,
     db: AsyncSession = Depends(get_db),
@@ -252,7 +257,7 @@ async def record_news_view(
     return {"ok": True}
 
 
-@router.post("/{news_id}/like")
+@router.post("/{news_id}/like", response_model=NewsLikeResponse)
 async def toggle_news_like(
     news_id: int,
     request: Request,
