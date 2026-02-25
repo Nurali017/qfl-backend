@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.services.file_storage import FileStorageService
 from app.minio_client import get_public_url
+from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -27,9 +28,19 @@ class TeamLogoResponse(BaseModel):
     content_type: str
 
 
+class TeamLogosListResponse(BaseModel):
+    logos: list
+    count: int
+
+
+class FilesListResponse(BaseModel):
+    files: list
+    count: int
+
+
 # ============ Team logos endpoints (specific routes first) ============
 
-@router.get("/teams/logos")
+@router.get("/teams/logos", response_model=TeamLogosListResponse)
 async def list_team_logos():
     """List all team logos."""
     logos = await FileStorageService.list_team_logos()
@@ -102,7 +113,7 @@ async def upload_file(
     return FileUploadResponse(**result)
 
 
-@router.get("/list")
+@router.get("/list", response_model=FilesListResponse)
 async def list_files(
     category: str | None = None,
     limit: int = Query(default=100, le=1000),
@@ -155,7 +166,7 @@ async def download_file(category: str, file_path: str):
     )
 
 
-@router.delete("/{category}/{file_path:path}")
+@router.delete("/{category}/{file_path:path}", response_model=MessageResponse)
 async def delete_file(category: str, file_path: str):
     """Delete a file from MinIO storage."""
     object_name = f"{category}/{file_path}"
