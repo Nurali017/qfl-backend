@@ -12,11 +12,13 @@ from app.schemas.club import (
     ClubWithTeamsResponse,
     TeamBrief,
 )
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/clubs", tags=["clubs"])
 
 
 @router.get("", response_model=ClubListResponse)
+@cache(expire=43200)
 async def get_clubs(
     city_id: int | None = Query(default=None),
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),

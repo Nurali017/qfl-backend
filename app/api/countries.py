@@ -15,11 +15,13 @@ from app.schemas.country import (
 )
 from app.services.file_storage import FileStorageService
 from app.utils.localization import get_localized_name
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/countries", tags=["countries"])
 
 
 @router.get("", response_model=CountryListResponse)
+@cache(expire=43200)
 async def list_countries(
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),
     include_inactive: bool = Query(default=False),

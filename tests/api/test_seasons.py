@@ -4,6 +4,44 @@ from uuid import uuid4
 from datetime import date, time
 
 
+async def _seed_score_table(
+    test_session,
+    *,
+    season_id: int,
+    start_team_id: int,
+    team_count: int,
+):
+    from app.models import ScoreTable, Team
+
+    teams = [
+        Team(id=start_team_id + index, name=f"Team {start_team_id + index}")
+        for index in range(team_count)
+    ]
+    test_session.add_all(teams)
+    await test_session.flush()
+
+    entries = []
+    for index, team in enumerate(teams, 1):
+        entries.append(
+            ScoreTable(
+                season_id=season_id,
+                team_id=team.id,
+                position=index,
+                games_played=20,
+                wins=max(0, 20 - index),
+                draws=0,
+                losses=index - 1,
+                goals_scored=max(0, 30 - index),
+                goals_conceded=index,
+                goal_difference=max(0, 30 - index) - index,
+                points=100 - index,
+            )
+        )
+
+    test_session.add_all(entries)
+    await test_session.commit()
+
+
 @pytest.mark.asyncio
 class TestSeasonsAPI:
     """Tests for /api/v1/seasons endpoints."""
@@ -104,6 +142,108 @@ class TestSeasonsAPI:
         assert data["season_id"] == 61
         assert len(data["table"]) == 3
         assert data["table"][0]["position"] == 1
+
+    async def test_get_season_table_includes_zone_field_and_champion_euro_defaults(
+        self, client: AsyncClient, sample_season, sample_score_table, test_session
+    ):
+        sample_season.champion_spots = 1
+        sample_season.euro_cup_spots = 2
+        sample_season.relegation_spots = 0
+        await test_session.commit()
+
+        response = await client.get("/api/v1/seasons/61/table")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["table"][0]["zone"] == "champion"
+        assert data["table"][1]["zone"] == "euro_cups"
+        assert data["table"][2]["zone"] == "euro_cups"
+
+    async def test_get_season_table_relegation_zone_for_season_61_marks_only_last_team(
+        self, client: AsyncClient, sample_season, test_session
+    ):
+        sample_season.champion_spots = 1
+        sample_season.euro_cup_spots = 2
+        sample_season.relegation_spots = 1
+        await test_session.commit()
+
+        await _seed_score_table(
+            test_session,
+            season_id=sample_season.id,
+            start_team_id=6100,
+            team_count=6,
+        )
+
+        response = await client.get("/api/v1/seasons/61/table")
+        assert response.status_code == 200
+        data = response.json()
+
+        relegation_positions = [row["position"] for row in data["table"] if row["zone"] == "relegation"]
+        assert relegation_positions == [6]
+
+    async def test_get_season_table_relegation_zone_for_season_200_marks_last_two_teams(
+        self, client: AsyncClient, sample_championship, test_session
+    ):
+        from app.models import Season
+
+        season_200 = Season(
+            id=200,
+            name="2026",
+            championship_id=sample_championship.id,
+            date_start=date(2026, 3, 1),
+            date_end=date(2026, 11, 30),
+            champion_spots=1,
+            euro_cup_spots=2,
+            relegation_spots=2,
+        )
+        test_session.add(season_200)
+        await test_session.flush()
+
+        await _seed_score_table(
+            test_session,
+            season_id=season_200.id,
+            start_team_id=6200,
+            team_count=6,
+        )
+
+        response = await client.get("/api/v1/seasons/200/table")
+        assert response.status_code == 200
+        data = response.json()
+
+        relegation_positions = [row["position"] for row in data["table"] if row["zone"] == "relegation"]
+        assert relegation_positions == [5, 6]
+
+    async def test_get_season_table_with_zero_relegation_spots_has_no_relegation_zone(
+        self, client: AsyncClient, sample_championship, test_session
+    ):
+        from app.models import Season
+
+        season_201 = Season(
+            id=201,
+            name="2027",
+            championship_id=sample_championship.id,
+            date_start=date(2027, 3, 1),
+            date_end=date(2027, 11, 30),
+            champion_spots=1,
+            euro_cup_spots=2,
+            relegation_spots=0,
+        )
+        test_session.add(season_201)
+        await test_session.flush()
+
+        await _seed_score_table(
+            test_session,
+            season_id=season_201.id,
+            start_team_id=6300,
+            team_count=6,
+        )
+
+        response = await client.get("/api/v1/seasons/201/table")
+        assert response.status_code == 200
+        data = response.json()
+
+        relegation_positions = [row["position"] for row in data["table"] if row["zone"] == "relegation"]
+        assert relegation_positions == []
 
     async def test_get_season_table_group_filter_uses_group_participants(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game

@@ -7,11 +7,13 @@ from app.api.deps import get_db
 from app.models import City
 from app.utils.localization import get_localized_field
 from app.schemas.city import CityResponse, CityListResponse
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/cities", tags=["cities"])
 
 
 @router.get("", response_model=CityListResponse)
+@cache(expire=43200)
 async def get_cities(
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),

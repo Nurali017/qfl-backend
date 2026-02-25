@@ -6,11 +6,13 @@ from app.api.deps import get_db
 from app.models import Partner
 from app.services.season_visibility import ensure_visible_season_or_404
 from app.schemas.partner import PartnerResponse, PartnerListResponse
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/partners", tags=["partners"])
 
 
 @router.get("", response_model=PartnerListResponse)
+@cache(expire=43200)
 async def get_partners(
     championship_id: int | None = Query(default=None),
     season_id: int | None = Query(default=None),

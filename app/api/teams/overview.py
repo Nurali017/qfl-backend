@@ -37,11 +37,13 @@ from app.services.team_overview import (
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
 from app.utils.error_messages import get_error_message
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 @router.get("/{team_id}/overview", response_model=TeamOverviewResponse)
+@cache(expire=3600)
 async def get_team_overview(
     team_id: int,
     season_id: int | None = Query(default=None),

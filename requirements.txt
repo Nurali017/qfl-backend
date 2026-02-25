@@ -33,6 +33,9 @@ redis==5.0.1
 # MySQL (for one-time migration scripts)
 pymysql==1.1.0
 
+# Caching
+fastapi-cache2==0.2.1
+
 # Utils
 python-dotenv==1.0.0
 python-multipart==0.0.6

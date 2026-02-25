@@ -37,11 +37,13 @@ from app.services.season_visibility import resolve_visible_season_id
 from app.utils.localization import get_localized_name, get_localized_field
 from app.utils.error_messages import get_error_message
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 @router.get("/{team1_id}/vs/{team2_id}/head-to-head")
+@cache(expire=7200)
 async def get_head_to_head(
     team1_id: int,
     team2_id: int,

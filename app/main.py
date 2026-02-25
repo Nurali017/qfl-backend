@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import engine
 from app.minio_client import init_minio
+from app.caching import init_cache
 
 settings = get_settings()
 
@@ -13,6 +14,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_minio()
+    await init_cache()
     yield
     await engine.dispose()
 
