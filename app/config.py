@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     openai_max_retries: int = 3
     openai_timeout: int = 10
 
+    # Feature flags
+    cup_draw_enabled: bool = True
+    cache_enabled: bool = True
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

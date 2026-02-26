@@ -33,6 +33,9 @@ def _cache_key_builder(func, namespace: str = "", *, request=None, response=None
 async def init_cache():
     """Initialize Redis cache. Call from app lifespan."""
     settings = get_settings()
+    if not settings.cache_enabled:
+        logger.info("Redis cache disabled via CACHE_ENABLED=false")
+        return
     try:
         from redis import asyncio as aioredis
         redis = aioredis.from_url(
