@@ -73,6 +73,12 @@ Thumbs.db
 # Project specific
 *.db
 *.sqlite3
+celerybeat-schedule
+
+# Images (store in MinIO, not in git)
+*.jpeg
+*.jpg
+*.png
 
 # Keep .env.example
 !.env.example
