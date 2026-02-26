@@ -15,6 +15,8 @@ from app.api.admin.partners import router as partners_router
 from app.api.admin.season_participants import router as season_participants_router
 from app.api.admin.team_of_week import router as team_of_week_router
 from app.api.admin.seasons import router as seasons_router
+from app.api.admin.cup_draw import router as cup_draw_router
+from app.api.admin.games import router as games_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(auth_router)
@@ -32,3 +34,5 @@ router.include_router(partners_router)
 router.include_router(season_participants_router)
 router.include_router(team_of_week_router)
 router.include_router(seasons_router)
+router.include_router(cup_draw_router)
+router.include_router(games_router)
