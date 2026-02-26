@@ -56,6 +56,26 @@ from app.schemas.admin.season_participants import (
     AdminSeasonParticipantUpdateRequest,
     AdminSeasonParticipantResponse,
     AdminSeasonParticipantsListResponse,
+    AdminSeasonParticipantsBulkSetRequest,
+    AdminSeasonParticipantsBulkSetResponse,
+)
+from app.schemas.admin.seasons import (
+    AdminSeasonCreateRequest,
+    AdminSeasonUpdateRequest,
+    AdminSeasonResponse,
+    AdminSeasonsListResponse,
+)
+from app.schemas.admin.cup_draw import (
+    AddPairRequest,
+    CupDrawListResponse,
+    CupDrawResponse,
+    DrawPairResponse,
+    ParticipantTeamResponse,
+)
+from app.schemas.admin.games import (
+    AdminGameResponse,
+    AdminGameUpdateRequest,
+    AdminGamesListResponse,
 )
 
 __all__ = [
@@ -105,4 +125,18 @@ __all__ = [
     "AdminSeasonParticipantUpdateRequest",
     "AdminSeasonParticipantResponse",
     "AdminSeasonParticipantsListResponse",
+    "AdminSeasonParticipantsBulkSetRequest",
+    "AdminSeasonParticipantsBulkSetResponse",
+    "AdminSeasonCreateRequest",
+    "AdminSeasonUpdateRequest",
+    "AdminSeasonResponse",
+    "AdminSeasonsListResponse",
+    "AddPairRequest",
+    "CupDrawListResponse",
+    "CupDrawResponse",
+    "DrawPairResponse",
+    "ParticipantTeamResponse",
+    "AdminGameResponse",
+    "AdminGameUpdateRequest",
+    "AdminGamesListResponse",
 ]

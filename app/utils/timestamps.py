@@ -1,11 +1,8 @@
-"""Timezone-aware timestamp utilities."""
+"""Timestamp utilities aligned with DB naive UTC columns."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 def utcnow() -> datetime:
-    """Return current UTC time as timezone-aware datetime.
-
-    Use instead of deprecated ``datetime.utcnow()`` which returns naive datetimes.
-    """
-    return datetime.now(timezone.utc)
+    """Return current UTC time as naive datetime for DB compatibility."""
+    return datetime.utcnow()

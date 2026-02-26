@@ -1,6 +1,6 @@
 from datetime import datetime, date, time
 from uuid import UUID
-from sqlalchemy import Integer, String, Date, Time, Boolean, DateTime, ForeignKey
+from sqlalchemy import Integer, String, Date, Time, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,6 +12,9 @@ from app.utils.timestamps import utcnow
 
 class Game(Base):
     __tablename__ = "games"
+    __table_args__ = (
+        Index("ix_games_season_date_time", "season_id", "date", "time"),
+    )
 
     id: Mapped[int] = mapped_column(GAME_ID_SQL_TYPE, primary_key=True, autoincrement=True)
     sota_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), unique=True, index=True)
@@ -21,9 +24,9 @@ class Game(Base):
     time: Mapped[time | None] = mapped_column(Time)
     tour: Mapped[int | None] = mapped_column(Integer)
     stage_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stages.id"), index=True)
-    season_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("seasons.id"))
-    home_team_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("teams.id"))
-    away_team_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("teams.id"))
+    season_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("seasons.id"), index=True)
+    home_team_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("teams.id"), index=True)
+    away_team_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("teams.id"), index=True)
     home_score: Mapped[int | None] = mapped_column(Integer)
     away_score: Mapped[int | None] = mapped_column(Integer)
     home_penalty_score: Mapped[int | None] = mapped_column(Integer)

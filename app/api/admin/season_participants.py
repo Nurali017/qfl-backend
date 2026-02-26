@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
 from app.caching import invalidate_pattern
-from app.models import Season, SeasonParticipant
+from app.models import Season, SeasonParticipant, Team
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.schemas.admin.season_participants import (
+    AdminSeasonParticipantsBulkSetRequest,
+    AdminSeasonParticipantsBulkSetResponse,
     AdminSeasonParticipantCreateRequest,
     AdminSeasonParticipantUpdateRequest,
     AdminSeasonParticipantResponse,
@@ -56,6 +58,63 @@ async def create_season_participant(
     await db.refresh(obj)
     await invalidate_pattern("*app.api.seasons*")
     return AdminSeasonParticipantResponse.model_validate(obj)
+
+
+@router.post("/bulk-set", response_model=AdminSeasonParticipantsBulkSetResponse)
+async def bulk_set_season_participants(
+    body: AdminSeasonParticipantsBulkSetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    await ensure_visible_season_or_404(db, body.season_id)
+
+    if not body.replace:
+        raise HTTPException(status_code=400, detail="bulk-set only supports replace=true")
+
+    if len(body.team_ids) != len(set(body.team_ids)):
+        raise HTTPException(status_code=400, detail="team_ids must not contain duplicates")
+
+    if body.team_ids:
+        existing_team_ids_result = await db.execute(
+            select(Team.id).where(Team.id.in_(body.team_ids))
+        )
+        existing_team_ids = set(existing_team_ids_result.scalars().all())
+        missing = [team_id for team_id in body.team_ids if team_id not in existing_team_ids]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown team_ids: {missing}",
+            )
+
+    await db.execute(
+        delete(SeasonParticipant).where(SeasonParticipant.season_id == body.season_id)
+    )
+    await db.flush()
+
+    created_rows: list[SeasonParticipant] = []
+    for idx, team_id in enumerate(body.team_ids, start=1):
+        row = SeasonParticipant(
+            season_id=body.season_id,
+            team_id=team_id,
+            sort_order=idx,
+            is_disqualified=False,
+            fine_points=0,
+        )
+        db.add(row)
+        created_rows.append(row)
+
+    await db.commit()
+
+    for row in created_rows:
+        await db.refresh(row)
+
+    await invalidate_pattern("*app.api.seasons*")
+    await invalidate_pattern("*app.api.cup*")
+    await invalidate_pattern("*app.api.games*")
+    return AdminSeasonParticipantsBulkSetResponse(
+        season_id=body.season_id,
+        total=len(created_rows),
+        item_ids=[row.id for row in created_rows],
+    )
 
 
 @router.patch("/{id}", response_model=AdminSeasonParticipantResponse)

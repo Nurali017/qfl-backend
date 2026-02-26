@@ -16,7 +16,7 @@ class Stage(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     legacy_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
-    season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"), nullable=False)
+    season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # Russian (default)
     name_kz: Mapped[str | None] = mapped_column(String(255))
     name_en: Mapped[str | None] = mapped_column(String(255))

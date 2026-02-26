@@ -35,3 +35,15 @@ class AdminSeasonParticipantResponse(BaseModel):
 class AdminSeasonParticipantsListResponse(BaseModel):
     items: list[AdminSeasonParticipantResponse]
     total: int
+
+
+class AdminSeasonParticipantsBulkSetRequest(BaseModel):
+    season_id: int
+    team_ids: list[int]
+    replace: bool = True
+
+
+class AdminSeasonParticipantsBulkSetResponse(BaseModel):
+    season_id: int
+    total: int
+    item_ids: list[int]

@@ -223,7 +223,32 @@ async def get_games(
                 game_dict["away_team"] = build_team_dict(game_obj.away_team, game_obj.away_score)
                 game_dict["stadium"] = build_stadium_dict(game_obj.stadium_rel)
 
-        return {"groups": grouped, "total": total}
+        # Full date ranges for tentative tours (ignores filters like team_ids)
+        tent_query = (
+            select(
+                Game.tour,
+                func.min(Game.date).label("date_from"),
+                func.max(Game.date).label("date_to"),
+            )
+            .where(
+                Game.season_id == season_id,
+                Game.is_schedule_tentative == True,
+                Game.tour.isnot(None),
+            )
+            .group_by(Game.tour)
+        )
+        tent_result = await db.execute(tent_query)
+        tentative_tour_dates = {
+            row.tour: [row.date_from.isoformat(), row.date_to.isoformat()]
+            for row in tent_result
+            if row.date_from != row.date_to
+        }
+
+        return {
+            "groups": grouped,
+            "total": total,
+            "tentative_tour_dates": tentative_tour_dates,
+        }
 
     # Standard list format
     items = []

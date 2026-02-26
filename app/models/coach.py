@@ -1,6 +1,6 @@
 from datetime import datetime
 import enum
-from sqlalchemy import Integer, String, DateTime, Enum as SQLEnum, ForeignKey
+from sqlalchemy import Integer, String, DateTime, Enum as SQLEnum, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -48,6 +48,9 @@ class Coach(Base):
 class TeamCoach(Base):
     """Association between team and coach for a season."""
     __tablename__ = "team_coaches"
+    __table_args__ = (
+        Index("ix_team_coaches_team_season", "team_id", "season_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"), nullable=False)
