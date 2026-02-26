@@ -11,6 +11,8 @@ from app.utils.timestamps import utcnow
 class GameEventType(str, enum.Enum):
     """Types of match events."""
     goal = "goal"
+    own_goal = "own_goal"
+    penalty = "penalty"
     assist = "assist"
     yellow_card = "yellow_card"
     red_card = "red_card"
@@ -27,6 +29,7 @@ class GameEvent(Base):
     __table_args__ = (
         Index("ix_game_events_game_id", "game_id"),
         Index("ix_game_events_game_minute", "game_id", "half", "minute"),
+        Index("ix_game_events_game_type", "game_id", "event_type"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

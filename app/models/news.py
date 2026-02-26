@@ -1,7 +1,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Boolean, Date, DateTime, Enum as SQLEnum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 import enum
@@ -69,5 +69,6 @@ class News(Base):
 
     __table_args__ = (
         UniqueConstraint("translation_group_id", "language", name="uq_news_translation_group_language"),
+        Index("ix_news_language_publish_date", "language", "publish_date"),
         {"comment": "News articles in multiple languages"},
     )

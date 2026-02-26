@@ -22,8 +22,8 @@ class Club(Base):
     name_en: Mapped[str | None] = mapped_column(String(255))
     short_name: Mapped[str | None] = mapped_column(String(50))
     logo_url: Mapped[str | None] = mapped_column(FileUrlType)
-    city_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("cities.id"))
-    stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"))
+    city_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("cities.id"), index=True)
+    stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

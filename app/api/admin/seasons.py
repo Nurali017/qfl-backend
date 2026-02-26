@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
 from app.caching import invalidate_pattern
-from app.models import Season
+from app.models import Championship, Season
 from app.services.season_visibility import is_season_visible_clause
 from app.schemas.admin.seasons import (
+    AdminSeasonCreateRequest,
     AdminSeasonUpdateRequest,
     AdminSeasonResponse,
     AdminSeasonsListResponse,
@@ -53,6 +55,40 @@ async def get_season(id: int, db: AsyncSession = Depends(get_db)):
     return AdminSeasonResponse.model_validate(obj)
 
 
+@router.post("", response_model=AdminSeasonResponse, status_code=status.HTTP_201_CREATED)
+async def create_season(
+    body: AdminSeasonCreateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    if body.frontend_code != "cup":
+        raise HTTPException(status_code=400, detail="frontend_code must be 'cup'")
+
+    existing_id = await db.execute(select(Season.id).where(Season.id == body.id))
+    if existing_id.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"Season id {body.id} already exists")
+
+    championship = await db.execute(
+        select(Championship.id).where(Championship.id == body.championship_id)
+    )
+    if championship.scalar_one_or_none() is None:
+        raise HTTPException(status_code=400, detail="championship_id does not exist")
+
+    obj = Season(**body.model_dump())
+    db.add(obj)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Failed to create season: {exc.orig}") from exc
+
+    await db.refresh(obj)
+    await invalidate_pattern("*app.api.seasons*")
+    await invalidate_pattern("*app.api.cup*")
+    await invalidate_pattern("*app.api.games*")
+    await invalidate_pattern("*app.api.championships*")
+    return AdminSeasonResponse.model_validate(obj)
+
+
 @router.patch("/{id}", response_model=AdminSeasonResponse)
 async def update_season(
     id: int,
@@ -72,4 +108,7 @@ async def update_season(
     await db.commit()
     await db.refresh(obj)
     await invalidate_pattern("*app.api.seasons*")
+    await invalidate_pattern("*app.api.cup*")
+    await invalidate_pattern("*app.api.games*")
+    await invalidate_pattern("*app.api.championships*")
     return AdminSeasonResponse.model_validate(obj)

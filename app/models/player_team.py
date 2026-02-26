@@ -13,8 +13,8 @@ class PlayerTeam(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     player_id: Mapped[int] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"))
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"))
-    season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"))
+    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"), index=True)
+    season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"), index=True)
     number: Mapped[int | None] = mapped_column(Integer)
 
     # Relationships
