@@ -110,9 +110,10 @@ async def _replace_team_bindings(
 
     await _validate_binding_refs(db, team_bindings)
 
-    unique_bindings: dict[tuple[int, int], AdminPlayerTeamBindingInput] = {}
+    unique_bindings: dict[tuple[int, int, int], AdminPlayerTeamBindingInput] = {}
     for binding in team_bindings:
-        unique_bindings[(binding.team_id, binding.season_id)] = binding
+        role_key = binding.role if binding.role is not None else 1
+        unique_bindings[(binding.team_id, binding.season_id, role_key)] = binding
 
     for binding in unique_bindings.values():
         db.add(
@@ -121,6 +122,14 @@ async def _replace_team_bindings(
                 team_id=binding.team_id,
                 season_id=binding.season_id,
                 number=binding.number,
+                is_active=binding.is_active,
+                is_hidden=binding.is_hidden,
+                photo_url=binding.photo_url,
+                role=binding.role if binding.role is not None else 1,
+                amplua=binding.amplua,
+                position_ru=binding.position_ru,
+                position_kz=binding.position_kz,
+                position_en=binding.position_en,
             )
         )
 
@@ -148,6 +157,14 @@ async def _get_player_bindings(
                 team_id=player_team.team_id,
                 season_id=player_team.season_id,
                 number=player_team.number,
+                is_active=player_team.is_active,
+                is_hidden=player_team.is_hidden,
+                photo_url=player_team.photo_url,
+                role=player_team.role,
+                amplua=player_team.amplua,
+                position_ru=player_team.position_ru,
+                position_kz=player_team.position_kz,
+                position_en=player_team.position_en,
                 team_name=team.name if team else None,
                 season_name=season.name if season else None,
             )
@@ -165,6 +182,14 @@ def _serialize_player(player: Player, bindings: list[AdminPlayerTeamBindingRespo
         last_name=player.last_name,
         last_name_kz=player.last_name_kz,
         last_name_en=player.last_name_en,
+        nickname=player.nickname,
+        nickname_kz=player.nickname_kz,
+        nickname_en=player.nickname_en,
+        bio=player.bio,
+        bio_kz=player.bio_kz,
+        bio_en=player.bio_en,
+        genius_id=player.genius_id,
+        vsporte_id=player.vsporte_id,
         birthday=player.birthday,
         player_type=player.player_type,
         country_id=player.country_id,
@@ -301,11 +326,18 @@ async def create_player(
         last_name=payload.last_name,
         last_name_kz=payload.last_name_kz,
         last_name_en=payload.last_name_en,
+        nickname=payload.nickname,
+        nickname_kz=payload.nickname_kz,
+        nickname_en=payload.nickname_en,
+        bio=payload.bio,
+        bio_kz=payload.bio_kz,
+        bio_en=payload.bio_en,
+        genius_id=payload.genius_id,
+        vsporte_id=payload.vsporte_id,
         birthday=payload.birthday,
         player_type=payload.player_type,
         country_id=payload.country_id,
         photo_url=payload.photo_url,
-        age=payload.age,
         top_role=payload.top_role,
         top_role_kz=payload.top_role_kz,
         top_role_en=payload.top_role_en,
