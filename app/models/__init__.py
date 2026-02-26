@@ -30,6 +30,7 @@ from app.models.stage import Stage
 from app.models.season_participant import SeasonParticipant
 from app.models.partner import Partner
 from app.models.team_of_week import TeamOfWeek
+from app.models.cup_draw import CupDraw
 
 __all__ = [
     "Season",
@@ -69,4 +70,5 @@ __all__ = [
     "SeasonParticipant",
     "Partner",
     "TeamOfWeek",
+    "CupDraw",
 ]

@@ -29,6 +29,8 @@ from app.services.cup_rounds import (
     build_schedule_rounds,
     determine_current_round,
 )
+from app.schemas.playoff_bracket import PlayoffBracketResponse
+from app.services.cup_draw import build_bracket_from_cup_draws
 from app.services.season_visibility import is_season_visible_clause
 from app.utils.localization import get_localized_field
 
@@ -170,8 +172,54 @@ async def get_cup_overview(
             ]
             groups.append(CupGroup(group_name=group_name, standings=standings))
 
-    # 9. Bracket
-    bracket = build_playoff_bracket_from_rounds(season_id, rounds_with_games)
+    # 9. Bracket (merge game-based rounds with draw-based rounds)
+    game_bracket = build_playoff_bracket_from_rounds(season_id, rounds_with_games)
+    draw_bracket = await build_bracket_from_cup_draws(db, season_id)
+
+    if game_bracket and game_bracket.rounds and draw_bracket and draw_bracket.rounds:
+        # Build draw lookup: round_key -> {frozenset(team_ids): entry}
+        draw_round_map: dict[str, dict[str, list]] = {}
+        for dr in draw_bracket.rounds:
+            draw_round_map[dr.round_name] = {}
+            for de in dr.entries:
+                team_ids = set()
+                if de.game and de.game.home_team:
+                    team_ids.add(de.game.home_team.id)
+                if de.game and de.game.away_team:
+                    team_ids.add(de.game.away_team.id)
+                key = frozenset(team_ids)
+                draw_round_map[dr.round_name][str(key)] = de
+
+        # Enrich game entries with draw side/sort_order
+        for gr in game_bracket.rounds:
+            draw_entries = draw_round_map.get(gr.round_name, {})
+            for ge in gr.entries:
+                team_ids = set()
+                if ge.game and ge.game.home_team:
+                    team_ids.add(ge.game.home_team.id)
+                if ge.game and ge.game.away_team:
+                    team_ids.add(ge.game.away_team.id)
+                key = str(frozenset(team_ids))
+                if key in draw_entries:
+                    ge.side = draw_entries[key].side
+                    ge.sort_order = draw_entries[key].sort_order
+
+        # Merge: game rounds (now enriched) + draw-only rounds
+        game_round_keys = {r.round_name for r in game_bracket.rounds}
+        merged_rounds = list(game_bracket.rounds)
+        for dr in draw_bracket.rounds:
+            if dr.round_name not in game_round_keys:
+                merged_rounds.append(dr)
+        # Sort by playoff order
+        order = {rk: i for i, rk in enumerate(
+            ["1_32", "1_16", "1_8", "1_4", "1_2", "3rd_place", "final"]
+        )}
+        merged_rounds.sort(key=lambda r: order.get(r.round_name, 999))
+        bracket = PlayoffBracketResponse(season_id=season_id, rounds=merged_rounds)
+    elif game_bracket and game_bracket.rounds:
+        bracket = game_bracket
+    else:
+        bracket = draw_bracket
 
     return CupOverviewResponse(
         season_id=season_id,
@@ -223,3 +271,4 @@ async def get_cup_schedule(
         rounds=rounds,
         total_games=total_games,
     )
+
