@@ -8,6 +8,14 @@ class AdminPlayerTeamBindingInput(BaseModel):
     team_id: int
     season_id: int
     number: int | None = None
+    is_active: bool = True
+    is_hidden: bool = False
+    photo_url: str | None = None
+    role: int | None = None
+    amplua: int | None = None
+    position_ru: str | None = None
+    position_kz: str | None = None
+    position_en: str | None = None
 
 
 class AdminPlayerTeamBindingResponse(AdminPlayerTeamBindingInput):
@@ -23,11 +31,18 @@ class AdminPlayerCreateRequest(BaseModel):
     last_name: str | None = None
     last_name_kz: str | None = None
     last_name_en: str | None = None
+    nickname: str | None = None
+    nickname_kz: str | None = None
+    nickname_en: str | None = None
+    bio: str | None = None
+    bio_kz: str | None = None
+    bio_en: str | None = None
+    genius_id: str | None = None
+    vsporte_id: str | None = None
     birthday: date | None = None
     player_type: str | None = None
     country_id: int | None = None
     photo_url: str | None = None
-    age: int | None = None
     top_role: str | None = None
     top_role_kz: str | None = None
     top_role_en: str | None = None
@@ -42,11 +57,18 @@ class AdminPlayerUpdateRequest(BaseModel):
     last_name: str | None = None
     last_name_kz: str | None = None
     last_name_en: str | None = None
+    nickname: str | None = None
+    nickname_kz: str | None = None
+    nickname_en: str | None = None
+    bio: str | None = None
+    bio_kz: str | None = None
+    bio_en: str | None = None
+    genius_id: str | None = None
+    vsporte_id: str | None = None
     birthday: date | None = None
     player_type: str | None = None
     country_id: int | None = None
     photo_url: str | None = None
-    age: int | None = None
     top_role: str | None = None
     top_role_kz: str | None = None
     top_role_en: str | None = None
@@ -62,6 +84,14 @@ class AdminPlayerResponse(BaseModel):
     last_name: str | None = None
     last_name_kz: str | None = None
     last_name_en: str | None = None
+    nickname: str | None = None
+    nickname_kz: str | None = None
+    nickname_en: str | None = None
+    bio: str | None = None
+    bio_kz: str | None = None
+    bio_en: str | None = None
+    genius_id: str | None = None
+    vsporte_id: str | None = None
     birthday: date | None = None
     player_type: str | None = None
     country_id: int | None = None
