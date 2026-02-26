@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 
 from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi_cache.backends.redis import RedisBackend
 
 from app.config import get_settings
@@ -34,7 +35,8 @@ async def init_cache():
     """Initialize Redis cache. Call from app lifespan."""
     settings = get_settings()
     if not settings.cache_enabled:
-        logger.info("Redis cache disabled via CACHE_ENABLED=false")
+        FastAPICache.init(InMemoryBackend(), prefix="qfl", expire=0)
+        logger.info("Redis cache disabled via CACHE_ENABLED=false (using no-op backend)")
         return
     try:
         from redis import asyncio as aioredis
