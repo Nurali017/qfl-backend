@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from datetime import datetime
@@ -8,6 +10,7 @@ from app.api.deps import get_db
 from app.models.game_event import GameEvent, GameEventType
 
 router = APIRouter(prefix="/live", tags=["live"])
+logger = logging.getLogger(__name__)
 
 
 class GameEventResponse(BaseModel):

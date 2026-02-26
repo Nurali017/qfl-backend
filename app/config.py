@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     minio_bucket: str = "qfl-files"
     minio_secure: bool = False  # True for HTTPS
 
+    # SOTA API
+    sota_enabled: bool = True
+    sota_api_email: str = ""
+    sota_api_password: str = ""
+    sota_api_base_url: str = "https://sota.id/api"
+    lineup_live_refresh_ttl_seconds: int = 30
+    lineup_live_refresh_timeout_seconds: int = 3
+
     # Redis (Celery broker)
     redis_url: str = "redis://localhost:6379/0"
 
@@ -22,6 +30,9 @@ class Settings(BaseSettings):
 
     # Current season (default for API when season_id not specified)
     current_season_id: int = 200
+
+    # Seasons to sync automatically (Celery tasks)
+    sync_season_ids: list[int] = [61, 85, 71, 80, 84]
 
     # CORS
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kffleague.kz"
@@ -44,7 +55,6 @@ class Settings(BaseSettings):
     openai_timeout: int = 10
 
     # Feature flags
-    cup_draw_enabled: bool = True
     cache_enabled: bool = True
 
     class Config:
