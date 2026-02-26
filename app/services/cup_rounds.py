@@ -283,18 +283,20 @@ def build_playoff_bracket_from_rounds(
             fallback_round_order.append(round_item.round_key)
 
         entries: list[PlayoffBracketEntry] = []
+        side_counters: dict[str, int] = {"left": 0, "right": 0, "center": 0}
         for index, game in enumerate(round_item.games):
             if round_item.round_key in {"final", "3rd_place"}:
                 side = "center"
             else:
                 side = "left" if index % 2 == 0 else "right"
 
+            side_counters[side] += 1
             entries.append(
                 PlayoffBracketEntry(
                     id=synthetic_id,
                     round_name=round_item.round_key,
                     side=side,
-                    sort_order=index + 1,
+                    sort_order=side_counters[side],
                     is_third_place=round_item.round_key == "3rd_place",
                     game=_build_bracket_game(game),
                 )
