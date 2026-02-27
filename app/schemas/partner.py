@@ -1,12 +1,11 @@
 from pydantic import BaseModel
 
-from app.utils.file_urls import FileUrl
 
 
 class PartnerResponse(BaseModel):
     id: int
     name: str
-    logo_url: FileUrl = None
+    logo_url: str | None = None
     website: str | None = None
     sort_order: int = 0
     is_active: bool = True

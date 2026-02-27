@@ -3,7 +3,7 @@ Utility functions for date formatting and localization.
 """
 
 from datetime import date
-from typing import Any, Literal
+from typing import Literal
 
 
 # Weekday names in different languages (Monday = 0, Sunday = 6)
@@ -59,39 +59,3 @@ def format_match_date(
     return f"{weekday}, {game_date.day} {month} {game_date.year}"
 
 
-def get_localized_field(
-    obj: Any,
-    field_base: str,
-    language: Literal["kz", "ru", "en"] = "ru"
-) -> Any:
-    """
-    Get a localized field value from an object with fallback to default.
-
-    Looks for field_{language} first, falls back to base field if not found or None.
-
-    Args:
-        obj: Object containing the fields
-        field_base: Base field name (e.g., "name" for name/name_kz/name_en)
-        language: Language code (kz, ru, or en)
-
-    Returns:
-        Localized field value or base field value as fallback
-
-    Examples:
-        >>> get_localized_field(team, "name", "kz")
-        # Returns team.name_kz if exists and not None, otherwise team.name
-        >>> get_localized_field(stadium, "city", "en")
-        # Returns stadium.city_en if exists and not None, otherwise stadium.city
-    """
-    if language == "kz":
-        localized_value = getattr(obj, f"{field_base}_kz", None)
-        return localized_value if localized_value is not None else getattr(obj, field_base, None)
-    elif language == "en":
-        localized_value = getattr(obj, f"{field_base}_en", None)
-        return localized_value if localized_value is not None else getattr(obj, field_base, None)
-    else:  # ru or default
-        # For Russian, check if there's a _ru suffix, otherwise use base field
-        localized_value = getattr(obj, f"{field_base}_ru", None)
-        if localized_value is not None:
-            return localized_value
-        return getattr(obj, field_base, None)

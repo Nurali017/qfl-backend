@@ -20,6 +20,9 @@ class Season(Base):
     is_visible: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, server_default="true"
     )
+    is_current: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     date_start: Mapped[date | None] = mapped_column(Date)
     date_end: Mapped[date | None] = mapped_column(Date)
     sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

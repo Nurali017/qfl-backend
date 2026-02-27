@@ -99,7 +99,7 @@ async def get_cup_overview(
     all_games = await _load_games(db, season_id)
 
     # 4. Build rounds (with games for current_round detection)
-    rounds_with_games = build_schedule_rounds(all_games, stages, lang, today, include_games=True)
+    rounds_with_games = build_schedule_rounds(all_games, stages, lang, include_games=True)
 
     # 5. Determine current round
     current_round = determine_current_round(rounds_with_games)
@@ -121,26 +121,26 @@ async def get_cup_overview(
 
     # 7. Recent results + upcoming games (from all games)
     finished_games = [
-        g for g in all_games if compute_game_status(g, today) == "finished"
+        g for g in all_games if compute_game_status(g) == "finished"
     ]
     upcoming_games_raw = [
-        g for g in all_games if compute_game_status(g, today) == "upcoming"
+        g for g in all_games if compute_game_status(g) == "upcoming"
     ]
     live_games = [
-        g for g in all_games if compute_game_status(g, today) == "live"
+        g for g in all_games if compute_game_status(g) == "live"
     ]
 
     # Recent: last N finished (most recent first)
     finished_games.sort(key=lambda g: (g.date, g.time or ""), reverse=True)
     recent_results = [
-        build_cup_game(g, lang, today) for g in finished_games[:recent_limit]
+        build_cup_game(g, lang) for g in finished_games[:recent_limit]
     ]
 
     # Upcoming: live games first, then next N upcoming (soonest first)
     upcoming_games_raw.sort(key=lambda g: (g.date, g.time or ""))
-    upcoming_built = [build_cup_game(g, lang, today) for g in live_games]
+    upcoming_built = [build_cup_game(g, lang) for g in live_games]
     upcoming_built += [
-        build_cup_game(g, lang, today) for g in upcoming_games_raw[:upcoming_limit]
+        build_cup_game(g, lang) for g in upcoming_games_raw[:upcoming_limit]
     ]
 
     # 8. Groups (from SeasonParticipant entries)
@@ -258,7 +258,7 @@ async def get_cup_schedule(
     all_games = await _load_games(db, season_id)
 
     # Build rounds with full game lists
-    rounds = build_schedule_rounds(all_games, stages, lang, today, include_games=True)
+    rounds = build_schedule_rounds(all_games, stages, lang, include_games=True)
 
     # Optional filter by round_key
     if round_key:

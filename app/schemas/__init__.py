@@ -7,7 +7,7 @@ from app.schemas.season import (
 )
 from app.schemas.team import TeamResponse, TeamListResponse, TeamDetailResponse
 from app.schemas.player import PlayerResponse, PlayerListResponse, PlayerDetailResponse
-from app.schemas.game import GameResponse, GameListResponse, GameDetailResponse
+from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.stats import (
     GameTeamStatsResponse,
     GamePlayerStatsResponse,
@@ -34,7 +34,6 @@ __all__ = [
     "PlayerDetailResponse",
     "GameResponse",
     "GameListResponse",
-    "GameDetailResponse",
     "GameTeamStatsResponse",
     "GamePlayerStatsResponse",
     "GameStatsResponse",

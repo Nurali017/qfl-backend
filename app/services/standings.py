@@ -205,4 +205,5 @@ async def read_score_table(db: AsyncSession, season_id: int, group_team_ids: lis
         "goal_difference": e.goal_difference,
         "points": e.points,
         "form": e.form,
+        "note": e.note,
     } for i, e in enumerate(entries, 1)]

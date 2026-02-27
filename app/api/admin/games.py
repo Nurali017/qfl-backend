@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.models import Game, Team
+from app.models import Game, GameStatus, Team
 from app.schemas.admin.games import (
     AdminGameResponse,
     AdminGameUpdateRequest,
@@ -38,13 +38,16 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         away_score=game.away_score,
         home_penalty_score=game.home_penalty_score,
         away_penalty_score=game.away_penalty_score,
+        status=game.status,
         is_live=game.is_live,
+        is_featured=game.is_featured,
         has_lineup=game.has_lineup,
         has_stats=game.has_stats,
-        stadium=game.stadium,
         stadium_id=game.stadium_id,
         ticket_url=game.ticket_url,
         video_url=game.video_url,
+        where_broadcast=game.where_broadcast,
+        video_review_url=game.video_review_url,
         home_formation=game.home_formation,
         away_formation=game.away_formation,
         updated_at=game.updated_at,
@@ -54,7 +57,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
 @router.get("", response_model=AdminGamesListResponse)
 async def list_games(
     season_id: int | None = Query(default=None),
-    status: str | None = Query(default=None, description="upcoming, live, finished"),
+    status: str | None = Query(default=None, description="upcoming, live, finished, postponed, cancelled"),
     team_id: int | None = Query(default=None),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
@@ -82,11 +85,19 @@ async def list_games(
 
     today = date.today()
     if status == "live":
-        filters.append(Game.is_live == True)
+        filters.append(Game.status == GameStatus.live)
     elif status == "upcoming":
-        filters.append(and_(Game.is_live == False, Game.date >= today, Game.home_score.is_(None)))
+        filters.append(and_(
+            Game.status.in_([GameStatus.created]),
+            Game.date >= today,
+            Game.home_score.is_(None),
+        ))
     elif status == "finished":
-        filters.append(and_(Game.is_live == False, Game.home_score.isnot(None)))
+        filters.append(Game.status == GameStatus.finished)
+    elif status == "postponed":
+        filters.append(Game.status == GameStatus.postponed)
+    elif status == "cancelled":
+        filters.append(Game.status == GameStatus.cancelled)
 
     if filters:
         query = query.where(*filters)

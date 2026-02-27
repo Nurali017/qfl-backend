@@ -1,13 +1,25 @@
+import enum
 from datetime import datetime, date, time
 from uuid import UUID
-from sqlalchemy import Integer, String, Date, Time, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Integer, String, Date, Time, Boolean, DateTime, ForeignKey, Index, Enum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.sql_types import GAME_ID_SQL_TYPE
 from app.utils.file_urls import FileUrlType
 from app.utils.timestamps import utcnow
+
+
+class GameStatus(str, enum.Enum):
+    """Match status."""
+    created = "created"
+    live = "live"
+    finished = "finished"
+    postponed = "postponed"
+    cancelled = "cancelled"
+    technical_defeat = "technical_defeat"
 
 
 class Game(Base):
@@ -33,13 +45,21 @@ class Game(Base):
     away_penalty_score: Mapped[int | None] = mapped_column(Integer)
     has_stats: Mapped[bool] = mapped_column(Boolean, default=False)
     has_lineup: Mapped[bool] = mapped_column(Boolean, default=False)
-    is_technical: Mapped[bool] = mapped_column(Boolean, default=False)
     is_schedule_tentative: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
 
+    # Game status enum — single source of truth for match lifecycle
+    status: Mapped[GameStatus] = mapped_column(
+        Enum(GameStatus), nullable=False, default=GameStatus.created, server_default="created"
+    )
+
+    # Featured match flag (В-2)
+    is_featured: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
     # Live match tracking
-    is_live: Mapped[bool] = mapped_column(Boolean, default=False)
     home_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-2-3-1"
     away_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-3-3"
     home_kit_color: Mapped[str | None] = mapped_column(String(10))
@@ -49,17 +69,39 @@ class Game(Base):
     lineup_render_mode: Mapped[str | None] = mapped_column(String(16))  # field, list, hidden
     lineup_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    # Stadium - keep string for backward compatibility, add FK
-    stadium: Mapped[str | None] = mapped_column(String(255))  # Legacy field
-    stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"))
+    # Stadium FK
+    stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"), index=True)
 
     visitors: Mapped[int | None] = mapped_column(Integer)
     ticket_url: Mapped[str | None] = mapped_column(String(500))  # URL for ticket purchase
     video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
+
+    # Broadcast fields (В-1)
+    where_broadcast: Mapped[str | None] = mapped_column(String(500))  # Where to watch
+    video_review_url: Mapped[str | None] = mapped_column(String(500))  # Video review URL
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow
     )
+
+    # Derived boolean helpers (backward-compatible with removed columns)
+    @hybrid_property
+    def is_live(self) -> bool:
+        return self.status == GameStatus.live
+
+    @is_live.inplace.expression
+    @classmethod
+    def _is_live_expression(cls):
+        return cls.status == GameStatus.live
+
+    @hybrid_property
+    def is_technical(self) -> bool:
+        return self.status == GameStatus.technical_defeat
+
+    @is_technical.inplace.expression
+    @classmethod
+    def _is_technical_expression(cls):
+        return cls.status == GameStatus.technical_defeat
 
     # Relationships
     season: Mapped["Season"] = relationship("Season", back_populates="games")

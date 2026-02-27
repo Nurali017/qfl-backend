@@ -5,6 +5,7 @@ from uuid import uuid4
 from httpx import AsyncClient
 
 from app.models import Season, Team, Game, Stage, SeasonParticipant, Championship
+from app.models.game import GameStatus
 
 
 @pytest.fixture
@@ -67,20 +68,20 @@ async def cup_games(test_session, cup_season, cup_teams, cup_stages) -> list[Gam
             id=1001, sota_id=uuid4(), date=today - timedelta(days=10), time=time(18, 0),
             season_id=cup_season.id, stage_id=cup_stages[0].id,
             home_team_id=cup_teams[0].id, away_team_id=cup_teams[1].id,
-            home_score=2, away_score=1,
+            home_score=2, away_score=1, status=GameStatus.finished,
         ),
         Game(
             id=1002, sota_id=uuid4(), date=today - timedelta(days=9), time=time(18, 0),
             season_id=cup_season.id, stage_id=cup_stages[0].id,
             home_team_id=cup_teams[2].id, away_team_id=cup_teams[3].id,
-            home_score=1, away_score=0,
+            home_score=1, away_score=0, status=GameStatus.finished,
         ),
         # SF: one finished, one upcoming
         Game(
             id=1003, sota_id=uuid4(), date=today - timedelta(days=3), time=time(19, 0),
             season_id=cup_season.id, stage_id=cup_stages[1].id,
             home_team_id=cup_teams[0].id, away_team_id=cup_teams[2].id,
-            home_score=3, away_score=2,
+            home_score=3, away_score=2, status=GameStatus.finished,
         ),
         Game(
             id=1004, sota_id=uuid4(), date=today + timedelta(days=5), time=time(19, 0),
@@ -130,7 +131,7 @@ class TestCupOverview:
         data = response.json()
         assert data["season_id"] == cup_season.id
         assert data["season_name"] == "Кубок 2025"
-        assert data["championship_name"] == "Кубок Казахстана"
+        assert data["championship_name"] == "Қазақстан Кубогы"
         assert data["rounds"] == []
         assert data["recent_results"] == []
         assert data["upcoming_games"] == []

@@ -1,13 +1,12 @@
 from pydantic import BaseModel
 
-from app.utils.file_urls import FileUrl
 
 
 class CoachResponse(BaseModel):
     id: int
     first_name: str
     last_name: str
-    photo_url: FileUrl = None
+    photo_url: str | None = None
     role: str
     country: dict | None = None
 

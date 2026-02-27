@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_db
@@ -102,7 +102,15 @@ async def update_season(
     if not obj:
         raise HTTPException(status_code=404, detail="Season not found")
 
-    for key, value in body.model_dump(exclude_unset=True).items():
+    update_data = body.model_dump(exclude_unset=True)
+
+    # Auto-reset: when setting is_current=True, reset all other seasons first
+    if update_data.get("is_current") is True:
+        await db.execute(
+            update(Season).where(Season.id != id, Season.is_current == True).values(is_current=False)
+        )
+
+    for key, value in update_data.items():
         setattr(obj, key, value)
 
     await db.commit()

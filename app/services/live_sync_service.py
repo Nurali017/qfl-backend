@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Game, GameEvent, GameEventType, GameLineup, GameTeamStats, LineupType, Team, Player
+from app.models import Game, GameEvent, GameEventType, GameLineup, GameTeamStats, GameStatus, LineupType, Team, Player
 from app.services.sota_client import SotaClient
 from app.services.sync.lineup_sync import LineupSyncService
 from app.utils.team_name_matcher import TeamNameMatcher
@@ -27,8 +27,10 @@ ACTION_TYPE_MAP = {
     "ГОЛ": GameEventType.goal,
     "АВТОГОЛ": GameEventType.own_goal,
     "ПЕНАЛЬТИ": GameEventType.penalty,
+    "НЕЗАБИТЫЙ ПЕНАЛЬТИ": GameEventType.missed_penalty,
     "ГОЛЕВОЙ ПАС": GameEventType.assist,
     "ЖК": GameEventType.yellow_card,
+    "2ЖК": GameEventType.second_yellow,
     "КК": GameEventType.red_card,
     "ЗАМЕНА": GameEventType.substitution,
 }
@@ -56,7 +58,7 @@ class LiveSyncService:
                     Game.date == today,
                     Game.time >= current_time,
                     Game.time <= cutoff_time,
-                    Game.is_live == False,
+                    Game.status == GameStatus.created,
                     Game.has_lineup == False,
                 )
             )
@@ -66,7 +68,7 @@ class LiveSyncService:
     async def get_active_games(self) -> list[Game]:
         """Get games that are currently live."""
         result = await self.db.execute(
-            select(Game).where(Game.is_live == True)
+            select(Game).where(Game.status == GameStatus.live)
         )
         return list(result.scalars().all())
 
@@ -78,7 +80,7 @@ class LiveSyncService:
         result = await self.db.execute(
             select(Game).where(
                 and_(
-                    Game.is_live == True,
+                    Game.status == GameStatus.live,
                     Game.date <= cutoff.date(),
                 )
             )
@@ -651,7 +653,7 @@ class LiveSyncService:
         if not game.has_lineup:
             await self.sync_pregame_lineup(game_id)
 
-        game.is_live = True
+        game.status = GameStatus.live
         await self.db.commit()
 
         events = await self.sync_live_events(game_id)
@@ -668,7 +670,7 @@ class LiveSyncService:
         if not game:
             return {"error": f"Game {game_id} not found"}
 
-        game.is_live = False
+        game.status = GameStatus.finished
         await self.db.commit()
 
         return {

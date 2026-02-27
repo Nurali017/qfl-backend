@@ -1,13 +1,12 @@
 from pydantic import BaseModel
 
-from app.utils.file_urls import FileUrl
 
 
 class ClubResponse(BaseModel):
     id: int
     name: str
     short_name: str | None = None
-    logo_url: FileUrl = None
+    logo_url: str | None = None
     city_name: str | None = None
     is_active: bool = True
 
@@ -18,7 +17,7 @@ class ClubResponse(BaseModel):
 class TeamBrief(BaseModel):
     id: int
     name: str
-    logo_url: FileUrl = None
+    logo_url: str | None = None
 
     class Config:
         from_attributes = True

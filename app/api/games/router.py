@@ -10,14 +10,19 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import (
-    Game, Team, Stadium, GameReferee, Season,
+    Game, GameStatus, Team, Stadium, GameReferee, Season,
 )
-from app.utils.date_helpers import get_localized_field
+from app.schemas.game import (
+    GameDetailItem, GameListItem, MatchCenterResponse,
+    StadiumInfo, TeamInMatchCenter,
+)
+from app.schemas.team import TeamInGame
+from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.game_status import compute_game_status
 from app.utils.game_grouping import group_games_by_date
 from app.config import get_settings
-from app.services.season_visibility import ensure_visible_season_or_404
+from app.services.season_visibility import ensure_visible_season_or_404, get_current_season_id
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids
 from fastapi_cache.decorator import cache
 
@@ -25,6 +30,34 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/games", tags=["games"])
+
+
+def _build_team_in_match_center(team: Team | None, lang: str) -> TeamInMatchCenter | None:
+    if not team:
+        return None
+    return TeamInMatchCenter(
+        id=team.id,
+        name=get_localized_field(team, "name", lang),
+        name_kz=team.name_kz,
+        name_en=team.name_en,
+        logo_url=resolve_team_logo_url(team),
+        primary_color=team.primary_color,
+        secondary_color=team.secondary_color,
+        accent_color=team.accent_color,
+    )
+
+
+def _build_stadium_info(stadium: Stadium | None, lang: str) -> StadiumInfo | None:
+    if not stadium:
+        return None
+    return StadiumInfo(
+        id=stadium.id,
+        name=get_localized_field(stadium, "name", lang),
+        city=get_localized_field(stadium, "city", lang),
+        capacity=stadium.capacity,
+        address=get_localized_field(stadium, "address", lang),
+        photo_url=stadium.photo_url,
+    )
 
 
 @router.get("")
@@ -72,7 +105,7 @@ async def get_games(
     `group` and `final=true` cannot be used together.
     """
     if season_id is None:
-        season_id = settings.current_season_id
+        season_id = await get_current_season_id(db)
     await ensure_visible_season_or_404(db, season_id)
 
     if group and final:
@@ -141,10 +174,11 @@ async def get_games(
     if hide_past:
         query = query.where(Game.date >= today)
 
-    # Status filtering
+    # Status filtering (uses GameStatus enum where set, falls back to derived logic)
     if status and status != "all":
         if status == "upcoming":
             query = query.where(
+                Game.status == GameStatus.created,
                 or_(
                     Game.date > today,
                     (Game.date == today) & (Game.home_score.is_(None))
@@ -153,12 +187,14 @@ async def get_games(
         elif status == "finished":
             query = query.where(
                 or_(
-                    Game.home_score.is_not(None),
-                    Game.date < today
+                    Game.status == GameStatus.finished,
+                    Game.status == GameStatus.technical_defeat,
+                    (Game.status == GameStatus.created) & (Game.home_score.is_not(None)),
+                    (Game.status == GameStatus.created) & (Game.date < today),
                 )
             )
         elif status == "live":
-            query = query.where(Game.is_live == True)
+            query = query.where(Game.status == GameStatus.live)
 
     # Count total
     count_query = select(func.count()).select_from(query.subquery())
@@ -182,46 +218,9 @@ async def get_games(
     result = await db.execute(query)
     games = result.scalars().all()
 
-    # Build response with localized fields
-    def build_team_dict(team: Team | None, score: int | None) -> dict | None:
-        if not team:
-            return None
-
-        return {
-            "id": team.id,
-            "name": get_localized_field(team, "name", lang),
-            "name_kz": team.name_kz,
-            "name_en": team.name_en,
-            "logo_url": resolve_team_logo_url(team),
-            "primary_color": team.primary_color,
-            "secondary_color": team.secondary_color,
-            "accent_color": team.accent_color,
-        }
-
-    def build_stadium_dict(stadium: Stadium | None) -> dict | None:
-        if not stadium:
-            return None
-
-        return {
-            "id": stadium.id,
-            "name": get_localized_field(stadium, "name", lang),
-            "city": get_localized_field(stadium, "city", lang),
-            "capacity": stadium.capacity,
-            "address": get_localized_field(stadium, "address", lang),
-            "photo_url": stadium.photo_url,
-        }
-
     # Return grouped format if requested
     if group_by_date:
-        grouped = group_games_by_date(games, lang, today)
-
-        # Add team and stadium info to each game
-        for group_item in grouped:
-            for game_dict in group_item["games"]:
-                game_obj = game_dict.pop("game_obj")
-                game_dict["home_team"] = build_team_dict(game_obj.home_team, game_obj.home_score)
-                game_dict["away_team"] = build_team_dict(game_obj.away_team, game_obj.away_score)
-                game_dict["stadium"] = build_stadium_dict(game_obj.stadium_rel)
+        grouped = group_games_by_date(games, lang)
 
         # Full date ranges for tentative tours (ignores filters like team_ids)
         tent_query = (
@@ -244,46 +243,48 @@ async def get_games(
             if row.date_from != row.date_to
         }
 
-        return {
-            "groups": grouped,
-            "total": total,
-            "tentative_tour_dates": tentative_tour_dates,
-        }
+        return MatchCenterResponse(
+            groups=grouped,
+            total=total,
+            tentative_tour_dates=tentative_tour_dates,
+        )
 
     # Standard list format
     items = []
     for g in games:
-        game_status = compute_game_status(g, today)
+        game_status = compute_game_status(g)
 
-        items.append({
-            "id": g.id,
-            "date": g.date.isoformat() if g.date else None,
-            "time": g.time.isoformat() if g.time else None,
-            "tour": g.tour,
-            "season_id": g.season_id,
-            "stage_id": g.stage_id,
-            "stage_name": get_localized_field(g.stage, "name", lang) if g.stage else None,
-            "home_score": g.home_score,
-            "away_score": g.away_score,
-            "home_penalty_score": g.home_penalty_score,
-            "away_penalty_score": g.away_penalty_score,
-            "has_stats": g.has_stats,
-            "has_lineup": g.has_lineup,
-            "is_live": g.is_live,
-            "is_technical": g.is_technical,
-            "is_schedule_tentative": g.is_schedule_tentative,
-            "stadium": g.stadium,  # Legacy field
-            "visitors": g.visitors,
-            "status": game_status,
-            "has_score": g.home_score is not None and g.away_score is not None,
-            "ticket_url": getattr(g, "ticket_url", None),
-            "video_url": g.video_url,
-            "protocol_url": g.protocol_url,
-            "home_team": build_team_dict(g.home_team, g.home_score),
-            "away_team": build_team_dict(g.away_team, g.away_score),
-            "stadium_info": build_stadium_dict(g.stadium_rel),
-            "season_name": get_localized_field(g.season, "name", lang) if g.season else None,
-        })
+        items.append(GameListItem(
+            id=g.id,
+            date=g.date,
+            time=g.time,
+            tour=g.tour,
+            season_id=g.season_id,
+            stage_id=g.stage_id,
+            stage_name=get_localized_field(g.stage, "name", lang) if g.stage else None,
+            home_score=g.home_score,
+            away_score=g.away_score,
+            home_penalty_score=g.home_penalty_score,
+            away_penalty_score=g.away_penalty_score,
+            has_stats=g.has_stats,
+            has_lineup=g.has_lineup,
+            is_live=g.is_live,
+            is_technical=g.is_technical,
+            is_schedule_tentative=g.is_schedule_tentative,
+            is_featured=g.is_featured,
+            visitors=g.visitors,
+            status=game_status,
+            has_score=g.home_score is not None and g.away_score is not None,
+            ticket_url=getattr(g, "ticket_url", None),
+            video_url=g.video_url,
+            protocol_url=g.protocol_url,
+            where_broadcast=g.where_broadcast,
+            video_review_url=g.video_review_url,
+            home_team=_build_team_in_match_center(g.home_team, lang),
+            away_team=_build_team_in_match_center(g.away_team, lang),
+            stadium_info=_build_stadium_info(g.stadium_rel, lang),
+            season_name=get_localized_field(g.season, "name", lang) if g.season else None,
+        ))
 
     return {"items": items, "total": total}
 
@@ -316,37 +317,25 @@ async def get_game(
     home_team = None
     away_team = None
     if game.home_team:
-        home_team = {
-            "id": game.home_team.id,
-            "name": get_localized_field(game.home_team, "name", lang),
-            "logo_url": resolve_team_logo_url(game.home_team),
-            "score": game.home_score,
-            "primary_color": game.home_team.primary_color,
-            "secondary_color": game.home_team.secondary_color,
-            "accent_color": game.home_team.accent_color,
-        }
+        home_team = TeamInGame(
+            id=game.home_team.id,
+            name=get_localized_field(game.home_team, "name", lang),
+            logo_url=resolve_team_logo_url(game.home_team),
+            score=game.home_score,
+            primary_color=game.home_team.primary_color,
+            secondary_color=game.home_team.secondary_color,
+            accent_color=game.home_team.accent_color,
+        )
     if game.away_team:
-        away_team = {
-            "id": game.away_team.id,
-            "name": get_localized_field(game.away_team, "name", lang),
-            "logo_url": resolve_team_logo_url(game.away_team),
-            "score": game.away_score,
-            "primary_color": game.away_team.primary_color,
-            "secondary_color": game.away_team.secondary_color,
-            "accent_color": game.away_team.accent_color,
-        }
-
-    # Build stadium object
-    stadium_dict = None
-    if game.stadium_rel:
-        stadium_dict = {
-            "id": game.stadium_rel.id,
-            "name": get_localized_field(game.stadium_rel, "name", lang),
-            "city": get_localized_field(game.stadium_rel, "city", lang),
-            "capacity": game.stadium_rel.capacity,
-            "address": get_localized_field(game.stadium_rel, "address", lang),
-            "photo_url": game.stadium_rel.photo_url,
-        }
+        away_team = TeamInGame(
+            id=game.away_team.id,
+            name=get_localized_field(game.away_team, "name", lang),
+            logo_url=resolve_team_logo_url(game.away_team),
+            score=game.away_score,
+            primary_color=game.away_team.primary_color,
+            secondary_color=game.away_team.secondary_color,
+            accent_color=game.away_team.accent_color,
+        )
 
     # Get main referee name
     referee_name = None
@@ -365,36 +354,37 @@ async def get_game(
                 last_name = ref.last_name
             referee_name = f"{first_name} {last_name}".strip()
 
-    # Compute game status
-    today = date_type.today()
-    game_status = compute_game_status(game, today)
+    game_status = compute_game_status(game)
 
-    return {
-        "id": game.id,
-        "date": game.date.isoformat() if game.date else None,
-        "time": game.time.isoformat() if game.time else None,
-        "tour": game.tour,
-        "season_id": game.season_id,
-        "stage_id": game.stage_id,
-        "stage_name": get_localized_field(game.stage, "name", lang) if game.stage else None,
-        "home_score": game.home_score,
-        "away_score": game.away_score,
-        "home_penalty_score": game.home_penalty_score,
-        "away_penalty_score": game.away_penalty_score,
-        "has_stats": game.has_stats,
-        "has_lineup": game.has_lineup,
-        "is_live": game.is_live,
-        "is_technical": game.is_technical,
-        "is_schedule_tentative": game.is_schedule_tentative,
-        "stadium": stadium_dict,
-        "referee": referee_name,
-        "visitors": game.visitors,
-        "ticket_url": game.ticket_url,
-        "video_url": game.video_url,
-        "protocol_url": game.protocol_url,
-        "status": game_status,
-        "has_score": game.home_score is not None and game.away_score is not None,
-        "home_team": home_team,
-        "away_team": away_team,
-        "season_name": game.season.name if game.season else None,
-    }
+    return GameDetailItem(
+        id=game.id,
+        date=game.date,
+        time=game.time,
+        tour=game.tour,
+        season_id=game.season_id,
+        stage_id=game.stage_id,
+        stage_name=get_localized_field(game.stage, "name", lang) if game.stage else None,
+        home_score=game.home_score,
+        away_score=game.away_score,
+        home_penalty_score=game.home_penalty_score,
+        away_penalty_score=game.away_penalty_score,
+        has_stats=game.has_stats,
+        has_lineup=game.has_lineup,
+        is_live=game.is_live,
+        is_technical=game.is_technical,
+        is_schedule_tentative=game.is_schedule_tentative,
+        is_featured=game.is_featured,
+        stadium=_build_stadium_info(game.stadium_rel, lang),
+        referee=referee_name,
+        visitors=game.visitors,
+        ticket_url=game.ticket_url,
+        video_url=game.video_url,
+        protocol_url=game.protocol_url,
+        where_broadcast=game.where_broadcast,
+        video_review_url=game.video_review_url,
+        status=game_status,
+        has_score=game.home_score is not None and game.away_score is not None,
+        home_team=home_team,
+        away_team=away_team,
+        season_name=game.season.name if game.season else None,
+    )

@@ -336,14 +336,12 @@ class TestTeamsAPI:
             first_name="Dastan",
             last_name="Satpayev",
             player_type="forward",
-            age=20,
             top_role="CF",
         )
         player_2 = Player(
             first_name="Georgi",
             last_name="Zaria",
             player_type="midfielder",
-            age=27,
             top_role="CM",
         )
         test_session.add_all([player_1, player_2])
@@ -439,7 +437,6 @@ class TestTeamsAPI:
             home_score=3,
             away_score=1,
             has_stats=True,
-            stadium="Central Stadium",
             visitors=12000,
         )
         test_session.add(h2h_game)
@@ -493,7 +490,6 @@ class TestTeamsAPI:
             home_score=1,
             away_score=0,
             has_stats=True,
-            stadium="H2H Stadium",
             visitors=12000,
         )
         team1_big_win_game = Game(
@@ -507,7 +503,6 @@ class TestTeamsAPI:
             home_score=5,
             away_score=1,
             has_stats=True,
-            stadium="Big Win Stadium",
             visitors=14000,
         )
         team1_worst_defeat_game = Game(
@@ -521,7 +516,6 @@ class TestTeamsAPI:
             home_score=3,
             away_score=0,
             has_stats=True,
-            stadium="Worst Defeat Stadium",
             visitors=13000,
         )
         team2_big_win_game = Game(
@@ -535,7 +529,6 @@ class TestTeamsAPI:
             home_score=4,
             away_score=0,
             has_stats=True,
-            stadium="Team2 Big Win Stadium",
             visitors=11000,
         )
         team2_worst_defeat_game = Game(
@@ -549,7 +542,6 @@ class TestTeamsAPI:
             home_score=4,
             away_score=1,
             has_stats=True,
-            stadium="Team2 Worst Defeat Stadium",
             visitors=9000,
         )
         test_session.add_all(

@@ -38,7 +38,7 @@ async def get_players(
     if season_id is not None:
         await ensure_visible_season_or_404(db, season_id)
 
-    query = select(Player).options(selectinload(Player.country))
+    query = select(Player).options(selectinload(Player.country), selectinload(Player.player_teams))
 
     if season_id or team_id:
         subquery = select(PlayerTeam.player_id)
@@ -76,7 +76,7 @@ async def get_players(
             "birthday": p.birthday,
             "player_type": p.player_type,
             "country": country_data,
-            "photo_url": p.photo_url,
+            "photo_url": next((pt.photo_url for pt in p.player_teams if pt.photo_url and (not season_id or pt.season_id == season_id) and (not team_id or pt.team_id == team_id)), None) or p.photo_url,
             "age": p.age,
             "top_role": get_localized_field(p, "top_role", lang),
         })
@@ -136,7 +136,7 @@ async def get_player(
         "birthday": player.birthday,
         "player_type": player.player_type,
         "country": country_data,
-        "photo_url": player.photo_url,
+        "photo_url": (player_teams_filtered[0].photo_url if player_teams_filtered else None) or player.photo_url,
         "age": player.age,
         "top_role": get_localized_field(player, "top_role", lang),
         "teams": teams,
@@ -247,7 +247,6 @@ async def get_player_games(
                 home_score=g.home_score,
                 away_score=g.away_score,
                 has_stats=g.has_stats,
-                stadium=g.stadium,
                 visitors=g.visitors,
                 home_team=home_team,
                 away_team=away_team,
@@ -310,7 +309,7 @@ async def get_player_teammates(
                     jersey_number=pt.number,
                     position=get_localized_field(pt.player, "top_role", lang),
                     age=pt.player.age,
-                    photo_url=pt.player.photo_url,
+                    photo_url=pt.photo_url or pt.player.photo_url,
                 )
             )
 

@@ -18,10 +18,9 @@ from app.services.sync.base import (
     BaseSyncService, parse_date, parse_time,
     GAME_PLAYER_STATS_FIELDS, GAME_TEAM_STATS_FIELDS,
 )
-from app.config import get_settings
+from app.services.season_visibility import get_current_season_id
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 
 class GameSyncService(BaseSyncService):
@@ -76,7 +75,6 @@ class GameSyncService(BaseSyncService):
                 home_score=home_team.get("score") if home_team else None,
                 away_score=away_team.get("score") if away_team else None,
                 has_stats=g.get("has_stats", False),
-                stadium=stadium_name,
                 stadium_id=stadium_id,
                 visitors=g.get("visitors"),
                 updated_at=datetime.utcnow(),
@@ -90,7 +88,6 @@ class GameSyncService(BaseSyncService):
                     "home_score": stmt.excluded.home_score,
                     "away_score": stmt.excluded.away_score,
                     "has_stats": stmt.excluded.has_stats,
-                    "stadium": stmt.excluded.stadium,
                     "stadium_id": stmt.excluded.stadium_id,
                     "visitors": stmt.excluded.visitors,
                     "updated_at": stmt.excluded.updated_at,
@@ -465,7 +462,7 @@ class GameSyncService(BaseSyncService):
             Dict with sync results
         """
         if season_id is None:
-            season_id = settings.current_season_id
+            season_id = await get_current_season_id(self.db)
 
         # Get all games for the season
         result = await self.db.execute(
@@ -503,7 +500,7 @@ class GameSyncService(BaseSyncService):
         using special markers like STADIUM, TIME, VENUE, DATE.
         """
         if season_id is None:
-            season_id = settings.current_season_id
+            season_id = await get_current_season_id(self.db)
 
         # Get games without stadium or time
         result = await self.db.execute(
@@ -546,7 +543,6 @@ class GameSyncService(BaseSyncService):
                     stadium_id = await self._get_or_create_stadium(stadium_name)
                     if stadium_id:
                         game.stadium_id = stadium_id
-                        game.stadium = stadium_name
                         game_updated = True
 
                 if time_str and not game.time:
@@ -580,7 +576,7 @@ class GameSyncService(BaseSyncService):
         /em/<game_id>-team-away.json endpoints.
         """
         if season_id is None:
-            season_id = settings.current_season_id
+            season_id = await get_current_season_id(self.db)
 
         # Get games without formations
         result = await self.db.execute(

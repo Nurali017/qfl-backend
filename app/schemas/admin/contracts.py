@@ -9,6 +9,7 @@ class AdminContractListItem(BaseModel):
     player_last_name: str | None
     player_first_name: str | None
     player_sota_id: UUID | None
+    player_photo_url: str | None   # Player.photo_url — fallback when contract photo is absent
     team_id: int
     team_name: str | None
     season_id: int
@@ -85,3 +86,29 @@ class AdminContractMetaResponse(BaseModel):
     players: list[AdminContractMetaPlayer]
     teams: list[AdminContractMetaTeam]
     seasons: list[AdminContractMetaSeason]
+
+
+class AdminContractBulkCopyItem(BaseModel):
+    """Optional field overrides for a single contract during bulk copy."""
+    player_id: int
+    role: int
+    number: int | None = None
+    amplua: int | None = None
+    position_ru: str | None = None
+    position_kz: str | None = None
+    position_en: str | None = None
+    photo_url: str | None = None
+
+
+class AdminContractBulkCopyRequest(BaseModel):
+    source_season_id: int
+    target_season_id: int
+    team_id: int
+    excluded_player_ids: list[int] = []
+    overrides: list[AdminContractBulkCopyItem] = []
+
+
+class AdminContractBulkCopyResponse(BaseModel):
+    created: int
+    skipped: int
+    excluded: int

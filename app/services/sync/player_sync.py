@@ -71,7 +71,6 @@ class PlayerSyncService(BaseSyncService):
                 birthday=parse_date(p.get("birthday")),
                 player_type=p.get("type"),
                 country_id=country_id,
-                age=p.get("age"),
                 top_role=p.get("top_role"),  # Russian as default
                 # top_role_kz not synced - SOTA returns English for kk
                 top_role_en=p_en.get("top_role"),
@@ -88,7 +87,6 @@ class PlayerSyncService(BaseSyncService):
                 "birthday": stmt.excluded.birthday,
                 "player_type": stmt.excluded.player_type,
                 "country_id": stmt.excluded.country_id,
-                "age": stmt.excluded.age,
                 "top_role": stmt.excluded.top_role,
                 "top_role_en": stmt.excluded.top_role_en,
                 "updated_at": stmt.excluded.updated_at,

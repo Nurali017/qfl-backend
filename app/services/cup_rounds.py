@@ -1,6 +1,5 @@
 import logging
 import re
-from datetime import date as date_type
 
 from app.utils.game_status import compute_game_status
 from app.models import Game, Stage
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 PLAYOFF_ROUND_ORDER = ["1_32", "1_16", "1_8", "1_4", "1_2", "3rd_place", "final"]
 
 
-def build_cup_game(game: Game, lang: str, today: date_type) -> CupGameBrief:
+def build_cup_game(game: Game, lang: str) -> CupGameBrief:
     """Build a CupGameBrief from a Game ORM object."""
     home_team = None
     away_team = None
@@ -42,7 +41,7 @@ def build_cup_game(game: Game, lang: str, today: date_type) -> CupGameBrief:
     if game.stage:
         stage_name = get_localized_field(game.stage, "name", lang)
 
-    status = compute_game_status(game, today)
+    status = compute_game_status(game)
     return CupGameBrief(
         id=game.id,
         date=game.date,
@@ -165,7 +164,6 @@ def build_schedule_rounds(
     games: list[Game],
     stages: list[Stage],
     lang: str,
-    today: date_type,
     include_games: bool = True,
 ) -> list[CupRound]:
     """Group games by stage into CupRound objects."""
@@ -184,8 +182,8 @@ def build_schedule_rounds(
 
     for stage in sorted_stages:
         stage_games = games_by_stage.get(stage.id, [])
-        played_games = sum(1 for game in stage_games if compute_game_status(game, today) == "finished")
-        round_games = [build_cup_game(game, lang, today) for game in stage_games] if include_games else []
+        played_games = sum(1 for game in stage_games if compute_game_status(game) == "finished")
+        round_games = [build_cup_game(game, lang) for game in stage_games] if include_games else []
 
         rounds.append(
             CupRound(
@@ -204,8 +202,8 @@ def build_schedule_rounds(
             "Cup schedule contains %s games without valid stage_id; mapped to 'other' bucket",
             len(orphan_games),
         )
-        played_games = sum(1 for game in orphan_games if compute_game_status(game, today) == "finished")
-        round_games = [build_cup_game(game, lang, today) for game in orphan_games] if include_games else []
+        played_games = sum(1 for game in orphan_games if compute_game_status(game) == "finished")
+        round_games = [build_cup_game(game, lang) for game in orphan_games] if include_games else []
         rounds.append(
             CupRound(
                 stage_id=None,

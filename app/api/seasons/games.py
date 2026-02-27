@@ -7,8 +7,10 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import Game
+from app.schemas.game import SeasonGameItem, StageGameItem
+from app.schemas.team import TeamWithScore
 from app.services.season_visibility import ensure_visible_season_or_404
-from app.utils.localization import get_localized_field
+from app.utils.localization import get_localized_field, get_localized_name
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -32,6 +34,7 @@ async def get_season_games(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
             selectinload(Game.season),
+            selectinload(Game.stadium_rel),
         )
         .order_by(Game.date.desc(), Game.time.desc())
     )
@@ -47,36 +50,40 @@ async def get_season_games(
         home_team = None
         away_team = None
         if g.home_team:
-            home_team = {
-                "id": g.home_team.id,
-                "name": get_localized_field(g.home_team, "name", lang),
-                "logo_url": g.home_team.logo_url,
-                "score": g.home_score,
-            }
+            home_team = TeamWithScore(
+                id=g.home_team.id,
+                name=get_localized_field(g.home_team, "name", lang),
+                logo_url=g.home_team.logo_url,
+                score=g.home_score,
+            )
         if g.away_team:
-            away_team = {
-                "id": g.away_team.id,
-                "name": get_localized_field(g.away_team, "name", lang),
-                "logo_url": g.away_team.logo_url,
-                "score": g.away_score,
-            }
+            away_team = TeamWithScore(
+                id=g.away_team.id,
+                name=get_localized_field(g.away_team, "name", lang),
+                logo_url=g.away_team.logo_url,
+                score=g.away_score,
+            )
 
-        items.append({
-            "id": g.id,
-            "date": g.date.isoformat() if g.date else None,
-            "time": g.time.isoformat() if g.time else None,
-            "tour": g.tour,
-            "season_id": g.season_id,
-            "home_score": g.home_score,
-            "away_score": g.away_score,
-            "has_stats": g.has_stats,
-            "is_schedule_tentative": g.is_schedule_tentative,
-            "stadium": g.stadium,
-            "visitors": g.visitors,
-            "home_team": home_team,
-            "away_team": away_team,
-            "season_name": g.season.name if g.season else None,
-        })
+        stadium_name = None
+        if g.stadium_rel:
+            stadium_name = get_localized_name(g.stadium_rel, lang)
+
+        items.append(SeasonGameItem(
+            id=g.id,
+            date=g.date,
+            time=g.time,
+            tour=g.tour,
+            season_id=g.season_id,
+            home_score=g.home_score,
+            away_score=g.away_score,
+            has_stats=g.has_stats,
+            is_schedule_tentative=g.is_schedule_tentative,
+            stadium=stadium_name,
+            visitors=g.visitors,
+            home_team=home_team,
+            away_team=away_team,
+            season_name=g.season.name if g.season else None,
+        ))
 
     return {"items": items, "total": len(items)}
 
@@ -98,6 +105,7 @@ async def get_stage_games(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
             selectinload(Game.season),
+            selectinload(Game.stadium_rel),
         )
         .order_by(Game.date, Game.time)
     )
@@ -108,37 +116,41 @@ async def get_stage_games(
         home_team = None
         away_team = None
         if g.home_team:
-            home_team = {
-                "id": g.home_team.id,
-                "name": get_localized_field(g.home_team, "name", lang),
-                "logo_url": g.home_team.logo_url,
-                "score": g.home_score,
-            }
+            home_team = TeamWithScore(
+                id=g.home_team.id,
+                name=get_localized_field(g.home_team, "name", lang),
+                logo_url=g.home_team.logo_url,
+                score=g.home_score,
+            )
         if g.away_team:
-            away_team = {
-                "id": g.away_team.id,
-                "name": get_localized_field(g.away_team, "name", lang),
-                "logo_url": g.away_team.logo_url,
-                "score": g.away_score,
-            }
+            away_team = TeamWithScore(
+                id=g.away_team.id,
+                name=get_localized_field(g.away_team, "name", lang),
+                logo_url=g.away_team.logo_url,
+                score=g.away_score,
+            )
 
-        items.append({
-            "id": g.id,
-            "date": g.date.isoformat() if g.date else None,
-            "time": g.time.isoformat() if g.time else None,
-            "tour": g.tour,
-            "season_id": g.season_id,
-            "stage_id": g.stage_id,
-            "home_score": g.home_score,
-            "away_score": g.away_score,
-            "home_penalty_score": g.home_penalty_score,
-            "away_penalty_score": g.away_penalty_score,
-            "has_stats": g.has_stats,
-            "stadium": g.stadium,
-            "visitors": g.visitors,
-            "home_team": home_team,
-            "away_team": away_team,
-            "season_name": g.season.name if g.season else None,
-        })
+        stadium_name = None
+        if g.stadium_rel:
+            stadium_name = get_localized_name(g.stadium_rel, lang)
+
+        items.append(StageGameItem(
+            id=g.id,
+            date=g.date,
+            time=g.time,
+            tour=g.tour,
+            season_id=g.season_id,
+            stage_id=g.stage_id,
+            home_score=g.home_score,
+            away_score=g.away_score,
+            home_penalty_score=g.home_penalty_score,
+            away_penalty_score=g.away_penalty_score,
+            has_stats=g.has_stats,
+            stadium=stadium_name,
+            visitors=g.visitors,
+            home_team=home_team,
+            away_team=away_team,
+            season_name=g.season.name if g.season else None,
+        ))
 
     return {"items": items, "total": len(items)}

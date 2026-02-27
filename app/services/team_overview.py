@@ -36,8 +36,6 @@ def _build_overview_match(game: Game, lang: str) -> TeamOverviewMatch:
             name=get_localized_name(game.stadium_rel, lang),
             city=get_localized_city(game.stadium_rel, lang) if hasattr(game.stadium_rel, "city") else None,
         )
-    elif game.stadium:
-        stadium = TeamOverviewStadium(name=game.stadium, city=None)
     else:
         stadium = None
 

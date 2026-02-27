@@ -54,8 +54,13 @@ class Settings(BaseSettings):
     openai_max_retries: int = 3
     openai_timeout: int = 10
 
+    # Telegram notifications
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_notifications_enabled: bool = False
+
     # Feature flags
-    cache_enabled: bool = True
+    cache_enabled: bool = False
 
     class Config:
         env_file = ".env"

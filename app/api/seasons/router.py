@@ -224,7 +224,6 @@ async def get_season_bracket(
         games=games,
         stages=stages,
         lang=lang,
-        today=date.today(),
         include_games=True,
     )
     bracket = build_playoff_bracket_from_rounds(season_id, rounds)

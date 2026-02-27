@@ -3,13 +3,12 @@ from datetime import time as time_type
 
 from pydantic import BaseModel
 
-from app.utils.file_urls import FileUrl
 
 
 class BracketGameTeam(BaseModel):
     id: int
     name: str
-    logo_url: FileUrl = None
+    logo_url: str | None = None
 
     class Config:
         from_attributes = True

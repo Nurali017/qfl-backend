@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from uuid import UUID
-from sqlalchemy import String, Date, Integer, DateTime, ForeignKey
+from sqlalchemy import String, Text, Date, Integer, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,11 +22,25 @@ class Player(Base):
     last_name: Mapped[str | None] = mapped_column(String(100))  # Russian (default)
     last_name_kz: Mapped[str | None] = mapped_column(String(100))
     last_name_en: Mapped[str | None] = mapped_column(String(100))
+
+    # Nickname (В-4)
+    nickname: Mapped[str | None] = mapped_column(String(100))
+    nickname_kz: Mapped[str | None] = mapped_column(String(100))
+    nickname_en: Mapped[str | None] = mapped_column(String(100))
+
+    # Biography (В-5)
+    bio: Mapped[str | None] = mapped_column(Text)
+    bio_kz: Mapped[str | None] = mapped_column(Text)
+    bio_en: Mapped[str | None] = mapped_column(Text)
+
+    # External IDs (В-6)
+    genius_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    vsporte_id: Mapped[str | None] = mapped_column(String(100), index=True)
+
     birthday: Mapped[date | None] = mapped_column(Date)
     player_type: Mapped[str | None] = mapped_column(String(50))
     country_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("countries.id"), index=True)
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)
-    age: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)  # cm
     weight: Mapped[int | None] = mapped_column(Integer)  # kg
     gender: Mapped[str | None] = mapped_column(String(10))  # "M", "F"
@@ -36,6 +50,16 @@ class Player(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow
     )
+
+    @property
+    def age(self) -> int | None:
+        """Compute age from birthday."""
+        if self.birthday is None:
+            return None
+        today = date.today()
+        return today.year - self.birthday.year - (
+            (today.month, today.day) < (self.birthday.month, self.birthday.day)
+        )
 
     # Relationships
     country: Mapped["Country"] = relationship("Country", back_populates="players")
