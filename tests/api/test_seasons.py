@@ -296,7 +296,6 @@ class TestSeasonsAPI:
             away_score=0,
             stage_id=final_stage.id,
             has_stats=True,
-            stadium="Central Stadium",
             visitors=12000,
         )
         test_session.add(final_game)
@@ -346,7 +345,6 @@ class TestSeasonsAPI:
             away_score=0,
             stage_id=final_stage.id,
             has_stats=True,
-            stadium="Central Stadium",
             visitors=12000,
         )
         test_session.add(final_game)
@@ -901,7 +899,6 @@ class TestSeasonsAPI:
             home_score=0,
             away_score=0,
             has_stats=True,
-            stadium="Central Stadium",
             visitors=9000,
         )
 

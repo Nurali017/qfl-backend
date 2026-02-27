@@ -656,14 +656,12 @@ async def test_admin_players_patch_profile_fields(
         json={
             "first_name": "New",
             "last_name": "Name",
-            "age": 27,
             "photo_url": "https://example.com/player.jpg",
         },
     )
     assert patch_response.status_code == 200, patch_response.text
     updated = patch_response.json()
     assert updated["first_name"] == "New"
-    assert updated["age"] == 27
     assert updated["photo_url"] == "https://example.com/player.jpg"
 
 

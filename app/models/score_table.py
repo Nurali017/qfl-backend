@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Integer, String, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -25,6 +25,7 @@ class ScoreTable(Base):
     goal_difference: Mapped[int | None] = mapped_column(Integer)
     points: Mapped[int | None] = mapped_column(Integer)
     form: Mapped[str | None] = mapped_column(String(20))
+    note: Mapped[str | None] = mapped_column(Text)  # Reason/note for point deductions etc. (В-9)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow
     )

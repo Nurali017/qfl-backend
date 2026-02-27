@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 
-from app.utils.file_urls import FileUrl
 
 
 class CountryBase(BaseModel):
@@ -23,7 +22,7 @@ class CountryUpdate(BaseModel):
 
 class CountryResponse(CountryBase):
     id: int
-    flag_url: FileUrl = None
+    flag_url: str | None = None
     is_active: bool = True
 
     class Config:
@@ -40,7 +39,7 @@ class CountryInPlayer(BaseModel):
     id: int
     code: str
     name: str
-    flag_url: FileUrl = None
+    flag_url: str | None = None
 
     class Config:
         from_attributes = True

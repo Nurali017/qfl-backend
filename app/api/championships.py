@@ -30,6 +30,11 @@ def _pick_current_season(seasons: list[Season]) -> Season | None:
     if not seasons:
         return None
 
+    # Prefer the season explicitly marked as current
+    for season in seasons:
+        if season.is_current:
+            return season
+
     today = date_type.today()
     active_seasons = [
         season

@@ -4,7 +4,6 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.schemas.admin.common import LanguageCode
-from app.utils.file_urls import FileUrl
 
 
 class AdminNewsTranslationPayload(BaseModel):
@@ -60,7 +59,7 @@ class AdminNewsTranslationResponse(BaseModel):
     excerpt: str | None = None
     content: str | None = None
     content_text: str | None = None
-    image_url: FileUrl = None
+    image_url: str | None = None
     video_url: str | None = None
     category: str | None = None
     championship_code: str | None = None

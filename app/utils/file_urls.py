@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from pydantic import BeforeValidator
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator
 
@@ -48,19 +45,6 @@ def to_object_name(url: str | None) -> str | None:
     if idx != -1:
         return url[idx + len(marker):]
     return url
-
-
-# ---------------------------------------------------------------------------
-# Pydantic annotated type
-# ---------------------------------------------------------------------------
-
-FileUrl = Annotated[str | None, BeforeValidator(resolve_file_url)]
-"""Use as a field type in Pydantic *response* schemas.
-
-Any stored object name (e.g. ``player_photos/abc.webp``) is automatically
-expanded to a full public URL at serialisation time.  External URLs pass
-through unchanged.
-"""
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,12 @@
 from pydantic import BaseModel
 
-from app.utils.file_urls import FileUrl
 
 
 class SeasonParticipantResponse(BaseModel):
     id: int
     team_id: int
     team_name: str | None = None
-    team_logo: FileUrl = None
+    team_logo: str | None = None
     season_id: int
     group_name: str | None = None
     is_disqualified: bool = False

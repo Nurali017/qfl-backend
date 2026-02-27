@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import (
-    Season, Game, ScoreTable, Team, Player,
+    Season, Game, ScoreTable, Team, Player, PlayerTeam,
     PlayerSeasonStats, TeamSeasonStats, Country,
     GameEvent, GameEventType,
 )
@@ -99,8 +99,20 @@ async def get_player_stats_table(
         filters.append(Country.code.is_not(None))
         filters.append(func.upper(Country.code) != "KZ")
 
+    contract_photo_subq = (
+        select(PlayerTeam.photo_url)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
     base_query = (
-        select(PlayerSeasonStats, Player, Team, Country)
+        select(PlayerSeasonStats, Player, Team, Country, contract_photo_subq.label("contract_photo"))
         .join(Player, PlayerSeasonStats.player_id == Player.id)
         .outerjoin(Team, PlayerSeasonStats.team_id == Team.id)
         .outerjoin(Country, Player.country_id == Country.id)
@@ -112,6 +124,7 @@ async def get_player_stats_table(
         player: Player,
         team: Team | None,
         country: Country | None,
+        contract_photo: str | None = None,
     ) -> PlayerStatsTableEntry:
         localized_top_role = get_localized_field(player, "top_role", lang)
         inferred_position_code = infer_position_code(player.player_type, localized_top_role)
@@ -129,7 +142,7 @@ async def get_player_stats_table(
             player_id=player.id,
             first_name=get_localized_field(player, "first_name", lang),
             last_name=get_localized_field(player, "last_name", lang),
-            photo_url=player.photo_url,
+            photo_url=contract_photo or player.photo_url,
             country=country_data,
             team_id=team.id if team else None,
             team_name=get_localized_field(team, "name", lang) if team else None,
@@ -173,7 +186,7 @@ async def get_player_stats_table(
         )
         result = await db.execute(query)
         rows = result.all()
-        items = [build_entry(stats, player, team, country) for stats, player, team, country in rows]
+        items = [build_entry(stats, player, team, country, contract_photo) for stats, player, team, country, contract_photo in rows]
 
         return PlayerStatsTableResponse(
             season_id=season_id,
@@ -187,8 +200,8 @@ async def get_player_stats_table(
     rows = result.all()
 
     items: list[PlayerStatsTableEntry] = []
-    for stats, player, team, country in rows:
-        entry = build_entry(stats, player, team, country)
+    for stats, player, team, country, contract_photo in rows:
+        entry = build_entry(stats, player, team, country, contract_photo)
         if entry.position_code != position_code:
             continue
         items.append(entry)

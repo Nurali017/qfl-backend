@@ -2,8 +2,7 @@ from datetime import date
 from datetime import time as time_type
 from pydantic import BaseModel
 
-from app.schemas.team import TeamInGame
-from app.utils.file_urls import FileUrl
+from app.schemas.team import TeamInGame, TeamStadiumInfo, TeamWithScore
 
 
 class GameBase(BaseModel):
@@ -20,10 +19,9 @@ class GameBase(BaseModel):
     has_stats: bool = False
     is_technical: bool = False
     is_schedule_tentative: bool = False
-    stadium: str | None = None
     visitors: int | None = None
-    video_url: FileUrl = None
-    protocol_url: FileUrl = None
+    video_url: str | None = None
+    protocol_url: str | None = None
 
 
 class GameResponse(GameBase):
@@ -42,10 +40,6 @@ class GameResponse(GameBase):
 class GameListResponse(BaseModel):
     items: list[GameResponse]
     total: int
-
-
-class GameDetailResponse(GameResponse):
-    pass
 
 
 class HomeAwayTeamFromSOTA(BaseModel):
@@ -68,7 +62,7 @@ class GameFromSOTA(BaseModel):
     season_id: int | None = None
     season_name: str | None = None
     visitors: int | None = None
-    stadium: str | None = None
+    stadium: str | None = None  # Keep for SOTA ingestion
 
 
 # Match Center Schemas
@@ -80,19 +74,22 @@ class StadiumInfo(BaseModel):
     city: str | None = None
     capacity: int | None = None
     address: str | None = None
-    photo_url: FileUrl = None
+    photo_url: str | None = None
 
     class Config:
         from_attributes = True
 
 
 class TeamInMatchCenter(BaseModel):
-    """Team information for match center with localized fields."""
+    """Team information for match center with localized fields and colors."""
     id: int
     name: str
     name_kz: str | None = None
     name_en: str | None = None
-    logo_url: FileUrl = None
+    logo_url: str | None = None
+    primary_color: str | None = None
+    secondary_color: str | None = None
+    accent_color: str | None = None
 
     class Config:
         from_attributes = True
@@ -106,8 +103,8 @@ class MatchCenterGame(BaseModel):
     tour: int | None = None
     season_id: int | None = None
 
-    home_team: TeamInMatchCenter
-    away_team: TeamInMatchCenter
+    home_team: TeamInMatchCenter | None = None
+    away_team: TeamInMatchCenter | None = None
 
     home_score: int | None = None
     away_score: int | None = None
@@ -127,18 +124,21 @@ class MatchCenterGame(BaseModel):
     has_lineup: bool = False
     is_technical: bool = False
     is_schedule_tentative: bool = False
+    is_featured: bool = False
 
     # Computed status field
     status: str  # "upcoming", "live", or "finished"
+
+    has_score: bool = False
 
     # Optional ticket URL
     ticket_url: str | None = None
 
     # Optional video replay URL
-    video_url: FileUrl = None
+    video_url: str | None = None
 
     # Optional match protocol URL (PDF)
-    protocol_url: FileUrl = None
+    protocol_url: str | None = None
 
     class Config:
         from_attributes = True
@@ -147,7 +147,7 @@ class MatchCenterGame(BaseModel):
 class MatchCenterDateGroup(BaseModel):
     """Group of matches for a single date."""
     date: date
-    date_label: str  # Formatted date string for display (e.g., "Пятница, 27 февраля 2026")
+    date_label: str
     games: list[MatchCenterGame]
 
 
@@ -155,3 +155,128 @@ class MatchCenterResponse(BaseModel):
     """Response format with games grouped by date."""
     groups: list[MatchCenterDateGroup]
     total: int
+    tentative_tour_dates: dict[int, list[str]] = {}
+
+
+# Per-endpoint response schemas
+
+class GameListItem(BaseModel):
+    """Game item in /games standard list response."""
+    id: int
+    date: date
+    time: time_type | None = None
+    tour: int | None = None
+    season_id: int | None = None
+    stage_id: int | None = None
+    stage_name: str | None = None
+    home_score: int | None = None
+    away_score: int | None = None
+    home_penalty_score: int | None = None
+    away_penalty_score: int | None = None
+    has_stats: bool = False
+    has_lineup: bool = False
+    is_live: bool = False
+    is_technical: bool = False
+    is_schedule_tentative: bool = False
+    is_featured: bool = False
+    visitors: int | None = None
+    status: str
+    has_score: bool = False
+    ticket_url: str | None = None
+    video_url: str | None = None
+    protocol_url: str | None = None
+    where_broadcast: str | None = None
+    video_review_url: str | None = None
+    home_team: TeamInMatchCenter | None = None
+    away_team: TeamInMatchCenter | None = None
+    stadium_info: StadiumInfo | None = None
+    season_name: str | None = None
+
+
+class GameDetailItem(BaseModel):
+    """Game detail response for /games/{id}."""
+    id: int
+    date: date
+    time: time_type | None = None
+    tour: int | None = None
+    season_id: int | None = None
+    stage_id: int | None = None
+    stage_name: str | None = None
+    home_score: int | None = None
+    away_score: int | None = None
+    home_penalty_score: int | None = None
+    away_penalty_score: int | None = None
+    has_stats: bool = False
+    has_lineup: bool = False
+    is_live: bool = False
+    is_technical: bool = False
+    is_schedule_tentative: bool = False
+    is_featured: bool = False
+    stadium: StadiumInfo | None = None
+    referee: str | None = None
+    visitors: int | None = None
+    ticket_url: str | None = None
+    video_url: str | None = None
+    protocol_url: str | None = None
+    where_broadcast: str | None = None
+    video_review_url: str | None = None
+    status: str
+    has_score: bool = False
+    home_team: TeamInGame | None = None
+    away_team: TeamInGame | None = None
+    season_name: str | None = None
+
+
+class SeasonGameItem(BaseModel):
+    """Game item for /seasons/{id}/games."""
+    id: int
+    date: date
+    time: time_type | None = None
+    tour: int | None = None
+    season_id: int | None = None
+    home_score: int | None = None
+    away_score: int | None = None
+    has_stats: bool = False
+    is_schedule_tentative: bool = False
+    stadium: str | None = None
+    visitors: int | None = None
+    home_team: TeamWithScore | None = None
+    away_team: TeamWithScore | None = None
+    season_name: str | None = None
+
+
+class StageGameItem(BaseModel):
+    """Game item for /seasons/{id}/stages/{stage_id}/games."""
+    id: int
+    date: date
+    time: time_type | None = None
+    tour: int | None = None
+    season_id: int | None = None
+    stage_id: int | None = None
+    home_score: int | None = None
+    away_score: int | None = None
+    home_penalty_score: int | None = None
+    away_penalty_score: int | None = None
+    has_stats: bool = False
+    stadium: str | None = None
+    visitors: int | None = None
+    home_team: TeamWithScore | None = None
+    away_team: TeamWithScore | None = None
+    season_name: str | None = None
+
+
+class TeamGameItem(BaseModel):
+    """Game item for /teams/{id}/games."""
+    id: int
+    date: date
+    time: time_type | None = None
+    tour: int | None = None
+    season_id: int | None = None
+    home_score: int | None = None
+    away_score: int | None = None
+    has_stats: bool = False
+    stadium: TeamStadiumInfo | None = None
+    visitors: int | None = None
+    home_team: TeamWithScore | None = None
+    away_team: TeamWithScore | None = None
+    season_name: str | None = None

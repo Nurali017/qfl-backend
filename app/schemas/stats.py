@@ -82,6 +82,7 @@ class ScoreTableEntryResponse(BaseModel):
     goal_difference: int | None = None
     points: int | None = None
     form: str | None = None
+    note: str | None = None
     zone: Literal["champion", "euro_cups", "relegation"] | None = None
     next_game: NextGameInfo | None = None
 

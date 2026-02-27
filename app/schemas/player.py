@@ -2,7 +2,6 @@ from datetime import date
 from pydantic import BaseModel
 
 from app.schemas.country import CountryInPlayer
-from app.utils.file_urls import FileUrl
 
 
 class PlayerBase(BaseModel):
@@ -12,7 +11,7 @@ class PlayerBase(BaseModel):
     birthday: date | None = None
     player_type: str | None = None
     country: CountryInPlayer | None = None
-    photo_url: FileUrl = None
+    photo_url: str | None = None
     age: int | None = None
     top_role: str | None = None
 
@@ -101,11 +100,11 @@ class PlayerStatsTableEntry(BaseModel):
     player_id: int
     first_name: str | None = None
     last_name: str | None = None
-    photo_url: FileUrl = None
+    photo_url: str | None = None
     country: CountryInPlayer | None = None
     team_id: int | None = None
     team_name: str | None = None
-    team_logo: FileUrl = None
+    team_logo: str | None = None
     player_type: str | None = None
     top_role: str | None = None
     position_code: str | None = None
@@ -156,7 +155,7 @@ class PlayerTeammateResponse(BaseModel):
     jersey_number: int | None = None
     position: str | None = None
     age: int | None = None
-    photo_url: FileUrl = None
+    photo_url: str | None = None
 
     class Config:
         from_attributes = True

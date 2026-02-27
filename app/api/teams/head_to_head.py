@@ -9,6 +9,7 @@ from app.api.deps import get_db
 from app.models import (
     Game,
     Player,
+    PlayerTeam,
     PlayerSeasonStats,
     ScoreTable,
     Team,
@@ -493,7 +494,9 @@ async def get_head_to_head(
     top_performers = None
     pss_query = (
         select(PlayerSeasonStats)
-        .options(joinedload(PlayerSeasonStats.player))
+        .options(
+            joinedload(PlayerSeasonStats.player).selectinload(Player.player_teams),
+        )
         .where(
             PlayerSeasonStats.season_id == season_id,
             PlayerSeasonStats.team_id.in_([team1_id, team2_id]),
@@ -525,7 +528,7 @@ async def get_head_to_head(
                 player_id=p.player_id,
                 player_name=_player_full_name(p.player),
                 team_id=p.team_id,
-                photo_url=p.player.photo_url if p.player else None,
+                photo_url=(next((pt.photo_url for pt in p.player.player_teams if pt.team_id == p.team_id and pt.season_id == season_id and pt.photo_url), None) or p.player.photo_url) if p.player else None,
                 count=p.goals or 0,
             )
             for p in scorers
@@ -535,7 +538,7 @@ async def get_head_to_head(
                 player_id=p.player_id,
                 player_name=_player_full_name(p.player),
                 team_id=p.team_id,
-                photo_url=p.player.photo_url if p.player else None,
+                photo_url=(next((pt.photo_url for pt in p.player.player_teams if pt.team_id == p.team_id and pt.season_id == season_id and pt.photo_url), None) or p.player.photo_url) if p.player else None,
                 count=p.assists or 0,
             )
             for p in assisters

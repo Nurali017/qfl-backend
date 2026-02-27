@@ -5,15 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
-from app.config import get_settings
 from app.models import AdminUser, Game
 from app.schemas.live import GameEventResponse, GameEventsListResponse, LineupSyncResponse, LiveSyncResponse
 from app.schemas.sync import SyncResponse, SyncStatus
 from app.services.live_sync_service import LiveSyncService
+from app.services.season_visibility import get_current_season_id
 from app.services.sota_client import SotaClient, get_sota_client
 from app.services.sync import SyncOrchestrator
-
-settings = get_settings()
 router = APIRouter(prefix="/ops", tags=["admin-ops"])
 
 
@@ -34,7 +32,7 @@ async def sync_full(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    season_id = season_id or settings.current_season_id
+    season_id = season_id or await get_current_season_id(db)
     try:
         result = await SyncOrchestrator(db).full_sync(season_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Full sync completed", details=result)
@@ -48,7 +46,7 @@ async def sync_games(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    season_id = season_id or settings.current_season_id
+    season_id = season_id or await get_current_season_id(db)
     try:
         count = await SyncOrchestrator(db).sync_games(season_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Games sync completed", details={"games_synced": count})
@@ -86,7 +84,7 @@ async def sync_players(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    season_id = season_id or settings.current_season_id
+    season_id = season_id or await get_current_season_id(db)
     try:
         count = await SyncOrchestrator(db).sync_players(season_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Players sync completed", details={"players_synced": count})
@@ -100,7 +98,7 @@ async def sync_score_table(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    season_id = season_id or settings.current_season_id
+    season_id = season_id or await get_current_season_id(db)
     try:
         count = await SyncOrchestrator(db).sync_score_table(season_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Score table sync completed", details={"rows_synced": count})
@@ -114,7 +112,7 @@ async def sync_team_season_stats(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    season_id = season_id or settings.current_season_id
+    season_id = season_id or await get_current_season_id(db)
     try:
         count = await SyncOrchestrator(db).sync_team_season_stats(season_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Team season stats sync completed", details={"teams_synced": count})
@@ -128,7 +126,7 @@ async def sync_player_season_stats(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    season_id = season_id or settings.current_season_id
+    season_id = season_id or await get_current_season_id(db)
     try:
         count = await SyncOrchestrator(db).sync_player_stats(season_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Player season stats sync completed", details={"players_synced": count})
@@ -207,7 +205,7 @@ async def sync_all_game_events(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    season_id = season_id or settings.current_season_id
+    season_id = season_id or await get_current_season_id(db)
     try:
         details = await SyncOrchestrator(db).sync_all_game_events(season_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="All game events sync completed", details=details)

@@ -7,6 +7,9 @@ from app.api.deps import get_db
 from app.caching import invalidate_pattern
 from app.models import AdminUser, Championship, Player, PlayerTeam, Season, Team
 from app.schemas.admin.contracts import (
+    AdminContractBulkCopyItem,
+    AdminContractBulkCopyRequest,
+    AdminContractBulkCopyResponse,
     AdminContractCreateRequest,
     AdminContractListItem,
     AdminContractMetaPlayer,
@@ -17,6 +20,7 @@ from app.schemas.admin.contracts import (
     AdminContractUpdateRequest,
     AdminContractsListResponse,
 )
+from app.services.telegram import notify_contract_change, send_telegram_message
 from app.utils.file_urls import to_object_name
 
 router = APIRouter(prefix="/contracts", tags=["admin-contracts"])
@@ -40,6 +44,7 @@ def _build_contract_item(pt: PlayerTeam, player: Player, team: Team, season: Sea
         player_last_name=player.last_name if player else None,
         player_first_name=player.first_name if player else None,
         player_sota_id=player.sota_id if player else None,
+        player_photo_url=player.photo_url if player else None,
         team_id=pt.team_id,
         team_name=team.name if team else None,
         season_id=pt.season_id,
@@ -155,6 +160,90 @@ async def list_contracts(
     )
 
 
+@router.post("/bulk-copy", response_model=AdminContractBulkCopyResponse)
+async def bulk_copy_contracts(
+    payload: AdminContractBulkCopyRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    team = (await db.execute(select(Team).where(Team.id == payload.team_id))).scalar_one_or_none()
+    if team is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="team_id not found")
+
+    source_season = (await db.execute(select(Season).where(Season.id == payload.source_season_id))).scalar_one_or_none()
+    if source_season is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source_season_id not found")
+
+    target_season = (await db.execute(select(Season).where(Season.id == payload.target_season_id))).scalar_one_or_none()
+    if target_season is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target_season_id not found")
+
+    source_result = await db.execute(
+        select(PlayerTeam).where(
+            PlayerTeam.season_id == payload.source_season_id,
+            PlayerTeam.team_id == payload.team_id,
+        )
+    )
+    source_contracts = source_result.scalars().all()
+
+    overrides_map: dict[tuple[int, int], AdminContractBulkCopyItem] = {
+        (ov.player_id, ov.role): ov for ov in payload.overrides
+    }
+    excluded_set = set(payload.excluded_player_ids)
+
+    to_copy = [pt for pt in source_contracts if pt.player_id not in excluded_set]
+    excluded_count = len(source_contracts) - len(to_copy)
+
+    created = 0
+    skipped = 0
+    for src in to_copy:
+        exists = (
+            await db.execute(
+                select(PlayerTeam.id).where(
+                    PlayerTeam.player_id == src.player_id,
+                    PlayerTeam.team_id == src.team_id,
+                    PlayerTeam.season_id == payload.target_season_id,
+                    PlayerTeam.role == src.role,
+                )
+            )
+        ).scalar_one_or_none()
+        if exists is not None:
+            skipped += 1
+            continue
+
+        ov = overrides_map.get((src.player_id, src.role or 1))
+        new_pt = PlayerTeam(
+            player_id=src.player_id,
+            team_id=src.team_id,
+            season_id=payload.target_season_id,
+            role=src.role,
+            amplua=ov.amplua if ov is not None and ov.amplua is not None else src.amplua,
+            number=ov.number if ov is not None and ov.number is not None else src.number,
+            position_ru=ov.position_ru if ov is not None and ov.position_ru is not None else src.position_ru,
+            position_kz=ov.position_kz if ov is not None and ov.position_kz is not None else src.position_kz,
+            position_en=ov.position_en if ov is not None and ov.position_en is not None else src.position_en,
+            photo_url=ov.photo_url if ov is not None and ov.photo_url is not None else src.photo_url,
+            is_active=True,
+            is_hidden=False,
+        )
+        db.add(new_pt)
+        created += 1
+
+    await db.commit()
+    await invalidate_pattern("*app.api.seasons*")
+
+    await send_telegram_message(
+        f"\U0001f4cb Контракт <b>массовый перенос</b>\n\n"
+        f"\U0001f3df Команда: {team.name}\n"
+        f"\U0001f4c5 Сезон (источник): {source_season.name}\n"
+        f"\U0001f4c5 Сезон (цель): {target_season.name}\n"
+        f"\U0001f468\u200d\U0001f4bc Админ: {_admin.email}\n\n"
+        f"Создано: {created}, пропущено: {skipped}, исключено: {excluded_count}"
+    )
+
+    return AdminContractBulkCopyResponse(created=created, skipped=skipped, excluded=excluded_count)
+
+
 @router.get("/{contract_id}", response_model=AdminContractResponse)
 async def get_contract(
     contract_id: int,
@@ -231,6 +320,15 @@ async def create_contract(
     await db.commit()
     await invalidate_pattern("*app.api.seasons*")
 
+    await notify_contract_change(
+        action="создан",
+        player_name=f"{player.last_name} {player.first_name}",
+        team_name=team.name,
+        season_name=season.name,
+        admin_email=_admin.email,
+        contract_id=pt_id,
+    )
+
     row = await _fetch_contract_row(db, pt_id)
     pt2, player2, team2, season2 = row
     return _build_contract_item(pt2, player2, team2, season2)
@@ -283,6 +381,16 @@ async def update_contract(
 
     row = await _fetch_contract_row(db, contract_id)
     pt2, player2, team2, season2 = row
+
+    await notify_contract_change(
+        action="изменён",
+        player_name=f"{player2.last_name} {player2.first_name}",
+        team_name=team2.name,
+        season_name=season2.name,
+        admin_email=_admin.email,
+        contract_id=contract_id,
+    )
+
     return _build_contract_item(pt2, player2, team2, season2)
 
 
@@ -292,12 +400,22 @@ async def delete_contract(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
 ):
-    result = await db.execute(select(PlayerTeam).where(PlayerTeam.id == contract_id))
-    pt = result.scalar_one_or_none()
-    if pt is None:
+    row = await _fetch_contract_row(db, contract_id)
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
+    pt, player, team, season = row
 
     await db.delete(pt)
     await db.commit()
     await invalidate_pattern("*app.api.seasons*")
+
+    await notify_contract_change(
+        action="удалён",
+        player_name=f"{player.last_name} {player.first_name}",
+        team_name=team.name,
+        season_name=season.name,
+        admin_email=_admin.email,
+        contract_id=contract_id,
+    )
+
     return {"message": "Contract deleted"}

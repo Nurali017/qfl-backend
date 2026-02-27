@@ -7,6 +7,7 @@ from app.api.deps import get_db
 from app.models import (
     Game,
     Player,
+    PlayerTeam,
     PlayerSeasonStats,
     ScoreTable,
     Season,
@@ -264,8 +265,20 @@ async def get_team_overview(
 
     standings_window = _window_around_team(standings, team_id, window=5)
 
+    contract_photo_subq = (
+        select(PlayerTeam.photo_url)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
     players_result = await db.execute(
-        select(PlayerSeasonStats, Player, Team)
+        select(PlayerSeasonStats, Player, Team, contract_photo_subq.label("contract_photo"))
         .join(Player, PlayerSeasonStats.player_id == Player.id)
         .outerjoin(Team, PlayerSeasonStats.team_id == Team.id)
         .where(
@@ -276,13 +289,13 @@ async def get_team_overview(
     player_rows = players_result.all()
 
     players: list[TeamOverviewLeaderPlayer] = []
-    for row_stats, row_player, row_team in player_rows:
+    for row_stats, row_player, row_team, contract_photo in player_rows:
         players.append(
             TeamOverviewLeaderPlayer(
                 player_id=row_player.id,
                 first_name=get_localized_field(row_player, "first_name", lang),
                 last_name=get_localized_field(row_player, "last_name", lang),
-                photo_url=row_player.photo_url,
+                photo_url=contract_photo or row_player.photo_url,
                 team_id=row_team.id if row_team else row_stats.team_id,
                 team_name=get_localized_name(row_team, lang) if row_team else None,
                 team_logo=resolve_team_logo_url(row_team),

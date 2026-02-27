@@ -3,7 +3,7 @@ from app.models.team import Team
 from app.models.country import Country
 from app.models.player import Player
 from app.models.player_team import PlayerTeam
-from app.models.game import Game
+from app.models.game import Game, GameStatus
 from app.models.game_team_stats import GameTeamStats
 from app.models.game_player_stats import GamePlayerStats
 from app.models.score_table import ScoreTable
@@ -39,6 +39,7 @@ __all__ = [
     "Player",
     "PlayerTeam",
     "Game",
+    "GameStatus",
     "GameTeamStats",
     "GamePlayerStats",
     "ScoreTable",

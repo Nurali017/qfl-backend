@@ -68,7 +68,6 @@ class TestGamesAPI:
             home_score=1,
             away_score=0,
             has_stats=True,
-            stadium="May Stadium 2024",
             visitors=6000,
         )
         june_2025_game = Game(
@@ -82,7 +81,6 @@ class TestGamesAPI:
             home_score=2,
             away_score=2,
             has_stats=True,
-            stadium="June Stadium 2025",
             visitors=7200,
         )
         test_session.add_all([may_2024_game, june_2025_game])
@@ -114,7 +112,6 @@ class TestGamesAPI:
             home_score=0,
             away_score=1,
             has_stats=True,
-            stadium="May Stadium 2024",
             visitors=5100,
         )
         test_session.add(may_2024_game)
@@ -155,7 +152,6 @@ class TestGamesAPI:
             home_score=1,
             away_score=1,
             has_stats=True,
-            stadium="Central Stadium",
             visitors=9000,
         )
         test_session.add(cross_group_game)
@@ -194,7 +190,6 @@ class TestGamesAPI:
             away_score=0,
             stage_id=final_stage.id,
             has_stats=True,
-            stadium="Final Stadium",
             visitors=14000,
         )
         test_session.add(final_game)

@@ -1,26 +1,14 @@
 """Shared game status computation."""
 
-from datetime import date as date_type
-
-from app.models.game import Game
+from app.models.game import Game, GameStatus
 
 
-def compute_game_status(game: Game, today: date_type | None = None) -> str:
-    """Compute game status based on data.
+def compute_game_status(game: Game) -> str:
+    """Return a display-friendly game status string.
 
-    Returns:
-        "live" - Game is currently in progress
-        "finished" - Game has ended
-        "upcoming" - Game is scheduled for the future
+    Maps the DB enum to API-facing values.  ``created`` is shown as
+    ``"upcoming"`` because the frontend relies on that term.
     """
-    if today is None:
-        today = date_type.today()
-
-    if game.is_live:
-        return "live"
-    elif game.home_score is not None and game.away_score is not None:
-        return "finished"
-    elif game.date and game.date < today:
-        return "finished"
-    else:
+    if game.status == GameStatus.created:
         return "upcoming"
+    return game.status.value

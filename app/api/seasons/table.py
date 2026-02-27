@@ -128,6 +128,7 @@ async def get_season_table(
                 goal_difference=entry["goal_difference"],
                 points=entry["points"],
                 form=entry["form"],
+                note=entry.get("note"),
                 zone=resolve_table_zone(
                     position=entry["position"],
                     total_rows=total_rows,

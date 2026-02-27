@@ -13,8 +13,10 @@ class GameEventType(str, enum.Enum):
     goal = "goal"
     own_goal = "own_goal"
     penalty = "penalty"
+    missed_penalty = "missed_penalty"
     assist = "assist"
     yellow_card = "yellow_card"
+    second_yellow = "second_yellow"
     red_card = "red_card"
     substitution = "substitution"
 

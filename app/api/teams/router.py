@@ -12,12 +12,14 @@ from app.models import (
     Team,
 )
 from app.models.coach import Coach, TeamCoach
+from app.schemas.game import TeamGameItem
 from app.schemas.team import (
     TeamDetailResponse,
     TeamListResponse,
     TeamSeasonEntry,
     TeamSeasonsResponse,
     TeamStadiumInfo,
+    TeamWithScore,
 )
 from app.models import Championship
 from app.services.season_participants import resolve_season_participants
@@ -196,7 +198,7 @@ async def get_team_players(
             "birthday": p.birthday,
             "player_type": p.player_type,
             "country": country_data,
-            "photo_url": p.photo_url,
+            "photo_url": pt.photo_url or p.photo_url,
             "age": p.age,
             "top_role": get_localized_field(p, "top_role", lang),
             "team_id": pt.team_id,
@@ -239,45 +241,43 @@ async def get_team_games(
         home_team = None
         away_team = None
         if g.home_team:
-            home_team = {
-                "id": g.home_team.id,
-                "name": get_localized_name(g.home_team, lang),
-                "logo_url": resolve_team_logo_url(g.home_team),
-                "score": g.home_score,
-            }
+            home_team = TeamWithScore(
+                id=g.home_team.id,
+                name=get_localized_name(g.home_team, lang),
+                logo_url=resolve_team_logo_url(g.home_team),
+                score=g.home_score,
+            )
         if g.away_team:
-            away_team = {
-                "id": g.away_team.id,
-                "name": get_localized_name(g.away_team, lang),
-                "logo_url": resolve_team_logo_url(g.away_team),
-                "score": g.away_score,
-            }
+            away_team = TeamWithScore(
+                id=g.away_team.id,
+                name=get_localized_name(g.away_team, lang),
+                logo_url=resolve_team_logo_url(g.away_team),
+                score=g.away_score,
+            )
 
-        # Build stadium object from relationship or legacy string
+        # Build stadium from relationship
         stadium_data = None
         if g.stadium_rel:
-            stadium_data = {
-                "name": get_localized_name(g.stadium_rel, lang),
-                "city": get_localized_city(g.stadium_rel, lang) if hasattr(g.stadium_rel, 'city') else None,
-            }
-        elif g.stadium:
-            stadium_data = {"name": g.stadium, "city": None}
+            stadium_data = TeamStadiumInfo(
+                name=get_localized_name(g.stadium_rel, lang),
+                city=get_localized_city(g.stadium_rel, lang) if hasattr(g.stadium_rel, 'city') else None,
+            )
 
-        items.append({
-            "id": g.id,
-            "date": g.date.isoformat() if g.date else None,
-            "time": g.time.isoformat() if g.time else None,
-            "tour": g.tour,
-            "season_id": g.season_id,
-            "home_score": g.home_score,
-            "away_score": g.away_score,
-            "has_stats": g.has_stats,
-            "stadium": stadium_data,
-            "visitors": g.visitors,
-            "home_team": home_team,
-            "away_team": away_team,
-            "season_name": get_localized_name(g.season, lang) if g.season else None,
-        })
+        items.append(TeamGameItem(
+            id=g.id,
+            date=g.date,
+            time=g.time,
+            tour=g.tour,
+            season_id=g.season_id,
+            home_score=g.home_score,
+            away_score=g.away_score,
+            has_stats=g.has_stats,
+            stadium=stadium_data,
+            visitors=g.visitors,
+            home_team=home_team,
+            away_team=away_team,
+            season_name=get_localized_name(g.season, lang) if g.season else None,
+        ))
 
     return {"items": items, "total": len(items)}
 

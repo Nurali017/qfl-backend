@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models import (
     Game,
     GameLineup,
+    GameStatus,
     LineupType,
     Player,
 )
@@ -710,7 +711,7 @@ class LineupSyncService(BaseSyncService):
         else:
             query = (
                 select(Game.id)
-                .where(Game.is_live.is_(False))
+                .where(Game.status != GameStatus.live)
                 .where(
                     or_(
                         and_(Game.home_score.isnot(None), Game.away_score.isnot(None)),

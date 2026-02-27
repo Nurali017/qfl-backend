@@ -4,13 +4,12 @@ from datetime import time as time_type
 from pydantic import BaseModel
 
 from app.schemas.playoff_bracket import PlayoffBracketResponse
-from app.utils.file_urls import FileUrl
 
 
 class CupTeamBrief(BaseModel):
     id: int
     name: str
-    logo_url: FileUrl = None
+    logo_url: str | None = None
 
     class Config:
         from_attributes = True
@@ -38,7 +37,7 @@ class CupGroupStandingEntry(BaseModel):
     position: int
     team_id: int
     team_name: str | None = None
-    team_logo: FileUrl = None
+    team_logo: str | None = None
     games_played: int = 0
     wins: int = 0
     draws: int = 0
