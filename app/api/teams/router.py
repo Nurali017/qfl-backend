@@ -27,6 +27,7 @@ from app.services.season_visibility import ensure_visible_season_or_404, is_seas
 from app.services.team_overview import _extract_year
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
 from app.utils.error_messages import get_error_message
+from app.utils.positions import infer_position_code
 from app.utils.team_logo_fallback import resolve_team_logo_url
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -191,12 +192,15 @@ async def get_team_players(
                 "name": get_localized_name(p.country, lang),
                 "flag_url": p.country.flag_url,
             }
+        position = infer_position_code(pt.position_ru or pt.position_kz, pt.position_en) \
+            or infer_position_code(p.player_type, p.top_role)
         items.append({
             "id": p.id,
             "first_name": get_localized_field(p, "first_name", lang),
             "last_name": get_localized_field(p, "last_name", lang),
             "birthday": p.birthday,
             "player_type": p.player_type,
+            "position": position,
             "country": country_data,
             "photo_url": pt.photo_url or p.photo_url,
             "age": p.age,
