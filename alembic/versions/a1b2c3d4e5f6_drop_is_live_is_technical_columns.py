@@ -3,7 +3,7 @@
 Migrate data first: ensure status column is authoritative,
 then drop the redundant boolean columns.
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: aa1b2c3d4e5f
 Revises: z3a4b5c6d7e8
 Create Date: 2026-02-26 12:00:00.000000
 """
@@ -11,7 +11,7 @@ Create Date: 2026-02-26 12:00:00.000000
 from alembic import op
 import sqlalchemy as sa
 
-revision = "a1b2c3d4e5f6"
+revision = "aa1b2c3d4e5f"
 down_revision = "z3a4b5c6d7e8"
 branch_labels = None
 depends_on = None
