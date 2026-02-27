@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
@@ -20,7 +21,7 @@ from app.schemas.admin.contracts import (
     AdminContractUpdateRequest,
     AdminContractsListResponse,
 )
-from app.services.telegram import notify_contract_change, send_telegram_message
+from app.services.telegram import notify_contract_change, notify_contract_updated, send_telegram_message
 from app.utils.file_urls import to_object_name
 
 router = APIRouter(prefix="/contracts", tags=["admin-contracts"])
@@ -194,8 +195,20 @@ async def bulk_copy_contracts(
     to_copy = [pt for pt in source_contracts if pt.player_id not in excluded_set]
     excluded_count = len(source_contracts) - len(to_copy)
 
+    # Fetch player names for notification
+    player_ids = list({src.player_id for src in to_copy})
+    players_map: dict[int, str] = {}
+    if player_ids:
+        players_result = await db.execute(
+            select(Player.id, Player.last_name, Player.first_name).where(Player.id.in_(player_ids))
+        )
+        for pid, last_name, first_name in players_result.all():
+            players_map[pid] = f"{last_name or ''} {first_name or ''}".strip() or f"#{pid}"
+
     created = 0
     skipped = 0
+    created_names: list[str] = []
+    skipped_names: list[str] = []
     for src in to_copy:
         exists = (
             await db.execute(
@@ -203,12 +216,12 @@ async def bulk_copy_contracts(
                     PlayerTeam.player_id == src.player_id,
                     PlayerTeam.team_id == src.team_id,
                     PlayerTeam.season_id == payload.target_season_id,
-                    PlayerTeam.role == src.role,
                 )
             )
         ).scalar_one_or_none()
         if exists is not None:
             skipped += 1
+            skipped_names.append(players_map.get(src.player_id, f"#{src.player_id}"))
             continue
 
         ov = overrides_map.get((src.player_id, src.role or 1))
@@ -227,19 +240,36 @@ async def bulk_copy_contracts(
             is_hidden=False,
         )
         db.add(new_pt)
+        try:
+            async with db.begin_nested():
+                await db.flush()
+        except IntegrityError:
+            skipped += 1
+            skipped_names.append(players_map.get(src.player_id, f"#{src.player_id}"))
+            continue
         created += 1
+        created_names.append(players_map.get(src.player_id, f"#{src.player_id}"))
 
     await db.commit()
     await invalidate_pattern("*app.api.seasons*")
 
-    await send_telegram_message(
-        f"\U0001f4cb Контракт <b>массовый перенос</b>\n\n"
-        f"\U0001f3df Команда: {team.name}\n"
-        f"\U0001f4c5 Сезон (источник): {source_season.name}\n"
-        f"\U0001f4c5 Сезон (цель): {target_season.name}\n"
-        f"\U0001f468\u200d\U0001f4bc Админ: {_admin.email}\n\n"
-        f"Создано: {created}, пропущено: {skipped}, исключено: {excluded_count}"
-    )
+    # Build detailed notification
+    msg_parts = [
+        f"\U0001f4cb Контракт <b>массовый перенос</b>\n",
+        f"\U0001f3df Команда: {team.name}",
+        f"\U0001f4c5 Сезон (источник): {source_season.name}",
+        f"\U0001f4c5 Сезон (цель): {target_season.name}",
+        f"\U0001f468\u200d\U0001f4bc Админ: {_admin.email}\n",
+        f"\u2705 Создано: {created}",
+    ]
+    if created_names:
+        msg_parts.append("  " + ", ".join(created_names))
+    msg_parts.append(f"\u23ed Пропущено: {skipped}")
+    if skipped_names:
+        msg_parts.append("  " + ", ".join(skipped_names))
+    msg_parts.append(f"\u274c Исключено: {excluded_count}")
+
+    await send_telegram_message("\n".join(msg_parts))
 
     return AdminContractBulkCopyResponse(created=created, skipped=skipped, excluded=excluded_count)
 
@@ -283,21 +313,20 @@ async def create_contract(
     if season is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="season_id not found")
 
-    # Check uniqueness: (player_id, team_id, season_id, role)
+    # Check uniqueness: (player_id, team_id, season_id)
     existing = (
         await db.execute(
             select(PlayerTeam.id).where(
                 PlayerTeam.player_id == payload.player_id,
                 PlayerTeam.team_id == payload.team_id,
                 PlayerTeam.season_id == payload.season_id,
-                PlayerTeam.role == payload.role,
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Contract with this (player_id, team_id, season_id, role) already exists",
+            detail="Контракт для этого игрока в данной команде и сезоне уже существует",
         )
 
     pt = PlayerTeam(
@@ -327,6 +356,14 @@ async def create_contract(
         season_name=season.name,
         admin_email=_admin.email,
         contract_id=pt_id,
+        role=payload.role,
+        amplua=payload.amplua,
+        number=payload.number,
+        position_ru=payload.position_ru,
+        position_kz=payload.position_kz,
+        position_en=payload.position_en,
+        is_active=payload.is_active,
+        is_hidden=payload.is_hidden,
     )
 
     row = await _fetch_contract_row(db, pt_id)
@@ -373,7 +410,12 @@ async def update_contract(
     if "photo_url" in update_data:
         update_data["photo_url"] = to_object_name(update_data["photo_url"]) if update_data["photo_url"] else None
 
+    # Track changes for notification
+    changes: dict[str, tuple] = {}
     for field, value in update_data.items():
+        old_value = getattr(pt, field, None)
+        if old_value != value:
+            changes[field] = (old_value, value)
         setattr(pt, field, value)
 
     await db.commit()
@@ -382,13 +424,13 @@ async def update_contract(
     row = await _fetch_contract_row(db, contract_id)
     pt2, player2, team2, season2 = row
 
-    await notify_contract_change(
-        action="изменён",
+    await notify_contract_updated(
         player_name=f"{player2.last_name} {player2.first_name}",
         team_name=team2.name,
         season_name=season2.name,
         admin_email=_admin.email,
         contract_id=contract_id,
+        changes=changes,
     )
 
     return _build_contract_item(pt2, player2, team2, season2)
@@ -416,6 +458,12 @@ async def delete_contract(
         season_name=season.name,
         admin_email=_admin.email,
         contract_id=contract_id,
+        role=pt.role,
+        amplua=pt.amplua,
+        number=pt.number,
+        position_ru=pt.position_ru,
+        position_kz=pt.position_kz,
+        position_en=pt.position_en,
     )
 
     return {"message": "Contract deleted"}

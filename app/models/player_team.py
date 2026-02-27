@@ -9,7 +9,7 @@ from app.utils.file_urls import FileUrlType
 class PlayerTeam(Base):
     __tablename__ = "player_teams"
     __table_args__ = (
-        UniqueConstraint("player_id", "team_id", "season_id", "role", name="uq_player_team_season_role"),
+        UniqueConstraint("player_id", "team_id", "season_id", name="uq_player_team_season"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

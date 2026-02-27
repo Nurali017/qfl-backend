@@ -353,12 +353,22 @@ async def create_player(
 
     bindings_map = await _get_player_bindings(db, [player.id])
 
-    await send_telegram_message(
-        f"\U0001f464 Игрок <b>создан</b>\n\n"
-        f"\U0001f3f7 {player.last_name} {player.first_name}\n"
-        f"\U0001f468\u200d\U0001f4bc Админ: {_admin.email}\n"
-        f"\U0001f517 ID: {player.id}"
-    )
+    detail_lines = [
+        f"\U0001f464 Игрок <b>создан</b>\n",
+        f"\U0001f3f7 {player.last_name} {player.first_name}",
+    ]
+    if player.birthday:
+        detail_lines.append(f"\U0001f382 Дата рождения: {player.birthday}")
+    if player.player_type:
+        detail_lines.append(f"\u26bd Тип: {player.player_type}")
+    if player.country_id:
+        country_result = await db.execute(select(Country).where(Country.id == player.country_id))
+        country_obj = country_result.scalar_one_or_none()
+        if country_obj:
+            detail_lines.append(f"\U0001f30d Страна: {country_obj.name}")
+    detail_lines.append(f"\n\U0001f468\u200d\U0001f4bc Админ: {_admin.email}")
+    detail_lines.append(f"\U0001f517 ID: {player.id}")
+    await send_telegram_message("\n".join(detail_lines))
 
     return _serialize_player(player, bindings_map.get(player.id, []))
 
@@ -378,7 +388,13 @@ async def update_player(
     await _ensure_unique_sota_id(db, payload.sota_id, exclude_player_id=player_id)
 
     update_data = payload.model_dump(exclude_unset=True, exclude={"team_bindings"})
+
+    # Track changes for notification
+    changes: dict[str, tuple] = {}
     for field_name, value in update_data.items():
+        old_value = getattr(player, field_name, None)
+        if old_value != value:
+            changes[field_name] = (old_value, value)
         setattr(player, field_name, value)
 
     if payload.team_bindings is not None:
@@ -387,6 +403,33 @@ async def update_player(
     await db.commit()
     await db.refresh(player)
     await invalidate_pattern("*app.api.seasons*")
+
+    if changes:
+        field_labels = {
+            "first_name": "Имя", "last_name": "Фамилия",
+            "first_name_kz": "Имя (KZ)", "last_name_kz": "Фамилия (KZ)",
+            "first_name_en": "Имя (EN)", "last_name_en": "Фамилия (EN)",
+            "birthday": "Дата рождения", "country_id": "Страна ID",
+            "player_type": "Тип", "photo_url": "Фото",
+            "sota_id": "SOTA ID", "genius_id": "Genius ID", "vsporte_id": "Vsporte ID",
+            "nickname": "Никнейм", "bio": "Биография",
+            "top_role": "Роль", "top_role_kz": "Роль (KZ)", "top_role_en": "Роль (EN)",
+        }
+        change_lines = []
+        for field_name, (old_val, new_val) in changes.items():
+            label = field_labels.get(field_name, field_name)
+            old_display = str(old_val) if old_val is not None else "—"
+            new_display = str(new_val) if new_val is not None else "—"
+            change_lines.append(f"  {label}: {old_display} \u2192 {new_display}")
+        changes_text = "\n".join(change_lines)
+        player_name = f"{player.last_name} {player.first_name}".strip()
+        await send_telegram_message(
+            f"\U0001f464 Игрок <b>изменён</b>\n\n"
+            f"\U0001f3f7 {player_name}\n"
+            f"\U0001f517 ID: {player.id}\n\n"
+            f"\U0001f4dd Изменения:\n{changes_text}\n\n"
+            f"\U0001f468\u200d\U0001f4bc Админ: {_admin.email}"
+        )
 
     bindings_map = await _get_player_bindings(db, [player.id])
     return _serialize_player(player, bindings_map.get(player.id, []))
@@ -443,8 +486,17 @@ async def delete_player(
             ),
         )
 
+    player_name = f"{player.last_name} {player.first_name}".strip()
     await db.execute(delete(PlayerTeam).where(PlayerTeam.player_id == player_id))
     await db.delete(player)
     await db.commit()
     await invalidate_pattern("*app.api.seasons*")
+
+    await send_telegram_message(
+        f"\U0001f464 Игрок <b>удалён</b>\n\n"
+        f"\U0001f3f7 {player_name}\n"
+        f"\U0001f517 ID: {player_id}\n\n"
+        f"\U0001f468\u200d\U0001f4bc Админ: {_admin.email}"
+    )
+
     return {"message": "Player deleted"}
