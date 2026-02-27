@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
 from app.caching import invalidate_pattern
+from app.services.telegram import send_telegram_message
 from app.models import (
     AdminUser,
     Country,
@@ -351,6 +352,14 @@ async def create_player(
     await invalidate_pattern("*app.api.seasons*")
 
     bindings_map = await _get_player_bindings(db, [player.id])
+
+    await send_telegram_message(
+        f"\U0001f464 Игрок <b>создан</b>\n\n"
+        f"\U0001f3f7 {player.last_name} {player.first_name}\n"
+        f"\U0001f468\u200d\U0001f4bc Админ: {_admin.email}\n"
+        f"\U0001f517 ID: {player.id}"
+    )
+
     return _serialize_player(player, bindings_map.get(player.id, []))
 
 
