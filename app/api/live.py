@@ -49,6 +49,7 @@ async def get_game_events(game_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(GameEvent)
         .where(GameEvent.game_id == game_id)
+        .where(GameEvent.event_type != GameEventType.assist)
         .order_by(GameEvent.half, GameEvent.minute)
     )
     events = result.scalars().all()

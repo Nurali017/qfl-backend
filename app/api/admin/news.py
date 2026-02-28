@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from app.schemas.admin.news import (
     AdminNewsTranslationPayload,
     AdminNewsTranslationResponse,
 )
+from app.services.file_storage import FileStorageService
 from app.services.news_classifier import NewsClassifierService
 
 router = APIRouter(prefix="/news", tags=["admin-news"])
@@ -467,3 +468,18 @@ async def delete_material(
     await db.commit()
     await invalidate_pattern("*app.api.news*")
     return {"message": "Material deleted"}
+
+
+@router.post("/upload-inline-image")
+async def upload_inline_image(
+    file: UploadFile = File(...),
+    _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    content = await file.read()
+    result = await FileStorageService.upload_file(
+        file_data=content,
+        filename=file.filename or "image.png",
+        content_type=file.content_type or "image/png",
+        category="news_content",
+    )
+    return {"location": result["url"]}

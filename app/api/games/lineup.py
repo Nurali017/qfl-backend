@@ -196,7 +196,16 @@ async def get_game_lineup(
                 first_name=player.first_name if player else None,
                 last_name=player.last_name if player else None,
                 country=_build_country(player.country) if player else None,
-                shirt_number=entry.shirt_number,
+                shirt_number=(
+                    next(
+                        (pt.number for pt in player.player_teams
+                         if pt.team_id == team_id
+                         and pt.season_id == game.season_id
+                         and pt.number is not None),
+                        None,
+                    )
+                    or entry.shirt_number
+                ) if player else entry.shirt_number,
                 is_captain=entry.is_captain,
                 position=position,
                 amplua=resolved_amplua,

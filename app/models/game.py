@@ -59,6 +59,11 @@ class Game(Base):
         Boolean, default=False, nullable=False, server_default="false"
     )
 
+    # Sync disable flag — prevents SOTA sync from overwriting manual edits
+    sync_disabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
     # Live match tracking
     home_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-2-3-1"
     away_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-3-3"
@@ -75,6 +80,7 @@ class Game(Base):
     visitors: Mapped[int | None] = mapped_column(Integer)
     ticket_url: Mapped[str | None] = mapped_column(String(500))  # URL for ticket purchase
     video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
+    youtube_live_url: Mapped[str | None] = mapped_column(String(500))  # YouTube live stream URL
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
 
     # Broadcast fields (В-1)
