@@ -5,6 +5,18 @@ from pydantic import BaseModel
 from app.schemas.team import TeamInGame, TeamStadiumInfo, TeamWithScore
 
 
+class BroadcasterInfo(BaseModel):
+    """Broadcaster info included in game responses."""
+    id: int
+    name: str
+    logo_url: str | None = None
+    type: str | None = None
+    website: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
 class GameBase(BaseModel):
     id: int
     date: date
@@ -143,6 +155,9 @@ class MatchCenterGame(BaseModel):
     # Optional match protocol URL (PDF)
     protocol_url: str | None = None
 
+    # Broadcasters
+    broadcasters: list[BroadcasterInfo] = []
+
     class Config:
         from_attributes = True
 
@@ -195,6 +210,7 @@ class GameListItem(BaseModel):
     away_team: TeamInMatchCenter | None = None
     stadium_info: StadiumInfo | None = None
     season_name: str | None = None
+    broadcasters: list[BroadcasterInfo] = []
 
 
 class GameDetailItem(BaseModel):
@@ -230,6 +246,7 @@ class GameDetailItem(BaseModel):
     home_team: TeamInGame | None = None
     away_team: TeamInGame | None = None
     season_name: str | None = None
+    broadcasters: list[BroadcasterInfo] = []
 
 
 class SeasonGameItem(BaseModel):

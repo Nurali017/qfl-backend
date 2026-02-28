@@ -2,14 +2,14 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import desc, or_, select
+from sqlalchemy import delete, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
 from app.caching import invalidate_pattern
 from app.models import AdminUser, Language, News
-from app.models.news import ArticleType
+from app.models.news import ArticleType, NewsGame, NewsTeam
 from app.schemas.admin.news import (
     AdminNewsArticleTypeUpdateRequest,
     AdminNewsClassifyRequest,
@@ -20,6 +20,7 @@ from app.schemas.admin.news import (
     AdminNewsMaterialListResponse,
     AdminNewsMaterialResponse,
     AdminNewsMaterialUpdateRequest,
+    AdminNewsLinksUpdateRequest,
     AdminNewsTranslationCreateRequest,
     AdminNewsTranslationPatchPayload,
     AdminNewsTranslationPayload,
@@ -141,7 +142,12 @@ def _to_translation_response(item: News) -> AdminNewsTranslationResponse:
     )
 
 
-def _to_material_response(items: list[News]) -> AdminNewsMaterialResponse:
+def _to_material_response(
+    items: list[News],
+    *,
+    team_ids: list[int] | None = None,
+    game_ids: list[int] | None = None,
+) -> AdminNewsMaterialResponse:
     ru = next((item for item in items if item.language == Language.RU), None)
     kz = next((item for item in items if item.language == Language.KZ), None)
     updated_at = max((item.updated_at for item in items), default=None)
@@ -150,6 +156,8 @@ def _to_material_response(items: list[News]) -> AdminNewsMaterialResponse:
         ru=_to_translation_response(ru) if ru else None,
         kz=_to_translation_response(kz) if kz else None,
         updated_at=updated_at,
+        team_ids=team_ids or [],
+        game_ids=game_ids or [],
     )
 
 
@@ -164,7 +172,7 @@ async def list_materials(
 ):
     article_type_filter = _article_type_from_str(article_type, allow_unclassified=True)
 
-    query = select(News).order_by(desc(News.updated_at), desc(News.id))
+    query = select(News).order_by(desc(News.id))
     if isinstance(article_type_filter, ArticleType):
         query = query.where(News.article_type == article_type_filter)
     elif article_type_filter == "UNCLASSIFIED":
@@ -186,11 +194,16 @@ async def list_materials(
     if not matched_rows:
         return AdminNewsMaterialListResponse(items=[], total=0)
 
-    group_ids = {row.translation_group_id for row in matched_rows}
+    # Preserve order from matched_rows (already sorted by id DESC)
+    seen: dict = {}
+    for row in matched_rows:
+        seen.setdefault(row.translation_group_id, None)
+    group_ids = list(seen.keys())
+
     full_rows_result = await db.execute(
         select(News)
         .where(News.translation_group_id.in_(group_ids))
-        .order_by(desc(News.updated_at), desc(News.id))
+        .order_by(desc(News.id))
     )
     rows = full_rows_result.scalars().all()
 
@@ -198,8 +211,7 @@ async def list_materials(
     for row in rows:
         grouped.setdefault(row.translation_group_id, []).append(row)
 
-    materials = [_to_material_response(items) for items in grouped.values()]
-    materials.sort(key=lambda m: m.updated_at or datetime.min, reverse=True)
+    materials = [_to_material_response(grouped[gid]) for gid in group_ids if gid in grouped]
 
     total = len(materials)
     start = (page - 1) * per_page
@@ -320,7 +332,13 @@ async def get_material(
     rows = result.scalars().all()
     if not rows:
         raise HTTPException(status_code=404, detail="Material not found")
-    return _to_material_response(rows)
+    teams_result = await db.execute(select(NewsTeam.team_id).where(NewsTeam.translation_group_id == group_id))
+    games_result = await db.execute(select(NewsGame.game_id).where(NewsGame.translation_group_id == group_id))
+    return _to_material_response(
+        rows,
+        team_ids=list(teams_result.scalars().all()),
+        game_ids=list(games_result.scalars().all()),
+    )
 
 
 @router.post("/materials", response_model=AdminNewsMaterialResponse, status_code=status.HTTP_201_CREATED)
@@ -468,6 +486,24 @@ async def delete_material(
     await db.commit()
     await invalidate_pattern("*app.api.news*")
     return {"message": "Material deleted"}
+
+
+@router.put("/materials/{group_id}/links")
+async def update_material_links(
+    group_id: UUID,
+    payload: AdminNewsLinksUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    await db.execute(delete(NewsTeam).where(NewsTeam.translation_group_id == group_id))
+    await db.execute(delete(NewsGame).where(NewsGame.translation_group_id == group_id))
+    for tid in payload.team_ids:
+        db.add(NewsTeam(translation_group_id=group_id, team_id=tid))
+    for gid in payload.game_ids:
+        db.add(NewsGame(translation_group_id=group_id, game_id=gid))
+    await db.commit()
+    await invalidate_pattern("*app.api.news*")
+    return {"ok": True}
 
 
 @router.post("/upload-inline-image")

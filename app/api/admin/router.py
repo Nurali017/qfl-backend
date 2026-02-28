@@ -19,6 +19,7 @@ from app.api.admin.cup_draw import router as cup_draw_router
 from app.api.admin.games import router as games_router
 from app.api.admin.contracts import router as contracts_router
 from app.api.admin.coaches import router as coaches_router
+from app.api.admin.broadcasters import router as broadcasters_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(auth_router)
@@ -40,3 +41,4 @@ router.include_router(team_of_week_router)
 router.include_router(seasons_router)
 router.include_router(cup_draw_router)
 router.include_router(games_router)
+router.include_router(broadcasters_router)

@@ -1,16 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import (
     Game,
+    Language,
+    News,
     Player,
     PlayerTeam,
     Season,
     Team,
 )
+from app.models.news import NewsTeam
+from app.schemas.news import NewsListItem
 from app.models.coach import Coach, TeamCoach
 from app.schemas.game import TeamGameItem
 from app.schemas.team import (
@@ -334,3 +338,22 @@ async def get_team_coaches(
     items.sort(key=lambda x: role_order.get(x["role"], 99))
 
     return {"items": items, "total": len(items)}
+
+
+@router.get("/{team_id}/news", response_model=list[NewsListItem])
+async def get_team_news(
+    team_id: int,
+    lang: str = Query("kz", pattern="^(kz|ru)$"),
+    limit: int = Query(10, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get news articles linked to a team."""
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    result = await db.execute(
+        select(News)
+        .join(NewsTeam, News.translation_group_id == NewsTeam.translation_group_id)
+        .where(NewsTeam.team_id == team_id, News.language == lang_enum)
+        .order_by(desc(News.publish_date), desc(News.id))
+        .limit(limit)
+    )
+    return result.scalars().all()

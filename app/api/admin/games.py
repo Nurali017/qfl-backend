@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.models import Game, GameStatus, Team, GameLineup, GameEvent, LineupType, GameEventType, Referee, GameReferee, RefereeRole
+from app.models import Game, GameStatus, Team, GameLineup, GameEvent, LineupType, GameEventType, Referee, GameReferee, RefereeRole, Broadcaster, GameBroadcaster
 from app.schemas.admin.games import (
     AdminGameResponse,
     AdminGameUpdateRequest,
@@ -19,6 +19,10 @@ from app.schemas.admin.games import (
     AdminRefereeItem,
     AdminRefereeAddRequest,
 )
+from app.schemas.admin.broadcasters import (
+    AdminGameBroadcasterItem,
+    AdminGameBroadcasterAddRequest,
+)
 
 router = APIRouter(
     prefix="/games",
@@ -28,6 +32,17 @@ router = APIRouter(
 
 
 def _game_to_response(game: Game) -> AdminGameResponse:
+    broadcaster_items = []
+    if hasattr(game, "broadcasters") and game.broadcasters:
+        for gb in sorted(game.broadcasters, key=lambda x: x.sort_order):
+            if gb.broadcaster:
+                broadcaster_items.append(AdminGameBroadcasterItem(
+                    id=gb.id,
+                    broadcaster_id=gb.broadcaster_id,
+                    broadcaster_name=gb.broadcaster.name,
+                    logo_url=gb.broadcaster.logo_url,
+                    sort_order=gb.sort_order,
+                ))
     return AdminGameResponse(
         id=game.id,
         sota_id=game.sota_id,
@@ -59,6 +74,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         home_formation=game.home_formation,
         away_formation=game.away_formation,
         updated_at=game.updated_at,
+        broadcasters=broadcaster_items,
     )
 
 
@@ -76,6 +92,7 @@ async def list_games(
     query = select(Game).options(
         selectinload(Game.home_team),
         selectinload(Game.away_team),
+        selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
     )
     count_query = select(func.count()).select_from(Game)
 
@@ -115,7 +132,7 @@ async def list_games(
     total = count_result.scalar() or 0
 
     result = await db.execute(
-        query.order_by(Game.date.desc(), Game.time.desc().nullslast())
+        query.order_by(func.abs(Game.date - func.current_date()), Game.time.asc().nullslast())
         .offset(offset)
         .limit(limit)
     )
@@ -154,7 +171,11 @@ async def search_referees(
 async def get_game(game_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Game)
-        .options(selectinload(Game.home_team), selectinload(Game.away_team))
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
+        )
         .where(Game.id == game_id)
     )
     game = result.scalar_one_or_none()
@@ -171,7 +192,11 @@ async def update_game(
 ):
     result = await db.execute(
         select(Game)
-        .options(selectinload(Game.home_team), selectinload(Game.away_team))
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
+        )
         .where(Game.id == game_id)
     )
     game = result.scalar_one_or_none()
@@ -188,7 +213,16 @@ async def update_game(
         setattr(game, field, value)
 
     await db.commit()
-    await db.refresh(game)
+    result = await db.execute(
+        select(Game)
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
+        )
+        .where(Game.id == game_id)
+    )
+    game = result.scalar_one()
     return _game_to_response(game)
 
 
@@ -434,6 +468,96 @@ async def delete_referee(game_id: int, entry_id: int, db: AsyncSession = Depends
     entry = result.scalar_one_or_none()
     if not entry:
         raise HTTPException(status_code=404, detail="Referee entry not found")
+    await db.delete(entry)
+    await db.commit()
+    return {"ok": True}
+
+
+# --- Broadcaster endpoints ---
+
+@router.get("/{game_id}/broadcasters", response_model=list[AdminGameBroadcasterItem])
+async def list_game_broadcasters(game_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Game).where(Game.id == game_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    entries_result = await db.execute(
+        select(GameBroadcaster)
+        .options(selectinload(GameBroadcaster.broadcaster))
+        .where(GameBroadcaster.game_id == game_id)
+        .order_by(GameBroadcaster.sort_order)
+    )
+    entries = entries_result.scalars().all()
+    return [
+        AdminGameBroadcasterItem(
+            id=entry.id,
+            broadcaster_id=entry.broadcaster_id,
+            broadcaster_name=entry.broadcaster.name if entry.broadcaster else "",
+            logo_url=entry.broadcaster.logo_url if entry.broadcaster else None,
+            sort_order=entry.sort_order,
+        )
+        for entry in entries
+    ]
+
+
+@router.post("/{game_id}/broadcasters", response_model=AdminGameBroadcasterItem, status_code=201)
+async def add_game_broadcaster(
+    game_id: int,
+    body: AdminGameBroadcasterAddRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Game).where(Game.id == game_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    broadcaster_result = await db.execute(
+        select(Broadcaster).where(Broadcaster.id == body.broadcaster_id)
+    )
+    broadcaster = broadcaster_result.scalar_one_or_none()
+    if not broadcaster:
+        raise HTTPException(status_code=404, detail="Broadcaster not found")
+
+    entry = GameBroadcaster(
+        game_id=game_id,
+        broadcaster_id=body.broadcaster_id,
+        sort_order=body.sort_order,
+    )
+    db.add(entry)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Broadcaster already added to this game")
+    await db.refresh(entry)
+
+    # Reload with broadcaster
+    entry_result = await db.execute(
+        select(GameBroadcaster)
+        .options(selectinload(GameBroadcaster.broadcaster))
+        .where(GameBroadcaster.id == entry.id)
+    )
+    entry = entry_result.scalar_one()
+
+    return AdminGameBroadcasterItem(
+        id=entry.id,
+        broadcaster_id=entry.broadcaster_id,
+        broadcaster_name=entry.broadcaster.name if entry.broadcaster else "",
+        logo_url=entry.broadcaster.logo_url if entry.broadcaster else None,
+        sort_order=entry.sort_order,
+    )
+
+
+@router.delete("/{game_id}/broadcasters/{entry_id}")
+async def delete_game_broadcaster(game_id: int, entry_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(GameBroadcaster).where(
+            GameBroadcaster.id == entry_id,
+            GameBroadcaster.game_id == game_id,
+        )
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Broadcaster entry not found")
     await db.delete(entry)
     await db.commit()
     return {"ok": True}

@@ -136,3 +136,6 @@ class Game(Base):
         "GameEvent", back_populates="game", cascade="all, delete-orphan"
     )
     stage: Mapped["Stage"] = relationship("Stage", back_populates="games")
+    broadcasters: Mapped[list["GameBroadcaster"]] = relationship(
+        "GameBroadcaster", back_populates="game", cascade="all, delete-orphan"
+    )

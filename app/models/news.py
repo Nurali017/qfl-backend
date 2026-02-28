@@ -72,3 +72,31 @@ class News(Base):
         Index("ix_news_language_publish_date", "language", "publish_date"),
         {"comment": "News articles in multiple languages"},
     )
+
+
+class NewsTeam(Base):
+    __tablename__ = "news_teams"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    translation_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    __table_args__ = (
+        UniqueConstraint("translation_group_id", "team_id", name="uq_news_teams"),
+    )
+
+
+class NewsGame(Base):
+    __tablename__ = "news_games"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    translation_group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    game_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("games.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    __table_args__ = (
+        UniqueConstraint("translation_group_id", "game_id", name="uq_news_games"),
+    )
