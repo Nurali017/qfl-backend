@@ -18,7 +18,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('games', sa.Column('youtube_live_url', sa.String(500), nullable=True))
+    op.execute("""
+        ALTER TABLE games
+        ADD COLUMN IF NOT EXISTS youtube_live_url VARCHAR(500)
+    """)
 
 
 def downgrade() -> None:
