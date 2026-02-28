@@ -14,6 +14,7 @@ from app.schemas.admin.games import (
     AdminGamesListResponse,
     AdminLineupItem,
     AdminLineupAddRequest,
+    AdminLineupUpdateRequest,
     AdminEventItem,
     AdminEventAddRequest,
     AdminRefereeItem,
@@ -285,6 +286,47 @@ async def add_lineup(game_id: int, body: AdminLineupAddRequest, db: AsyncSession
     await db.refresh(entry)
 
     # Load player name
+    player_result = await db.execute(
+        select(GameLineup).options(selectinload(GameLineup.player)).where(GameLineup.id == entry.id)
+    )
+    entry = player_result.scalar_one()
+
+    return AdminLineupItem(
+        id=entry.id,
+        player_id=entry.player_id,
+        player_name=" ".join(filter(None, [entry.player.last_name, entry.player.first_name])) if entry.player else None,
+        team_id=entry.team_id,
+        lineup_type=entry.lineup_type.value,
+        shirt_number=entry.shirt_number,
+        is_captain=entry.is_captain,
+        amplua=entry.amplua,
+        field_position=entry.field_position,
+    )
+
+
+@router.patch("/{game_id}/lineup/{lineup_id}", response_model=AdminLineupItem)
+async def update_lineup(game_id: int, lineup_id: int, body: AdminLineupUpdateRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(GameLineup)
+        .options(selectinload(GameLineup.player))
+        .where(GameLineup.id == lineup_id, GameLineup.game_id == game_id)
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Lineup entry not found")
+    if body.lineup_type is not None:
+        entry.lineup_type = LineupType(body.lineup_type)
+    if body.shirt_number is not None:
+        entry.shirt_number = body.shirt_number
+    if body.is_captain is not None:
+        entry.is_captain = body.is_captain
+    if body.amplua is not None:
+        entry.amplua = body.amplua if body.amplua != "" else None
+    if body.field_position is not None:
+        entry.field_position = body.field_position if body.field_position != "" else None
+    await db.commit()
+    await db.refresh(entry)
+
     player_result = await db.execute(
         select(GameLineup).options(selectinload(GameLineup.player)).where(GameLineup.id == entry.id)
     )

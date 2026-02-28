@@ -19,6 +19,11 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
+# Entrypoint runs Alembic migrations before starting the server
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
 # Production: gunicorn with uvicorn workers
 # Dev docker-compose overrides this with: uvicorn app.main:app --reload
 CMD ["gunicorn", "app.main:app", \
