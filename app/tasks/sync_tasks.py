@@ -57,6 +57,7 @@ async def _sync_live_stats():
                     Game.season_id == season_id,
                     Game.date >= three_days_ago,
                     Game.has_stats == True,
+                    Game.sync_disabled == False,
                 )
             )
             game_ids = [g[0] for g in result.fetchall()]

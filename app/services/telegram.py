@@ -114,6 +114,94 @@ async def notify_contract_change(
     await send_telegram_message(text)
 
 
+COACH_ROLE_LABELS: dict[str, str] = {
+    "head_coach": "Главный тренер",
+    "assistant": "Ассистент",
+    "goalkeeper_coach": "Тренер вратарей",
+    "fitness_coach": "Тренер по физподготовке",
+    "other": "Другое",
+}
+
+
+async def notify_coach_change(
+    action: str,
+    coach_name: str,
+    team_name: str,
+    season_name: str,
+    admin_email: str,
+    assignment_id: int,
+    *,
+    role: str | None = None,
+    is_active: bool | None = None,
+) -> None:
+    lines: list[str] = []
+    if role is not None:
+        lines.append(f"\U0001f465 Роль: {COACH_ROLE_LABELS.get(role, role)}")
+    if is_active is not None:
+        lines.append(f"\u2705 Активен: {'да' if is_active else 'нет'}")
+    details = "\n".join(lines)
+
+    text = (
+        f"\U0001f9d1\u200d\U0001f3eb Назначение тренера <b>{action}</b>\n\n"
+        f"\U0001f464 Тренер: {coach_name}\n"
+        f"\U0001f3df Команда: {team_name}\n"
+        f"\U0001f4c5 Сезон: {season_name}\n"
+    )
+    if details:
+        text += details + "\n"
+    text += (
+        f"\n\U0001f468\u200d\U0001f4bc Админ: {admin_email}\n"
+        f"\U0001f517 ID назначения: {assignment_id}"
+    )
+    await send_telegram_message(text)
+
+
+async def notify_coach_updated(
+    coach_name: str,
+    team_name: str,
+    season_name: str,
+    admin_email: str,
+    assignment_id: int,
+    changes: dict[str, tuple],
+) -> None:
+    """Send detailed notification about coach assignment update with changed fields."""
+    change_lines: list[str] = []
+    field_labels = {
+        "role": "Роль",
+        "is_active": "Активен",
+        "team_id": "Команда ID",
+        "season_id": "Сезон ID",
+        "coach_id": "Тренер ID",
+        "start_date": "Дата начала",
+        "end_date": "Дата окончания",
+    }
+    for field, (old_val, new_val) in changes.items():
+        label = field_labels.get(field, field)
+        if field == "role":
+            old_display = COACH_ROLE_LABELS.get(str(old_val), str(old_val)) if old_val is not None else "—"
+            new_display = COACH_ROLE_LABELS.get(str(new_val), str(new_val)) if new_val is not None else "—"
+        elif field == "is_active":
+            old_display = "да" if old_val else "нет"
+            new_display = "да" if new_val else "нет"
+        else:
+            old_display = str(old_val) if old_val is not None else "—"
+            new_display = str(new_val) if new_val is not None else "—"
+        change_lines.append(f"  {label}: {old_display} \u2192 {new_display}")
+
+    changes_text = "\n".join(change_lines) if change_lines else "  (нет данных)"
+
+    text = (
+        f"\U0001f9d1\u200d\U0001f3eb Назначение тренера <b>изменено</b>\n\n"
+        f"\U0001f464 Тренер: {coach_name}\n"
+        f"\U0001f3df Команда: {team_name}\n"
+        f"\U0001f4c5 Сезон: {season_name}\n\n"
+        f"\U0001f4dd Изменения:\n{changes_text}\n\n"
+        f"\U0001f468\u200d\U0001f4bc Админ: {admin_email}\n"
+        f"\U0001f517 ID назначения: {assignment_id}"
+    )
+    await send_telegram_message(text)
+
+
 async def notify_contract_updated(
     player_name: str,
     team_name: str,

@@ -51,12 +51,16 @@ async def init_minio():
                         f"arn:aws:s3:::{bucket}/coach_photos/*",
                         f"arn:aws:s3:::{bucket}/player_photos/*",
                         f"arn:aws:s3:::{bucket}/document/*",
+                        f"arn:aws:s3:::{bucket}/news_content/*",
                     ],
                 }
             ],
         }
         import json
-        client.set_bucket_policy(bucket, json.dumps(policy))
+        try:
+            client.set_bucket_policy(bucket, json.dumps(policy))
+        except S3Error:
+            pass  # Policy may fail over tunnel; bucket already configured in prod
 
     except S3Error as e:
         raise RuntimeError(f"Failed to initialize MinIO: {e}")

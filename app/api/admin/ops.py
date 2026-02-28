@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,17 @@ from app.services.season_visibility import get_current_season_id
 from app.services.sota_client import SotaClient, get_sota_client
 from app.services.sync import SyncOrchestrator
 router = APIRouter(prefix="/ops", tags=["admin-ops"])
+
+
+async def _require_sync_enabled(game_id: int, db: AsyncSession) -> Game:
+    """Fetch game and raise 400 if sync is disabled for it."""
+    result = await db.execute(select(Game).where(Game.id == game_id))
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if game.sync_disabled:
+        raise HTTPException(status_code=400, detail="Sync is disabled for this game")
+    return game
 
 
 class FinishedLineupsBackfillRequest(BaseModel):
@@ -140,6 +151,7 @@ async def sync_game_stats(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
+    await _require_sync_enabled(game_id, db)
     try:
         details = await SyncOrchestrator(db).sync_game_stats(game_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Game stats sync completed", details=details)
@@ -153,6 +165,7 @@ async def sync_game_lineup(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
+    await _require_sync_enabled(game_id, db)
     try:
         details = await SyncOrchestrator(db).sync_pre_game_lineup(game_id)
         return SyncResponse(status=SyncStatus.SUCCESS, message="Game lineup sync completed", details=details)
@@ -244,6 +257,7 @@ async def live_sync_lineup(
     client: SotaClient = Depends(get_sota_client),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
+    await _require_sync_enabled(game_id, db)
     try:
         service = LiveSyncService(db, client)
         if source == "pregame":
@@ -267,9 +281,11 @@ async def live_sync_lineup(
 @router.post("/live/sync-events/{game_id}")
 async def live_sync_events(
     game_id: int,
+    db: AsyncSession = Depends(get_db),
     service: LiveSyncService = Depends(get_live_sync_service),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
+    await _require_sync_enabled(game_id, db)
     new_events = await service.sync_live_events(game_id)
     return {
         "game_id": game_id,
@@ -281,9 +297,11 @@ async def live_sync_events(
 @router.post("/live/sync-stats/{game_id}")
 async def live_sync_stats(
     game_id: int,
+    db: AsyncSession = Depends(get_db),
     service: LiveSyncService = Depends(get_live_sync_service),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
+    await _require_sync_enabled(game_id, db)
     return await service.sync_live_stats(game_id)
 
 

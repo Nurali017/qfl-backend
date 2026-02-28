@@ -485,7 +485,22 @@ class LiveSyncService:
             player2_team_name = ""
             team2_id = None
 
-            if event_type in (GameEventType.substitution, GameEventType.assist):
+            # SOTA sends player2 on ГОЛ events = opposing player (defender/goalkeeper), NOT the assister.
+            # Assists come as separate "ГОЛЕВОЙ ПАС" events. Only process player2 for subs/assists.
+            if event_type == GameEventType.assist:
+                # Only add to assists_map, don't create separate DB record
+                first_name2 = event_data.get("first_name2", "")
+                last_name2 = event_data.get("last_name2", "")
+                player2_name_assist = f"{first_name2} {last_name2}".strip()
+                if player2_name_assist:
+                    key = (half, minute, player2_name_assist)
+                    assists_map[key] = {
+                        "player_id": player_id,
+                        "player_name": player_name,
+                    }
+                continue  # skip creating GameEvent for assist
+
+            if event_type == GameEventType.substitution:
                 first_name2 = event_data.get("first_name2", "")
                 last_name2 = event_data.get("last_name2", "")
                 team2_name = event_data.get("team2", "")
@@ -497,7 +512,7 @@ class LiveSyncService:
 
             if team_id is None:
                 player2_candidate_team_id = None
-                if event_type in (GameEventType.substitution, GameEventType.assist):
+                if event_type == GameEventType.substitution:
                     player2_candidate_team_id = await self._infer_team_id_from_lineup(game_id, player2_id)
                 team_id = self._resolve_unambiguous_team_id(
                     team_id_from_player,
@@ -538,23 +553,27 @@ class LiveSyncService:
                 sig_by_name = (half, minute, event_type.value, normalized_name)
                 existing_signatures.add(sig_by_name)
 
-            if event_type == GameEventType.assist and player2_name:
-                key = (half, minute, player2_name)
-                assists_map[key] = {
-                    "player_id": player_id,
-                    "player_name": player_name,
-                }
-
-        # Link assists to goals
+        # Link assists to new goals in this batch
         for event in new_events:
-            if event.event_type == GameEventType.goal:
+            if event.event_type in (GameEventType.goal, GameEventType.penalty):
                 key = (event.half, event.minute, event.player_name)
                 assist_info = assists_map.get(key)
                 if assist_info:
                     event.assist_player_id = assist_info["player_id"]
                     event.assist_player_name = assist_info["player_name"]
 
-        if new_events:
+        # Also link assists to existing goals in DB that don't have assists yet
+        if assists_map:
+            for existing_event in existing_events:
+                if (existing_event.event_type in (GameEventType.goal, GameEventType.penalty)
+                        and not existing_event.assist_player_id):
+                    key = (existing_event.half, existing_event.minute, existing_event.player_name)
+                    assist_info = assists_map.get(key)
+                    if assist_info:
+                        existing_event.assist_player_id = assist_info["player_id"]
+                        existing_event.assist_player_name = assist_info["player_name"]
+
+        if new_events or assists_map:
             await self.db.commit()
             logger.info(
                 "Game %s live events team resolution: by_name=%s by_player=%s unresolved=%s new_events=%s",
