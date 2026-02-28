@@ -673,6 +673,7 @@ class LiveSyncService:
             await self.sync_pregame_lineup(game_id)
 
         game.status = GameStatus.live
+        game.half1_started_at = datetime.utcnow()
         await self.db.commit()
 
         events = await self.sync_live_events(game_id)

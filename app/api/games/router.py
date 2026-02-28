@@ -1,7 +1,7 @@
 """Game list and detail endpoints."""
 
 import logging
-from datetime import date as date_type
+from datetime import date as date_type, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from app.api.deps import get_db
 from app.models import (
     Game, GameStatus, Language, News, Team, Stadium, GameReferee, Season, GameBroadcaster,
 )
+from app.models.game_event import GameEvent
 from app.models.news import NewsGame
 from app.schemas.news import NewsListItem
 from app.schemas.game import (
@@ -304,7 +305,6 @@ async def get_games(
 
 
 @router.get("/{game_id}")
-@cache(expire=1800)
 async def get_game(
     game_id: int,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
@@ -328,6 +328,25 @@ async def get_game(
 
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+
+    current_minute = None
+    if game.is_live:
+        now = datetime.utcnow()
+        if game.half2_started_at:
+            elapsed = (now - game.half2_started_at.replace(tzinfo=None)).total_seconds() / 60
+            current_minute = int(elapsed) + 46
+        elif game.half1_started_at:
+            elapsed = (now - game.half1_started_at.replace(tzinfo=None)).total_seconds() / 60
+            current_minute = int(elapsed) + 1
+        else:
+            result2 = await db.execute(
+                select(GameEvent.minute)
+                .where(GameEvent.game_id == game_id)
+                .order_by(GameEvent.half.desc(), GameEvent.minute.desc())
+                .limit(1)
+            )
+            row = result2.first()
+            current_minute = row[0] if row else None
 
     home_team = None
     away_team = None
@@ -386,6 +405,7 @@ async def get_game(
         has_stats=game.has_stats,
         has_lineup=game.has_lineup,
         is_live=game.is_live,
+        minute=current_minute,
         is_technical=game.is_technical,
         is_schedule_tentative=game.is_schedule_tentative,
         is_featured=game.is_featured,
@@ -394,6 +414,7 @@ async def get_game(
         visitors=game.visitors,
         ticket_url=game.ticket_url,
         video_url=game.video_url,
+        youtube_live_url=game.youtube_live_url,
         protocol_url=game.protocol_url,
         where_broadcast=game.where_broadcast,
         video_review_url=game.video_review_url,

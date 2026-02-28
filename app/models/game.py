@@ -83,6 +83,10 @@ class Game(Base):
     youtube_live_url: Mapped[str | None] = mapped_column(String(500))  # YouTube live stream URL
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
 
+    # Half timestamps for auto-ticking live minute
+    half1_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    half2_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Broadcast fields (В-1)
     where_broadcast: Mapped[str | None] = mapped_column(String(500))  # Where to watch
     video_review_url: Mapped[str | None] = mapped_column(String(500))  # Video review URL
