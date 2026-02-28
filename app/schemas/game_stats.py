@@ -21,6 +21,10 @@ class GameStatsTeamEntry(BaseModel):
     red_cards: int | None = None
     corners: int | None = None
     offsides: int | None = None
+    shots_on_bar: int | None = None
+    shots_blocked: int | None = None
+    penalties: int | None = None
+    saves: int | None = None
     extra_stats: dict | None = None
 
 

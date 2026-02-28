@@ -90,6 +90,14 @@ class AdminLineupAddRequest(BaseModel):
     field_position: Optional[str] = None
 
 
+class AdminLineupUpdateRequest(BaseModel):
+    lineup_type: Optional[str] = None
+    shirt_number: Optional[int] = None
+    is_captain: Optional[bool] = None
+    amplua: Optional[str] = None
+    field_position: Optional[str] = None
+
+
 class AdminEventItem(BaseModel):
     id: int
     half: int

@@ -401,6 +401,23 @@ class LiveSyncService:
                 "offsides": _parse_int(metrics.get("offsides", {}).get(side)),
                 "possession": _parse_possession(metrics.get("possessions", {}).get(side)),
                 "possession_percent": _parse_possession(metrics.get("possessions", {}).get(side)),
+                "shots_on_bar": _parse_int(
+                    metrics.get("shots_on_bar", {}).get(side)
+                    or metrics.get("shot_on_bar", {}).get(side)
+                ),
+                "shots_blocked": _parse_int(
+                    metrics.get("shots_blocked", {}).get(side)
+                    or metrics.get("shot_blocked", {}).get(side)
+                ),
+                "penalties": _parse_int(
+                    metrics.get("penalty", {}).get(side)
+                    or metrics.get("penalties", {}).get(side)
+                ),
+                "saves": _parse_int(
+                    metrics.get("saves", {}).get(side)
+                    or metrics.get("save", {}).get(side)
+                    or metrics.get("save_shot", {}).get(side)
+                ),
             }
 
             stmt = insert(GameTeamStats).values(**values)

@@ -61,6 +61,10 @@ async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
             red_cards=ts.red_cards,
             corners=ts.corners,
             offsides=ts.offsides,
+            shots_on_bar=ts.shots_on_bar,
+            shots_blocked=ts.shots_blocked,
+            penalties=ts.penalties,
+            saves=ts.saves,
             extra_stats=ts.extra_stats,
         ))
 

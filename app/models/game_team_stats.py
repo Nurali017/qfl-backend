@@ -47,6 +47,12 @@ class GameTeamStats(Base):
     corners: Mapped[int | None] = mapped_column(Integer)  # corner from API
     offsides: Mapped[int | None] = mapped_column(Integer)  # offside from API
 
+    # Extended stats (from SOTA live endpoint)
+    shots_on_bar: Mapped[int | None] = mapped_column(Integer)
+    shots_blocked: Mapped[int | None] = mapped_column(Integer)
+    penalties: Mapped[int | None] = mapped_column(Integer)
+    saves: Mapped[int | None] = mapped_column(Integer)
+
     # Extra stats for future unknown fields from API
     extra_stats: Mapped[dict | None] = mapped_column(JSONB)
 
