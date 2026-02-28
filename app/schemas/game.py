@@ -1,5 +1,6 @@
 from datetime import date
 from datetime import time as time_type
+from typing import Optional
 from pydantic import BaseModel
 
 from app.schemas.team import TeamInGame, TeamStadiumInfo, TeamWithScore
@@ -229,6 +230,7 @@ class GameDetailItem(BaseModel):
     has_stats: bool = False
     has_lineup: bool = False
     is_live: bool = False
+    minute: Optional[int] = None
     is_technical: bool = False
     is_schedule_tentative: bool = False
     is_featured: bool = False

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -247,6 +249,20 @@ async def live_stop(
 ):
     result = await service.stop_live_tracking(game_id)
     return LiveSyncResponse(**result)
+
+
+@router.post("/live/half2/{game_id}")
+async def start_second_half(
+    game_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    game = await db.get(Game, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    game.half2_started_at = datetime.utcnow()
+    await db.commit()
+    return {"game_id": game_id, "half2_started_at": game.half2_started_at}
 
 
 @router.post("/live/sync-lineup/{game_id}", response_model=LineupSyncResponse)

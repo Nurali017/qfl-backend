@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,8 +12,16 @@ from app.caching import init_cache
 settings = get_settings()
 
 
+def _run_migrations() -> None:
+    from alembic.config import Config
+    from alembic import command
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "heads")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await asyncio.to_thread(_run_migrations)
     await init_minio()
     await init_cache()
     yield

@@ -44,6 +44,7 @@ class AdminGameResponse(BaseModel):
 
 
 class AdminGameUpdateRequest(BaseModel):
+    sota_id: Optional[UUID] = None
     date: Optional[dt.date] = None
     time: Optional[dt.time] = None
     tour: Optional[int] = None
