@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Game, GameEvent, GameEventType, GameLineup, GameTeamStats, GameStatus, LineupType, Team, Player
+from app.models import Game, GameEvent, GameEventType, GameLineup, GameTeamStats, GameStatus, LineupType, Team, Player, PlayerTeam
 from app.services.sota_client import SotaClient
 from app.services.sync.lineup_sync import LineupSyncService
 from app.utils.team_name_matcher import TeamNameMatcher
@@ -190,11 +190,13 @@ class LiveSyncService:
 
             for player_data in starters:
                 total_lineup += await self._save_player_lineup(
-                    game_id, team_id, player_data, LineupType.starter
+                    game_id, team_id, player_data, LineupType.starter,
+                    season_id=game.season_id,
                 )
             for player_data in substitutes:
                 total_lineup += await self._save_player_lineup(
-                    game_id, team_id, player_data, LineupType.substitute
+                    game_id, team_id, player_data, LineupType.substitute,
+                    season_id=game.season_id,
                 )
 
         game.lineup_source = "sota_live"
@@ -213,12 +215,15 @@ class LiveSyncService:
         team_id: int,
         player_data: dict,
         lineup_type: LineupType,
+        season_id: int | None = None,
     ) -> int:
         """Save a single player lineup entry."""
         player_internal_id = await self._get_or_create_player_by_sota(
             player_data.get("id"),
             player_data.get("first_name"),
             player_data.get("last_name"),
+            team_id=team_id,
+            season_id=season_id,
         )
         if player_internal_id is None:
             return 0
@@ -265,6 +270,8 @@ class LiveSyncService:
         sota_id_raw: str | None,
         first_name: str | None,
         last_name: str | None,
+        team_id: int | None = None,
+        season_id: int | None = None,
     ) -> int | None:
         if not sota_id_raw:
             return None
@@ -279,6 +286,27 @@ class LiveSyncService:
 
         if player is not None:
             return player.id
+
+        # Fallback: поиск по имени в составе команды/сезона.
+        # Если игрок создан вручную без sota_id — привязываем его sota_id вместо создания дубля.
+        if team_id and season_id and (first_name or last_name):
+            result = await self.db.execute(
+                select(Player)
+                .join(PlayerTeam, PlayerTeam.player_id == Player.id)
+                .where(
+                    PlayerTeam.team_id == team_id,
+                    PlayerTeam.season_id == season_id,
+                    Player.last_name == (last_name or ""),
+                    Player.first_name == (first_name or ""),
+                    Player.sota_id.is_(None),
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing is not None:
+                existing.sota_id = sota_id
+                await self.db.flush()
+                logger.info("Linked sota_id to existing player %s (id=%s)", f"{first_name} {last_name}", existing.id)
+                return existing.id
 
         player = Player(
             sota_id=sota_id,
