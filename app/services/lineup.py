@@ -11,7 +11,7 @@ SUPPORTED_FORMATIONS = {
 
 VALID_AMPLUA_VALUES = {"Gk", "D", "DM", "M", "AM", "F"}
 VALID_FIELD_POSITION_VALUES = {"L", "LC", "C", "RC", "R"}
-LINEUP_FIELD_ALLOWED_CHAMPIONSHIPS = {1, 2, 3}
+LINEUP_FIELD_ALLOWED_CHAMPIONSHIPS = {1, 2, 3, 5}
 LINEUP_FIELD_CUTOFF_DATE = date_type(2025, 6, 1)
 VALID_LINEUP_SOURCES = {"team_squad", "sota_api", "vsporte_api", "matches_players", "none"}
 
