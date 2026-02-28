@@ -5,15 +5,17 @@ from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import desc, select, func, or_
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import (
-    Game, GameStatus, Team, Stadium, GameReferee, Season,
+    Game, GameStatus, Language, News, Team, Stadium, GameReferee, Season, GameBroadcaster,
 )
+from app.models.news import NewsGame
+from app.schemas.news import NewsListItem
 from app.schemas.game import (
-    GameDetailItem, GameListItem, MatchCenterResponse,
+    BroadcasterInfo, GameDetailItem, GameListItem, MatchCenterResponse,
     StadiumInfo, TeamInMatchCenter,
 )
 from app.schemas.team import TeamInGame
@@ -209,6 +211,7 @@ async def get_games(
             selectinload(Game.season),
             selectinload(Game.stadium_rel),
             selectinload(Game.stage),
+            selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
         )
         .order_by(Game.date.asc(), Game.time.asc())
         .offset(offset)
@@ -284,6 +287,17 @@ async def get_games(
             away_team=_build_team_in_match_center(g.away_team, lang),
             stadium_info=_build_stadium_info(g.stadium_rel, lang),
             season_name=get_localized_field(g.season, "name", lang) if g.season else None,
+            broadcasters=[
+                BroadcasterInfo(
+                    id=gb.broadcaster.id,
+                    name=gb.broadcaster.name,
+                    logo_url=gb.broadcaster.logo_url,
+                    type=gb.broadcaster.type,
+                    website=gb.broadcaster.website,
+                )
+                for gb in sorted(g.broadcasters, key=lambda x: x.sort_order)
+                if gb.broadcaster and gb.broadcaster.is_active
+            ],
         ))
 
     return {"items": items, "total": total}
@@ -307,6 +321,7 @@ async def get_game(
             selectinload(Game.stadium_rel),
             selectinload(Game.stage),
             selectinload(Game.referees).selectinload(GameReferee.referee),
+            selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
         )
     )
     game = result.scalar_one_or_none()
@@ -387,4 +402,34 @@ async def get_game(
         home_team=home_team,
         away_team=away_team,
         season_name=game.season.name if game.season else None,
+        broadcasters=[
+            BroadcasterInfo(
+                id=gb.broadcaster.id,
+                name=gb.broadcaster.name,
+                logo_url=gb.broadcaster.logo_url,
+                type=gb.broadcaster.type,
+                website=gb.broadcaster.website,
+            )
+            for gb in sorted(game.broadcasters, key=lambda x: x.sort_order)
+            if gb.broadcaster and gb.broadcaster.is_active
+        ],
     )
+
+
+@router.get("/{game_id}/news", response_model=list[NewsListItem])
+async def get_game_news(
+    game_id: int,
+    lang: str = Query("kz", pattern="^(kz|ru)$"),
+    limit: int = Query(10, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get news articles linked to a game."""
+    lang_enum = Language.KZ if lang == "kz" else Language.RU
+    result = await db.execute(
+        select(News)
+        .join(NewsGame, News.translation_group_id == NewsGame.translation_group_id)
+        .where(NewsGame.game_id == game_id, News.language == lang_enum)
+        .order_by(desc(News.publish_date), desc(News.id))
+        .limit(limit)
+    )
+    return result.scalars().all()

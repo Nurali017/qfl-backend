@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.models.game import GameStatus
 from app.models.game_referee import RefereeRole
+from app.schemas.admin.broadcasters import AdminGameBroadcasterItem
 
 
 class AdminGameResponse(BaseModel):
@@ -39,6 +40,7 @@ class AdminGameResponse(BaseModel):
     home_formation: Optional[str] = None
     away_formation: Optional[str] = None
     updated_at: Optional[dt.datetime] = None
+    broadcasters: list[AdminGameBroadcasterItem] = []
 
 
 class AdminGameUpdateRequest(BaseModel):

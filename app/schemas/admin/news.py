@@ -77,6 +77,13 @@ class AdminNewsMaterialResponse(BaseModel):
     ru: AdminNewsTranslationResponse | None
     kz: AdminNewsTranslationResponse | None
     updated_at: datetime | None = None
+    team_ids: list[int] = []
+    game_ids: list[int] = []
+
+
+class AdminNewsLinksUpdateRequest(BaseModel):
+    team_ids: list[int] = []
+    game_ids: list[int] = []
 
 
 class AdminNewsMaterialListResponse(BaseModel):

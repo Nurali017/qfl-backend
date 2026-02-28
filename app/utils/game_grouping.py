@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Game, GameEvent
 from app.schemas.game import (
-    MatchCenterDateGroup, MatchCenterGame, StadiumInfo, TeamInMatchCenter,
+    BroadcasterInfo, MatchCenterDateGroup, MatchCenterGame, StadiumInfo, TeamInMatchCenter,
 )
 from app.utils.date_helpers import format_match_date
 from app.utils.game_status import compute_game_status
@@ -124,6 +124,20 @@ def group_games_by_date(
                 home_team=_build_team(game.home_team, lang),
                 away_team=_build_team(game.away_team, lang),
                 stadium=_build_stadium(game.stadium_rel, lang),
+                broadcasters=[
+                    BroadcasterInfo(
+                        id=gb.broadcaster.id,
+                        name=gb.broadcaster.name,
+                        logo_url=gb.broadcaster.logo_url,
+                        type=gb.broadcaster.type,
+                        website=gb.broadcaster.website,
+                    )
+                    for gb in sorted(
+                        getattr(game, "broadcasters", []),
+                        key=lambda x: x.sort_order,
+                    )
+                    if gb.broadcaster and gb.broadcaster.is_active
+                ],
             )
             grouped[game.date].append(game_model)
 

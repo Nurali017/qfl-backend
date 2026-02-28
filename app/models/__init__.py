@@ -31,6 +31,8 @@ from app.models.season_participant import SeasonParticipant
 from app.models.partner import Partner
 from app.models.team_of_week import TeamOfWeek
 from app.models.cup_draw import CupDraw
+from app.models.broadcaster import Broadcaster
+from app.models.game_broadcaster import GameBroadcaster
 
 __all__ = [
     "Season",
@@ -72,4 +74,6 @@ __all__ = [
     "Partner",
     "TeamOfWeek",
     "CupDraw",
+    "Broadcaster",
+    "GameBroadcaster",
 ]
