@@ -18,10 +18,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        'games',
-        sa.Column('sync_disabled', sa.Boolean(), server_default='false', nullable=False),
-    )
+    op.execute("""
+        ALTER TABLE games
+        ADD COLUMN IF NOT EXISTS sync_disabled BOOLEAN NOT NULL DEFAULT false
+    """)
 
 
 def downgrade() -> None:
