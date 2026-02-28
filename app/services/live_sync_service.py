@@ -77,11 +77,15 @@ class LiveSyncService:
         now = datetime.now()
         cutoff = now - timedelta(hours=2)
 
+        # Combine date + time into a timestamp for proper comparison.
+        # COALESCE(time, '00:00:00') handles nullable time field.
+        game_start = Game.date + func.coalesce(Game.time, dt_time(0, 0, 0))
+
         result = await self.db.execute(
             select(Game).where(
                 and_(
                     Game.status == GameStatus.live,
-                    Game.date <= cutoff.date(),
+                    game_start <= cutoff,
                 )
             )
         )
