@@ -68,6 +68,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         has_lineup=game.has_lineup,
         has_stats=game.has_stats,
         stadium_id=game.stadium_id,
+        visitors=game.visitors,
         ticket_url=game.ticket_url,
         video_url=game.video_url,
         youtube_live_url=game.youtube_live_url,
