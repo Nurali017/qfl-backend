@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from functools import partial
 from typing import BinaryIO
+from urllib.parse import quote
 
 from minio.error import S3Error
 
@@ -61,7 +62,7 @@ class FileStorageService:
             size = len(content)
 
         file_metadata = {
-            "original-filename": filename,
+            "original-filename": quote(filename, safe=""),
             "uploaded-at": datetime.now(timezone.utc).isoformat(),
             "category": category,
             **(metadata or {}),
@@ -188,30 +189,6 @@ class FileStorageService:
                     "content_type": obj.content_type,
                     "size": obj.size,
                 })
-
-            if files:
-                return files
-
-            # Slow fallback: scan all news_image/ and check metadata (legacy files)
-            for obj in client.list_objects(bucket, prefix="news_image/"):
-                # Skip sub-prefixed files (already handled above)
-                parts = obj.object_name.removeprefix("news_image/").split("/")
-                if len(parts) > 1:
-                    continue
-                try:
-                    stat = client.stat_object(bucket, obj.object_name)
-                    if stat.metadata.get("x-amz-meta-news-id") == news_id:
-                        file_id = obj.object_name.split("/")[-1].rsplit(".", 1)[0]
-                        files.append({
-                            "_id": file_id,
-                            "object_name": obj.object_name,
-                            "url": get_public_url(obj.object_name),
-                            "filename": stat.metadata.get("x-amz-meta-original-filename", obj.object_name),
-                            "content_type": stat.content_type,
-                            "size": obj.size,
-                        })
-                except S3Error:
-                    continue
 
             return files
 

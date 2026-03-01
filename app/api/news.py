@@ -131,16 +131,21 @@ async def get_news_list(
 @router.get("/article-types", response_model=dict[str, int])
 async def get_article_types(
     lang: str = Query("kz", pattern="^(kz|ru|en)$"),
+    championship_code: str | None = Query(None, description="Filter by championship code"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get count of articles by type."""
     lang_enum = _resolve_language(lang)
 
-    result = await db.execute(
+    query = (
         select(News.article_type, func.count(News.id))
         .where(News.language == lang_enum)
-        .group_by(News.article_type)
     )
+    if championship_code:
+        query = query.where(News.championship_code == championship_code)
+    query = query.group_by(News.article_type)
+
+    result = await db.execute(query)
 
     counts = {row[0].value if row[0] else "unclassified": row[1] for row in result.fetchall()}
     return counts
