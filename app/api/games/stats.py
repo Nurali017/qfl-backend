@@ -77,11 +77,15 @@ async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
     player_goals = {row.player_id: row.count for row in goals_result}
 
     assists_result = await db.execute(
-        select(GameEvent.player_id, func.count(GameEvent.id).label("count"))
-        .where(GameEvent.game_id == game_id, GameEvent.event_type == GameEventType.assist)
-        .group_by(GameEvent.player_id)
+        select(GameEvent.assist_player_id, func.count(GameEvent.id).label("count"))
+        .where(
+            GameEvent.game_id == game_id,
+            GameEvent.event_type.in_([GameEventType.goal, GameEventType.penalty]),
+            GameEvent.assist_player_id.isnot(None),
+        )
+        .group_by(GameEvent.assist_player_id)
     )
-    player_assists = {row.player_id: row.count for row in assists_result}
+    player_assists = {row.assist_player_id: row.count for row in assists_result}
 
     # Get player stats
     player_stats_result = await db.execute(
