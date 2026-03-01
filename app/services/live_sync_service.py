@@ -537,16 +537,14 @@ class LiveSyncService:
             # SOTA sends player2 on ГОЛ events = opposing player (defender/goalkeeper), NOT the assister.
             # Assists come as separate "ГОЛЕВОЙ ПАС" events. Only process player2 for subs/assists.
             if event_type == GameEventType.assist:
-                # Only add to assists_map, don't create separate DB record
-                first_name2 = event_data.get("first_name2", "")
-                last_name2 = event_data.get("last_name2", "")
-                player2_name_assist = f"{first_name2} {last_name2}".strip()
-                if player2_name_assist:
-                    key = (half, minute, player2_name_assist)
-                    assists_map[key] = {
-                        "player_id": player_id,
-                        "player_name": player_name,
-                    }
+                # Only add to assists_map, don't create separate DB record.
+                # Key by (half, minute, team_id) — SOTA sends player2 empty on assists,
+                # so we link by team: assist giver and goal scorer are on the same team.
+                key = (half, minute, team_id)
+                assists_map[key] = {
+                    "player_id": player_id,
+                    "player_name": player_name,
+                }
                 continue  # skip creating GameEvent for assist
 
             if event_type == GameEventType.substitution:
@@ -602,10 +600,10 @@ class LiveSyncService:
                 sig_by_name = (half, minute, event_type.value, normalized_name)
                 existing_signatures.add(sig_by_name)
 
-        # Link assists to new goals in this batch
+        # Link assists to new goals in this batch (by half, minute, team)
         for event in new_events:
             if event.event_type in (GameEventType.goal, GameEventType.penalty):
-                key = (event.half, event.minute, event.player_name)
+                key = (event.half, event.minute, event.team_id)
                 assist_info = assists_map.get(key)
                 if assist_info:
                     event.assist_player_id = assist_info["player_id"]
@@ -616,7 +614,7 @@ class LiveSyncService:
             for existing_event in existing_events:
                 if (existing_event.event_type in (GameEventType.goal, GameEventType.penalty)
                         and not existing_event.assist_player_id):
-                    key = (existing_event.half, existing_event.minute, existing_event.player_name)
+                    key = (existing_event.half, existing_event.minute, existing_event.team_id)
                     assist_info = assists_map.get(key)
                     if assist_info:
                         existing_event.assist_player_id = assist_info["player_id"]

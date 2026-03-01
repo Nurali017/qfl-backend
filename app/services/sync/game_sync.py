@@ -323,18 +323,29 @@ class GameSyncService(BaseSyncService):
         # Action type mapping
         ACTION_TYPE_MAP = {
             "ГОЛ": GameEventType.goal,
+            "АВТОГОЛ": GameEventType.own_goal,
+            "ПЕНАЛЬТИ": GameEventType.penalty,
+            "НЕЗАБИТЫЙ ПЕНАЛЬТИ": GameEventType.missed_penalty,
             "ГОЛЕВОЙ ПАС": GameEventType.assist,
             "ЖК": GameEventType.yellow_card,
+            "2ЖК": GameEventType.second_yellow,
             "КК": GameEventType.red_card,
             "ЗАМЕНА": GameEventType.substitution,
         }
 
-        events_added = 0
+        new_events = []
+        assists_map: dict[tuple, dict] = {}
+
         for event_data in events_data:
             action = event_data.get("action", "")
             event_type = ACTION_TYPE_MAP.get(action)
             if not event_type:
                 continue
+
+            # Check if goal was scored from penalty (standard field)
+            standard = (event_data.get("standard") or "").strip().upper()
+            if event_type == GameEventType.goal and standard == "ПЕНАЛЬТИ":
+                event_type = GameEventType.penalty
 
             half = event_data.get("half", 1)
             minute = event_data.get("time", 0)
@@ -373,7 +384,18 @@ class GameSyncService(BaseSyncService):
             if is_duplicate:
                 continue
 
-            # Find player2 ID
+            # Collect assists into map, don't create separate DB records.
+            # Key by (half, minute, team_id) — SOTA sends player2 empty on assists,
+            # so we link by team: assist giver and goal scorer are on the same team.
+            if event_type == GameEventType.assist:
+                key = (half, minute, team_id)
+                assists_map[key] = {
+                    "player_id": player_id,
+                    "player_name": player_name,
+                }
+                continue
+
+            # Find player2 ID (for substitutions; SOTA player2 on goals = opponent, not assister)
             first_name2 = event_data.get("first_name2", "")
             last_name2 = event_data.get("last_name2", "")
             team2_name = event_data.get("team2", "")
@@ -406,17 +428,38 @@ class GameSyncService(BaseSyncService):
             )
 
             self.db.add(event)
+            new_events.append(event)
             if player_id:
                 sig_by_id = (half, minute, event_type.value, str(player_id))
                 existing_signatures.add(sig_by_id)
             if normalized_name:
                 sig_by_name = (half, minute, event_type.value, normalized_name)
                 existing_signatures.add(sig_by_name)
-            events_added += 1
 
-        if events_added > 0:
+        # Link assists to new goals in this batch (by half, minute, team)
+        for event in new_events:
+            if event.event_type in (GameEventType.goal, GameEventType.penalty):
+                key = (event.half, event.minute, event.team_id)
+                assist_info = assists_map.get(key)
+                if assist_info:
+                    event.assist_player_id = assist_info["player_id"]
+                    event.assist_player_name = assist_info["player_name"]
+
+        # Also link assists to existing goals in DB that don't have assists yet
+        if assists_map:
+            for existing_event in existing_events:
+                if (existing_event.event_type in (GameEventType.goal, GameEventType.penalty)
+                        and not existing_event.assist_player_id):
+                    key = (existing_event.half, existing_event.minute, existing_event.team_id)
+                    assist_info = assists_map.get(key)
+                    if assist_info:
+                        existing_event.assist_player_id = assist_info["player_id"]
+                        existing_event.assist_player_name = assist_info["player_name"]
+
+        events_added = len(new_events)
+        if new_events or assists_map:
             await self.db.commit()
-            logger.info(f"Game {game_id}: added {events_added} events")
+            logger.info(f"Game {game_id}: added {events_added} events, linked {len(assists_map)} assists")
 
         return {"game_id": game_id, "events_added": events_added}
 
