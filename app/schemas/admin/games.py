@@ -37,6 +37,7 @@ class AdminGameResponse(BaseModel):
     youtube_live_url: Optional[str] = None
     where_broadcast: Optional[str] = None
     video_review_url: Optional[str] = None
+    protocol_url: Optional[str] = None
     home_formation: Optional[str] = None
     away_formation: Optional[str] = None
     updated_at: Optional[dt.datetime] = None
@@ -58,6 +59,7 @@ class AdminGameUpdateRequest(BaseModel):
     youtube_live_url: Optional[str] = None
     where_broadcast: Optional[str] = None
     video_review_url: Optional[str] = None
+    protocol_url: Optional[str] = None
     is_featured: Optional[bool] = None
     sync_disabled: Optional[bool] = None
     status: Optional[GameStatus] = None
@@ -117,6 +119,20 @@ class AdminEventAddRequest(BaseModel):
     half: int
     minute: int
     event_type: str
+    team_id: Optional[int] = None
+    player_id: Optional[int] = None
+    player_name: Optional[str] = None
+    player_number: Optional[int] = None
+    player2_id: Optional[int] = None
+    player2_name: Optional[str] = None
+    assist_player_id: Optional[int] = None
+    assist_player_name: Optional[str] = None
+
+
+class AdminEventUpdateRequest(BaseModel):
+    half: Optional[int] = None
+    minute: Optional[int] = None
+    event_type: Optional[str] = None
     team_id: Optional[int] = None
     player_id: Optional[int] = None
     player_name: Optional[str] = None

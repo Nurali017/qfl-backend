@@ -17,6 +17,7 @@ from app.schemas.admin.games import (
     AdminLineupUpdateRequest,
     AdminEventItem,
     AdminEventAddRequest,
+    AdminEventUpdateRequest,
     AdminRefereeItem,
     AdminRefereeAddRequest,
 )
@@ -72,6 +73,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         youtube_live_url=game.youtube_live_url,
         where_broadcast=game.where_broadcast,
         video_review_url=game.video_review_url,
+        protocol_url=game.protocol_url,
         home_formation=game.home_formation,
         away_formation=game.away_formation,
         updated_at=game.updated_at,
@@ -442,6 +444,40 @@ async def delete_event(game_id: int, event_id: int, db: AsyncSession = Depends(g
     await db.delete(ev)
     await db.commit()
     return {"ok": True}
+
+
+@router.patch("/{game_id}/events/{event_id}", response_model=AdminEventItem)
+async def update_event(game_id: int, event_id: int, body: AdminEventUpdateRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(GameEvent).where(GameEvent.id == event_id, GameEvent.game_id == game_id)
+    )
+    ev = result.scalar_one_or_none()
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+    for field in ["half", "minute", "team_id", "player_id", "player_name",
+                  "player_number", "player2_id", "player2_name",
+                  "assist_player_id", "assist_player_name"]:
+        val = getattr(body, field)
+        if val is not None:
+            setattr(ev, field, val)
+    if body.event_type is not None:
+        ev.event_type = GameEventType(body.event_type)
+    await db.commit()
+    await db.refresh(ev)
+    return AdminEventItem(
+        id=ev.id,
+        half=ev.half,
+        minute=ev.minute,
+        event_type=ev.event_type.value,
+        team_id=ev.team_id,
+        player_id=ev.player_id,
+        player_name=ev.player_name,
+        player_number=ev.player_number,
+        player2_id=ev.player2_id,
+        player2_name=ev.player2_name,
+        assist_player_id=ev.assist_player_id,
+        assist_player_name=ev.assist_player_name,
+    )
 
 
 # --- Referee endpoints ---
