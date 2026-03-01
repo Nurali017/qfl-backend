@@ -32,6 +32,7 @@ class AdminGameResponse(BaseModel):
     has_lineup: bool = False
     has_stats: bool = False
     stadium_id: Optional[int] = None
+    visitors: Optional[int] = None
     ticket_url: Optional[str] = None
     video_url: Optional[str] = None
     youtube_live_url: Optional[str] = None
@@ -54,6 +55,7 @@ class AdminGameUpdateRequest(BaseModel):
     home_penalty_score: Optional[int] = None
     away_penalty_score: Optional[int] = None
     stadium_id: Optional[int] = None
+    visitors: Optional[int] = None
     ticket_url: Optional[str] = None
     video_url: Optional[str] = None
     youtube_live_url: Optional[str] = None
