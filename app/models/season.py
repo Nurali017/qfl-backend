@@ -25,6 +25,7 @@ class Season(Base):
     )
     date_start: Mapped[date | None] = mapped_column(Date)
     date_end: Mapped[date | None] = mapped_column(Date)
+    sota_season_id: Mapped[int | None] = mapped_column(Integer, index=True)
     sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow

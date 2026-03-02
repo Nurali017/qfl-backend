@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Country, Stadium, Team
+from app.models import Country, Season, Stadium, Team
 from app.services.sota_client import SotaClient, get_sota_client
 from app.config import get_settings
 
@@ -169,6 +169,17 @@ class BaseSyncService:
         self.client = client or get_sota_client()
         self._country_cache: dict[str, int] | None = None
         self._team_stadium_cache: dict[int, int] | None = None
+
+    async def get_sota_season_id(self, local_season_id: int) -> int:
+        """Resolve SOTA season ID for a given local season ID.
+
+        Falls back to local ID if no mapping exists.
+        """
+        result = await self.db.execute(
+            select(Season.sota_season_id).where(Season.id == local_season_id)
+        )
+        sota_id = result.scalar_one_or_none()
+        return sota_id if sota_id is not None else local_season_id
 
     async def _get_country_cache(self) -> dict[str, int]:
         """

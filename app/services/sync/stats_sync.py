@@ -34,7 +34,9 @@ class StatsSyncService(BaseSyncService):
         Returns:
             Number of entries synced
         """
-        table_data = await self.client.get_score_table(season_id)
+        # Resolve SOTA season ID for API calls
+        sota_season_id = await self.get_sota_season_id(season_id)
+        table_data = await self.client.get_score_table(sota_season_id)
         count = 0
 
         # Handle different response formats
@@ -156,11 +158,14 @@ class StatsSyncService(BaseSyncService):
         if not team_ids:
             return 0
 
+        # Resolve SOTA season ID for API calls (once, outside loop)
+        sota_season_id = await self.get_sota_season_id(season_id)
+
         count = 0
         for team_id in sorted(team_ids):
             try:
                 # Get all metrics from SOTA v2 API
-                stats = await self.client.get_team_season_stats_v2(team_id, season_id)
+                stats = await self.client.get_team_season_stats_v2(team_id, sota_season_id)
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in TEAM_SEASON_STATS_FIELDS}

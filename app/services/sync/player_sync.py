@@ -36,10 +36,13 @@ class PlayerSyncService(BaseSyncService):
         Returns:
             Number of players synced
         """
+        # Resolve SOTA season ID for API calls
+        sota_season_id = await self.get_sota_season_id(season_id)
+
         # Fetch data in all 3 languages
-        players_ru = await self.client.get_players(season_id, language="ru")
-        players_kz = await self.client.get_players(season_id, language="kk")
-        players_en = await self.client.get_players(season_id, language="en")
+        players_ru = await self.client.get_players(sota_season_id, language="ru")
+        players_kz = await self.client.get_players(sota_season_id, language="kk")
+        players_en = await self.client.get_players(sota_season_id, language="en")
 
         # Build lookup dicts by player id
         kz_by_id = {p["id"]: p for p in players_kz}
@@ -134,11 +137,14 @@ class PlayerSyncService(BaseSyncService):
         if not player_teams:
             return 0
 
+        # Resolve SOTA season ID for API calls (once, outside loop)
+        sota_season_id = await self.get_sota_season_id(season_id)
+
         count = 0
         for player_id, team_id, sota_id in player_teams:
             try:
                 # Get all metrics from SOTA v2 API
-                stats = await self.client.get_player_season_stats(str(sota_id), season_id)
+                stats = await self.client.get_player_season_stats(str(sota_id), sota_season_id)
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}
