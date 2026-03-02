@@ -47,74 +47,57 @@ class ReferenceSyncService(BaseSyncService):
 
     async def sync_seasons(self) -> int:
         """
-        Sync seasons from SOTA API with all 3 languages.
+        Update existing local seasons from SOTA API (names, dates, languages).
 
-        Maps SOTA tournament_id to local championship_id via Championship.sota_ids.
+        Only updates seasons that have a sota_season_id mapping and sync_enabled=True.
+        Does NOT create new seasons — seasons are managed manually via admin/migrations.
 
         Returns:
-            Number of seasons synced
+            Number of seasons updated
         """
-        # Build SOTA tournament_id → championship_id mapping
-        tournament_to_championship = await self._build_sota_tournament_to_championship_map()
-
         # Fetch data in all 3 languages
         seasons_ru = await self.client.get_seasons(language="ru")
         seasons_kz = await self.client.get_seasons(language="kk")
         seasons_en = await self.client.get_seasons(language="en")
 
-        # Build lookup dicts
+        # Build lookup dicts by SOTA season id
         kz_by_id = {s["id"]: s for s in seasons_kz}
         en_by_id = {s["id"]: s for s in seasons_en}
+        ru_by_id = {s["id"]: s for s in seasons_ru}
+
+        # Find all local seasons that have SOTA mapping and sync enabled
+        result = await self.db.execute(
+            select(Season).where(
+                Season.sota_season_id.isnot(None),
+                Season.sync_enabled == True,
+            )
+        )
+        local_seasons = result.scalars().all()
 
         count = 0
-        for s in seasons_ru:
-            s_id = s["id"]
-            s_kz = kz_by_id.get(s_id, {})
-            s_en = en_by_id.get(s_id, {})
-
-            # Resolve championship_id from SOTA tournament_id
-            sota_tournament_id = s.get("tournament_id")
-            championship_id = (
-                tournament_to_championship.get(sota_tournament_id)
-                if sota_tournament_id is not None
-                else None
-            )
-
-            if championship_id is None:
+        for local in local_seasons:
+            sota_id = local.sota_season_id
+            s_ru = ru_by_id.get(sota_id)
+            if s_ru is None:
                 logger.warning(
-                    "Season %d: SOTA tournament_id=%s has no matching championship, skipping",
-                    s_id,
-                    sota_tournament_id,
+                    "Season %d (sota_season_id=%d): not found in SOTA API, skipping",
+                    local.id, sota_id,
                 )
                 continue
 
-            stmt = insert(Season).values(
-                id=s_id,
-                name=s["name"],  # Russian as default
-                name_kz=s_kz.get("name"),
-                name_en=s_en.get("name"),
-                championship_id=championship_id,
-                date_start=parse_date(s.get("date_start")),
-                date_end=parse_date(s.get("date_end")),
-                updated_at=datetime.utcnow(),
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["id"],
-                set_={
-                    "name": stmt.excluded.name,
-                    "name_kz": stmt.excluded.name_kz,
-                    "name_en": stmt.excluded.name_en,
-                    "championship_id": stmt.excluded.championship_id,
-                    "date_start": stmt.excluded.date_start,
-                    "date_end": stmt.excluded.date_end,
-                    "updated_at": stmt.excluded.updated_at,
-                },
-            )
-            await self.db.execute(stmt)
+            s_kz = kz_by_id.get(sota_id, {})
+            s_en = en_by_id.get(sota_id, {})
+
+            local.name = s_ru["name"]
+            local.name_kz = s_kz.get("name")
+            local.name_en = s_en.get("name")
+            local.date_start = parse_date(s_ru.get("date_start"))
+            local.date_end = parse_date(s_ru.get("date_end"))
+            local.updated_at = datetime.utcnow()
             count += 1
 
         await self.db.commit()
-        logger.info(f"Synced {count} seasons")
+        logger.info(f"Updated {count} seasons from SOTA")
         return count
 
     async def sync_teams(self) -> int:
