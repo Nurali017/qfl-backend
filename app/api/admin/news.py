@@ -21,6 +21,8 @@ from app.schemas.admin.news import (
     AdminNewsMaterialResponse,
     AdminNewsMaterialUpdateRequest,
     AdminNewsLinksUpdateRequest,
+    AdminNewsTranslateRequest,
+    AdminNewsTranslateResponse,
     AdminNewsTranslationCreateRequest,
     AdminNewsTranslationPatchPayload,
     AdminNewsTranslationPayload,
@@ -28,6 +30,7 @@ from app.schemas.admin.news import (
 )
 from app.services.file_storage import FileStorageService
 from app.services.news_classifier import NewsClassifierService
+from app.services.news_translator import NewsTranslatorService
 
 router = APIRouter(prefix="/news", tags=["admin-news"])
 
@@ -504,6 +507,31 @@ async def update_material_links(
     await db.commit()
     await invalidate_pattern("*app.api.news*")
     return {"ok": True}
+
+
+@router.post("/translate", response_model=AdminNewsTranslateResponse)
+async def translate_text(
+    payload: AdminNewsTranslateRequest,
+    _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    if payload.source_lang == payload.target_lang:
+        raise HTTPException(status_code=400, detail="source_lang and target_lang must be different")
+
+    translator = NewsTranslatorService()
+    if not translator.enabled:
+        raise HTTPException(status_code=400, detail="OpenAI API is not configured. Set OPENAI_API_KEY in .env")
+
+    try:
+        translated = await translator.translate(
+            text=payload.text,
+            source_lang=payload.source_lang,
+            target_lang=payload.target_lang,
+            fmt=payload.format,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Translation failed: {exc}") from exc
+
+    return AdminNewsTranslateResponse(translated_text=translated)
 
 
 @router.post("/upload-inline-image")
