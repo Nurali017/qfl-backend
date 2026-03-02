@@ -1,7 +1,8 @@
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.admin.common import LanguageCode
 
@@ -127,3 +128,14 @@ class AdminNewsClassifyResponse(BaseModel):
     summary: AdminNewsClassifySummary
     needs_review: list[AdminNewsNeedsReviewItem]
     updated_group_ids: list[UUID]
+
+
+class AdminNewsTranslateRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=50000)
+    source_lang: Literal["kz", "ru"] = "kz"
+    target_lang: Literal["kz", "ru"] = "ru"
+    format: Literal["plain", "html"] = "plain"
+
+
+class AdminNewsTranslateResponse(BaseModel):
+    translated_text: str
