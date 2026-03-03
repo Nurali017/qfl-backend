@@ -32,6 +32,7 @@ class AdminGameResponse(BaseModel):
     has_lineup: bool = False
     has_stats: bool = False
     stadium_id: Optional[int] = None
+    stadium_name: Optional[str] = None
     visitors: Optional[int] = None
     ticket_url: Optional[str] = None
     video_url: Optional[str] = None
