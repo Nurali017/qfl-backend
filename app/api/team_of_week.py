@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, distinct
 
 from app.api.deps import get_db
 from app.models.team_of_week import TeamOfWeek
@@ -34,3 +34,27 @@ async def get_team_of_week(
     items = [TeamOfWeekResponse.model_validate(r) for r in result.scalars().all()]
 
     return TeamOfWeekListResponse(items=items, total=len(items))
+
+
+@router.get("/available-tours")
+async def get_available_tours(
+    season_id: int = Query(...),
+    locale: str = Query(default="kz"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get list of distinct tour_key values for the season."""
+    await ensure_visible_season_or_404(db, season_id)
+
+    query = (
+        select(distinct(TeamOfWeek.tour_key))
+        .where(
+            TeamOfWeek.season_id == season_id,
+            TeamOfWeek.locale == locale,
+        )
+        .order_by(TeamOfWeek.tour_key)
+    )
+
+    result = await db.execute(query)
+    tours = [row[0] for row in result.all()]
+
+    return {"items": tours, "total": len(tours)}
