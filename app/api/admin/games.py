@@ -68,6 +68,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         has_lineup=game.has_lineup,
         has_stats=game.has_stats,
         stadium_id=game.stadium_id,
+        stadium_name=game.stadium_rel.name if game.stadium_rel else None,
         visitors=game.visitors,
         ticket_url=game.ticket_url,
         video_url=game.video_url,
@@ -96,6 +97,7 @@ async def list_games(
     query = select(Game).options(
         selectinload(Game.home_team),
         selectinload(Game.away_team),
+        selectinload(Game.stadium_rel),
         selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
     )
     count_query = select(func.count()).select_from(Game)
@@ -178,6 +180,7 @@ async def get_game(game_id: int, db: AsyncSession = Depends(get_db)):
         .options(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
+            selectinload(Game.stadium_rel),
             selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
         )
         .where(Game.id == game_id)
@@ -199,6 +202,7 @@ async def update_game(
         .options(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
+            selectinload(Game.stadium_rel),
             selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
         )
         .where(Game.id == game_id)
@@ -222,6 +226,7 @@ async def update_game(
         .options(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
+            selectinload(Game.stadium_rel),
             selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
         )
         .where(Game.id == game_id)

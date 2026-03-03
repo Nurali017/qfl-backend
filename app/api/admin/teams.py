@@ -1,31 +1,78 @@
-"""Admin teams read-only endpoints (used by admin frontend for dropdowns etc.)."""
+"""Admin teams endpoints — list with stadium info + update stadium."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
+from app.caching import invalidate_pattern
 from app.models import AdminUser, Player, PlayerTeam, Team
+from app.schemas.admin.teams import (
+    AdminTeamListItem,
+    AdminTeamsListResponse,
+    AdminTeamUpdateRequest,
+)
 from app.utils.localization import get_localized_name
 
 router = APIRouter(prefix="/teams", tags=["admin-teams"])
 
 
-@router.get("")
+@router.get("", response_model=AdminTeamsListResponse)
 async def list_teams(
     lang: str = Query("ru", pattern="^(kz|ru)$"),
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "editor", "analyst")),
 ):
-    """List all teams (for admin dropdowns/selects)."""
-    result = await db.execute(select(Team).order_by(Team.name))
+    """List all teams with stadium info."""
+    result = await db.execute(
+        select(Team).options(selectinload(Team.stadium)).order_by(Team.name)
+    )
     teams = result.scalars().all()
     items = [
-        {"id": t.id, "name": get_localized_name(t, lang)}
+        AdminTeamListItem(
+            id=t.id,
+            name=get_localized_name(t, lang),
+            stadium_id=t.stadium_id,
+            stadium_name=t.stadium.name if t.stadium else None,
+        )
         for t in teams
     ]
-    return {"items": items, "total": len(items)}
+    return AdminTeamsListResponse(items=items, total=len(items))
+
+
+@router.patch("/{team_id}")
+async def update_team(
+    team_id: int,
+    body: AdminTeamUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    """Update team's stadium assignment."""
+    result = await db.execute(select(Team).where(Team.id == team_id))
+    team = result.scalar_one_or_none()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    for key, value in body.model_dump(exclude_unset=True).items():
+        setattr(team, key, value)
+
+    await db.commit()
+    await db.refresh(team)
+    await invalidate_pattern("*app.api.teams*")
+
+    # Reload with stadium
+    result = await db.execute(
+        select(Team).options(selectinload(Team.stadium)).where(Team.id == team_id)
+    )
+    team = result.scalar_one()
+    return {
+        "id": team.id,
+        "name": team.name,
+        "stadium_id": team.stadium_id,
+        "stadium_name": team.stadium.name if team.stadium else None,
+    }
 
 
 @router.get("/{team_id}/players")
