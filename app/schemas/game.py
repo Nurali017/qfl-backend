@@ -146,6 +146,7 @@ class MatchCenterGame(BaseModel):
 
     # Optional ticket URL
     ticket_url: str | None = None
+    is_free_entry: bool = False
 
     # Optional video replay URL
     video_url: str | None = None
@@ -202,6 +203,7 @@ class GameListItem(BaseModel):
     status: str
     has_score: bool = False
     ticket_url: str | None = None
+    is_free_entry: bool = False
     video_url: str | None = None
     youtube_live_url: str | None = None
     protocol_url: str | None = None
@@ -238,6 +240,7 @@ class GameDetailItem(BaseModel):
     referee: str | None = None
     visitors: int | None = None
     ticket_url: str | None = None
+    is_free_entry: bool = False
     video_url: str | None = None
     youtube_live_url: str | None = None
     protocol_url: str | None = None

@@ -79,6 +79,9 @@ class Game(Base):
 
     visitors: Mapped[int | None] = mapped_column(Integer)
     ticket_url: Mapped[str | None] = mapped_column(String(500))  # URL for ticket purchase
+    is_free_entry: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
     youtube_live_url: Mapped[str | None] = mapped_column(String(500))  # YouTube live stream URL
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF

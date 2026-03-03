@@ -212,7 +212,7 @@ async def update_game(
         raise HTTPException(status_code=404, detail="Game not found")
 
     # NOT NULL fields — silently skip if caller sends null
-    NOT_NULLABLE = {"date", "status", "is_featured", "sync_disabled"}
+    NOT_NULLABLE = {"date", "status", "is_featured", "is_free_entry", "sync_disabled"}
     update_data = {
         k: v for k, v in body.model_dump(exclude_unset=True).items()
         if v is not None or k not in NOT_NULLABLE
