@@ -44,11 +44,23 @@ async def _check_upcoming_games():
 
 async def _sync_live_game_events():
     """Sync events for all active (live) games."""
+    from app.utils.live_flag import has_live_games, set_live_flag, clear_live_flag
+
+    if not await has_live_games():
+        return {"active_games": 0, "total_new_events": 0, "results": [], "skipped": True}
+
     async with AsyncSessionLocal() as db:
         client = get_sota_client()
         service = LiveSyncService(db, client)
 
         active_games = await service.get_active_games()
+
+        if not active_games:
+            await clear_live_flag()
+            return {"active_games": 0, "total_new_events": 0, "results": []}
+
+        # Refresh flag TTL while games are live
+        await set_live_flag()
 
         results = []
         total_new_events = 0
