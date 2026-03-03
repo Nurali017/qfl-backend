@@ -64,6 +64,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         status=game.status,
         is_live=game.is_live,
         is_featured=game.is_featured,
+        is_free_entry=game.is_free_entry,
         sync_disabled=game.sync_disabled,
         has_lineup=game.has_lineup,
         has_stats=game.has_stats,
