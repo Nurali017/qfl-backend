@@ -6,6 +6,7 @@ from app.api.seasons.router import router as _base_router
 from app.api.seasons.table import router as _table_router
 from app.api.seasons.stats import router as _stats_router
 from app.api.seasons.games import router as _games_router
+from app.api.seasons.attendance import router as _attendance_router
 
 # Re-export helpers used by other modules (e.g. app.api.cup)
 from app.api.seasons.router import (  # noqa: F401
@@ -22,3 +23,4 @@ router.include_router(_base_router)
 router.include_router(_table_router)
 router.include_router(_stats_router)
 router.include_router(_games_router)
+router.include_router(_attendance_router)

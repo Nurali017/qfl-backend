@@ -16,6 +16,7 @@ class TeamOfWeekPlayerEntry(BaseModel):
     photo: str | None = None
     command_logo: str | None = None
     command_id: int | None = None
+    stats: dict | None = None
 
 
 class TeamOfWeekResponse(BaseModel):
