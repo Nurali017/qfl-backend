@@ -13,6 +13,7 @@ from app.services.season_participants import resolve_season_participants
 from app.services.cup_rounds import build_playoff_bracket_from_rounds, build_schedule_rounds
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_field
+from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.season import SeasonListResponse, SeasonResponse, SeasonSyncUpdate
 from app.schemas.stage import StageResponse, StageListResponse
 from app.schemas.playoff_bracket import PlayoffBracketResponse
@@ -245,7 +246,7 @@ async def get_season_teams(
             id=p.entry_id if p.entry_id is not None else -p.team_id,
             team_id=p.team_id,
             team_name=get_localized_field(p.team, "name", lang),
-            team_logo=p.team.logo_url,
+            team_logo=resolve_team_logo_url(p.team),
             season_id=season_id,
             group_name=p.group_name,
             is_disqualified=p.is_disqualified,
@@ -282,7 +283,7 @@ async def get_season_groups(
             id=tt.id,
             team_id=tt.team_id,
             team_name=get_localized_field(tt.team, "name", lang) if tt.team else None,
-            team_logo=tt.team.logo_url if tt.team else None,
+            team_logo=resolve_team_logo_url(tt.team),
             season_id=tt.season_id,
             group_name=tt.group_name,
             is_disqualified=tt.is_disqualified,

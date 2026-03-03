@@ -13,6 +13,7 @@ from app.schemas.playoff_bracket import (
     PlayoffRound,
 )
 from app.utils.localization import get_localized_field
+from app.utils.team_logo_fallback import resolve_team_logo_url
 
 
 logger = logging.getLogger(__name__)
@@ -28,13 +29,13 @@ def build_cup_game(game: Game, lang: str) -> CupGameBrief:
         home_team = CupTeamBrief(
             id=game.home_team.id,
             name=get_localized_field(game.home_team, "name", lang),
-            logo_url=game.home_team.logo_url,
+            logo_url=resolve_team_logo_url(game.home_team),
         )
     if game.away_team:
         away_team = CupTeamBrief(
             id=game.away_team.id,
             name=get_localized_field(game.away_team, "name", lang),
-            logo_url=game.away_team.logo_url,
+            logo_url=resolve_team_logo_url(game.away_team),
         )
 
     stage_name = None
@@ -240,13 +241,13 @@ def _build_bracket_game(game: CupGameBrief) -> BracketGameBrief:
         home_team = BracketGameTeam(
             id=game.home_team.id,
             name=game.home_team.name,
-            logo_url=game.home_team.logo_url,
+            logo_url=resolve_team_logo_url(game.home_team),
         )
     if game.away_team:
         away_team = BracketGameTeam(
             id=game.away_team.id,
             name=game.away_team.name,
-            logo_url=game.away_team.logo_url,
+            logo_url=resolve_team_logo_url(game.away_team),
         )
 
     return BracketGameBrief(

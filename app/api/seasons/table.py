@@ -18,6 +18,7 @@ from app.services.standings import (
 from app.services.table_zones import resolve_table_zone
 from app.services.season_visibility import ensure_visible_season_or_404
 from app.utils.localization import get_localized_field
+from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.stats import (
     ScoreTableResponse,
     ScoreTableEntryResponse,
@@ -290,7 +291,7 @@ async def get_results_grid(
                 position=position,
                 team_id=team_id,
                 team_name=get_localized_field(team, "name", lang) if team else None,
-                team_logo=team.logo_url if team else None,
+                team_logo=resolve_team_logo_url(team),
                 results=team_results.get(team_id, []),
             )
         )
@@ -348,12 +349,12 @@ async def get_league_performance(
         if game.home_team_id not in team_info and game.home_team:
             team_info[game.home_team_id] = {
                 "name": get_localized_field(game.home_team, "name", lang),
-                "logo": game.home_team.logo_url,
+                "logo": resolve_team_logo_url(game.home_team),
             }
         if game.away_team_id not in team_info and game.away_team:
             team_info[game.away_team_id] = {
                 "name": get_localized_field(game.away_team, "name", lang),
-                "logo": game.away_team.logo_url,
+                "logo": resolve_team_logo_url(game.away_team),
             }
 
     # Initialize cumulative stats for all teams

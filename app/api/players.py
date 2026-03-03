@@ -20,6 +20,7 @@ from app.schemas.team import TeamInGame
 from app.services.season_visibility import ensure_visible_season_or_404, resolve_visible_season_id
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.numbers import sanitize_non_finite_numbers
+from app.utils.team_logo_fallback import resolve_team_logo_url
 
 router = APIRouter(prefix="/players", tags=["players"])
 
@@ -226,14 +227,14 @@ async def get_player_games(
             home_team = TeamInGame(
                 id=g.home_team.id,
                 name=get_localized_field(g.home_team, "name", lang),
-                logo_url=g.home_team.logo_url,
+                logo_url=resolve_team_logo_url(g.home_team),
                 score=g.home_score,
             )
         if g.away_team:
             away_team = TeamInGame(
                 id=g.away_team.id,
                 name=get_localized_field(g.away_team, "name", lang),
-                logo_url=g.away_team.logo_url,
+                logo_url=resolve_team_logo_url(g.away_team),
                 score=g.away_score,
             )
 
