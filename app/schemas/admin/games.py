@@ -28,6 +28,7 @@ class AdminGameResponse(BaseModel):
     status: GameStatus = GameStatus.created
     is_live: bool = False
     is_featured: bool = False
+    is_free_entry: bool = False
     sync_disabled: bool = False
     has_lineup: bool = False
     has_stats: bool = False
@@ -64,6 +65,7 @@ class AdminGameUpdateRequest(BaseModel):
     video_review_url: Optional[str] = None
     protocol_url: Optional[str] = None
     is_featured: Optional[bool] = None
+    is_free_entry: Optional[bool] = None
     sync_disabled: Optional[bool] = None
     status: Optional[GameStatus] = None
 
