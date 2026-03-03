@@ -11,6 +11,7 @@ from app.schemas.game import SeasonGameItem, StageGameItem
 from app.schemas.team import TeamWithScore
 from app.services.season_visibility import ensure_visible_season_or_404
 from app.utils.localization import get_localized_field, get_localized_name
+from app.utils.team_logo_fallback import resolve_team_logo_url
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -53,14 +54,14 @@ async def get_season_games(
             home_team = TeamWithScore(
                 id=g.home_team.id,
                 name=get_localized_field(g.home_team, "name", lang),
-                logo_url=g.home_team.logo_url,
+                logo_url=resolve_team_logo_url(g.home_team),
                 score=g.home_score,
             )
         if g.away_team:
             away_team = TeamWithScore(
                 id=g.away_team.id,
                 name=get_localized_field(g.away_team, "name", lang),
-                logo_url=g.away_team.logo_url,
+                logo_url=resolve_team_logo_url(g.away_team),
                 score=g.away_score,
             )
 
@@ -119,14 +120,14 @@ async def get_stage_games(
             home_team = TeamWithScore(
                 id=g.home_team.id,
                 name=get_localized_field(g.home_team, "name", lang),
-                logo_url=g.home_team.logo_url,
+                logo_url=resolve_team_logo_url(g.home_team),
                 score=g.home_score,
             )
         if g.away_team:
             away_team = TeamWithScore(
                 id=g.away_team.id,
                 name=get_localized_field(g.away_team, "name", lang),
-                logo_url=g.away_team.logo_url,
+                logo_url=resolve_team_logo_url(g.away_team),
                 score=g.away_score,
             )
 

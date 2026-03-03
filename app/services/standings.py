@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Game, ScoreTable
 from app.utils.localization import get_localized_field
+from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.stats import NextGameInfo
 
 
@@ -46,7 +47,7 @@ async def get_next_games_for_teams(
                 date=game.date,
                 opponent_id=game.away_team_id,
                 opponent_name=game.away_team.name if game.away_team else None,
-                opponent_logo=game.away_team.logo_url if game.away_team else None,
+                opponent_logo=resolve_team_logo_url(game.away_team),
                 is_home=True,
             )
         if game.away_team_id in team_ids and game.away_team_id not in next_games:
@@ -55,7 +56,7 @@ async def get_next_games_for_teams(
                 date=game.date,
                 opponent_id=game.home_team_id,
                 opponent_name=game.home_team.name if game.home_team else None,
-                opponent_logo=game.home_team.logo_url if game.home_team else None,
+                opponent_logo=resolve_team_logo_url(game.home_team),
                 is_home=False,
             )
 
@@ -123,7 +124,7 @@ async def calculate_dynamic_table(
             stats = team_stats[home_id]
             stats["team_id"] = home_id
             stats["team_name"] = get_localized_field(game.home_team, "name", lang) if game.home_team else None
-            stats["team_logo"] = game.home_team.logo_url if game.home_team else None
+            stats["team_logo"] = resolve_team_logo_url(game.home_team)
             stats["games_played"] += 1
             stats["goals_scored"] += home_score
             stats["goals_conceded"] += away_score
@@ -144,7 +145,7 @@ async def calculate_dynamic_table(
             stats = team_stats[away_id]
             stats["team_id"] = away_id
             stats["team_name"] = get_localized_field(game.away_team, "name", lang) if game.away_team else None
-            stats["team_logo"] = game.away_team.logo_url if game.away_team else None
+            stats["team_logo"] = resolve_team_logo_url(game.away_team)
             stats["games_played"] += 1
             stats["goals_scored"] += away_score
             stats["goals_conceded"] += home_score
@@ -195,7 +196,7 @@ async def read_score_table(db: AsyncSession, season_id: int, group_team_ids: lis
         "position": i if group_team_ids else e.position,
         "team_id": e.team_id,
         "team_name": get_localized_field(e.team, "name", lang) if e.team else None,
-        "team_logo": e.team.logo_url if e.team else None,
+        "team_logo": resolve_team_logo_url(e.team),
         "games_played": e.games_played,
         "wins": e.wins,
         "draws": e.draws,

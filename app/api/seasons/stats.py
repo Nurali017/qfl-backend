@@ -17,6 +17,7 @@ from app.services.season_visibility import ensure_visible_season_or_404, is_seas
 from app.utils.localization import get_localized_field
 from app.utils.numbers import to_finite_float
 from app.utils.positions import infer_position_code
+from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.season import (
     GoalPeriodItem, GoalsByPeriodMeta,
     SeasonGoalsByPeriodResponse, SeasonStatisticsResponse,
@@ -146,7 +147,7 @@ async def get_player_stats_table(
             country=country_data,
             team_id=team.id if team else None,
             team_name=get_localized_field(team, "name", lang) if team else None,
-            team_logo=team.logo_url if team else None,
+            team_logo=resolve_team_logo_url(team),
             player_type=player.player_type,
             top_role=localized_top_role,
             position_code=inferred_position_code,
@@ -323,7 +324,7 @@ async def get_team_stats_table(
                 TeamStatsTableEntry(
                     team_id=team.id,
                     team_name=get_localized_field(team, "name", lang),
-                    team_logo=team.logo_url,
+                    team_logo=resolve_team_logo_url(team),
                 )
             )
 
@@ -372,7 +373,7 @@ async def get_team_stats_table(
                     TeamStatsTableEntry(
                         team_id=team.id,
                         team_name=get_localized_field(team, "name", lang),
-                        team_logo=team.logo_url,
+                        team_logo=resolve_team_logo_url(team),
                         games_played=st.games_played,
                         wins=st.wins,
                         draws=st.draws,
@@ -459,7 +460,7 @@ async def get_team_stats_table(
                         TeamStatsTableEntry(
                             team_id=t_id,
                             team_name=get_localized_field(team, "name", lang) if team else str(t_id),
-                            team_logo=team.logo_url if team else None,
+                            team_logo=resolve_team_logo_url(team),
                             games_played=stats["games_played"],
                             wins=stats["wins"],
                             draws=stats["draws"],
@@ -501,7 +502,7 @@ async def get_team_stats_table(
             TeamStatsTableEntry(
                 team_id=team.id,
                 team_name=get_localized_field(team, "name", lang),
-                team_logo=team.logo_url,
+                team_logo=resolve_team_logo_url(team),
                 games_played=stats.games_played,
                 wins=stats.wins,
                 draws=stats.draws,

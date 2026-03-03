@@ -17,6 +17,7 @@ from app.schemas.playoff_bracket import (
     PlayoffRound,
 )
 from app.services.season_visibility import is_season_visible_clause
+from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.timestamps import utcnow
 
 PLAYOFF_ROUND_ORDER = ["1_32", "1_16", "1_8", "1_4", "1_2", "3rd_place", "final"]
@@ -251,7 +252,7 @@ async def get_participant_teams(db: AsyncSession, season_id: int) -> list[dict]:
         teams.append({
             "team_id": sp.team_id,
             "team_name": team.name if team else f"Team #{sp.team_id}",
-            "team_logo": team.logo_url if team else None,
+            "team_logo": resolve_team_logo_url(team),
         })
     return teams
 
@@ -260,7 +261,7 @@ def _team_brief_from_team(team: Team) -> CupDrawTeamBrief:
     return CupDrawTeamBrief(
         id=team.id,
         name=team.name,
-        logo_url=team.logo_url,
+        logo_url=resolve_team_logo_url(team),
     )
 
 
@@ -336,10 +337,10 @@ def _build_bracket_response(
             team2 = teams_by_id.get(pair["team2_id"])
 
             home_team = BracketGameTeam(
-                id=team1.id, name=team1.name, logo_url=team1.logo_url
+                id=team1.id, name=team1.name, logo_url=resolve_team_logo_url(team1)
             ) if team1 else None
             away_team = BracketGameTeam(
-                id=team2.id, name=team2.name, logo_url=team2.logo_url
+                id=team2.id, name=team2.name, logo_url=resolve_team_logo_url(team2)
             ) if team2 else None
 
             # Use side from the pair JSON directly
