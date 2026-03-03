@@ -18,6 +18,7 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="Asia/Almaty",
     enable_utc=True,
+    task_ignore_result=True,
 )
 
 if settings.sota_enabled:
@@ -26,22 +27,18 @@ if settings.sota_enabled:
             "task": "app.tasks.sync_tasks.sync_references",
             "schedule": crontab(hour=6, minute=0),
         },
-        "sync-games-every-2h": {
-            "task": "app.tasks.sync_tasks.sync_games",
-            "schedule": crontab(minute=0, hour="*/2"),
-        },
-        "sync-live-stats-every-15min": {
+        "sync-live-stats-every-2h": {
             "task": "app.tasks.sync_tasks.sync_live_stats",
-            "schedule": crontab(minute="*/15"),
+            "schedule": crontab(minute=0, hour="*/2"),
         },
         # Live match tasks
         "check-upcoming-games-every-5min": {
             "task": "app.tasks.live_tasks.check_upcoming_games",
             "schedule": crontab(minute="*/5"),
         },
-        "sync-live-events-every-5sec": {
+        "sync-live-events": {
             "task": "app.tasks.live_tasks.sync_live_game_events",
-            "schedule": 5.0,  # Every 5 seconds
+            "schedule": 5.0,
         },
         "end-finished-games-every-10min": {
             "task": "app.tasks.live_tasks.end_finished_games",

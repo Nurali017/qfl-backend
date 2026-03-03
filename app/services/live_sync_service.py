@@ -712,6 +712,8 @@ class LiveSyncService:
 
     async def start_live_tracking(self, game_id: int) -> dict:
         """Start live tracking for a game."""
+        from app.utils.live_flag import set_live_flag
+
         game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found"}
@@ -723,6 +725,8 @@ class LiveSyncService:
         game.half1_started_at = datetime.utcnow()
         await self.db.commit()
 
+        await set_live_flag()
+
         events = await self.sync_live_events(game_id)
 
         return {
@@ -733,12 +737,21 @@ class LiveSyncService:
 
     async def stop_live_tracking(self, game_id: int) -> dict:
         """Stop live tracking for a game."""
+        from app.utils.live_flag import clear_live_flag
+
         game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found"}
 
         game.status = GameStatus.finished
         await self.db.commit()
+
+        # Clear flag if no other live games remain
+        remaining = await self.db.execute(
+            select(func.count()).select_from(Game).where(Game.status == GameStatus.live)
+        )
+        if remaining.scalar() == 0:
+            await clear_live_flag()
 
         return {
             "game_id": game_id,
