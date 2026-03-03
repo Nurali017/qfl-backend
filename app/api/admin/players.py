@@ -339,6 +339,9 @@ async def create_player(
         player_type=payload.player_type,
         country_id=payload.country_id,
         photo_url=payload.photo_url,
+        height=payload.height,
+        weight=payload.weight,
+        gender=payload.gender,
         top_role=payload.top_role,
         top_role_kz=payload.top_role_kz,
         top_role_en=payload.top_role_en,
@@ -413,6 +416,7 @@ async def update_player(
             "player_type": "Тип", "photo_url": "Фото",
             "sota_id": "SOTA ID", "genius_id": "Genius ID", "vsporte_id": "Vsporte ID",
             "nickname": "Никнейм", "bio": "Биография",
+            "height": "Рост", "weight": "Вес", "gender": "Пол",
             "top_role": "Роль", "top_role_kz": "Роль (KZ)", "top_role_en": "Роль (EN)",
         }
         change_lines = []

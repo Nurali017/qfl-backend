@@ -43,6 +43,9 @@ class AdminPlayerCreateRequest(BaseModel):
     player_type: str | None = None
     country_id: int | None = None
     photo_url: str | None = None
+    height: int | None = None
+    weight: int | None = None
+    gender: str | None = None
     top_role: str | None = None
     top_role_kz: str | None = None
     top_role_en: str | None = None
@@ -69,6 +72,9 @@ class AdminPlayerUpdateRequest(BaseModel):
     player_type: str | None = None
     country_id: int | None = None
     photo_url: str | None = None
+    height: int | None = None
+    weight: int | None = None
+    gender: str | None = None
     top_role: str | None = None
     top_role_kz: str | None = None
     top_role_en: str | None = None
@@ -96,6 +102,9 @@ class AdminPlayerResponse(BaseModel):
     player_type: str | None = None
     country_id: int | None = None
     photo_url: str | None = None
+    height: int | None = None
+    weight: int | None = None
+    gender: str | None = None
     age: int | None = None
     top_role: str | None = None
     top_role_kz: str | None = None
