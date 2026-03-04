@@ -313,6 +313,14 @@ async def create_contract(
     if season is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="season_id not found")
 
+    # Validate amplua for players (role=1)
+    effective_role = payload.role if payload.role is not None else 1
+    if effective_role == 1 and payload.amplua is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="amplua обязателен для игроков (role=1)",
+        )
+
     # Check uniqueness: (player_id, team_id, season_id)
     existing = (
         await db.execute(
