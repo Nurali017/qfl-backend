@@ -178,7 +178,11 @@ async def get_team_players(
 
     result = await db.execute(
         select(PlayerTeam)
-        .where(PlayerTeam.team_id == team_id, PlayerTeam.season_id == season_id)
+        .where(
+            PlayerTeam.team_id == team_id,
+            PlayerTeam.season_id == season_id,
+            PlayerTeam.role == 1,
+        )
         .options(
             selectinload(PlayerTeam.player).selectinload(Player.country)
         )
