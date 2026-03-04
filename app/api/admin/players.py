@@ -99,6 +99,16 @@ async def _validate_binding_refs(
             detail=f"Unknown season_id values: {missing_seasons}",
         )
 
+    invalid_amplua = [
+        binding for binding in team_bindings
+        if (binding.role if binding.role is not None else 1) == 1 and binding.amplua is None
+    ]
+    if invalid_amplua:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="amplua обязателен для каждого игрока (role=1)",
+        )
+
 
 async def _replace_team_bindings(
     db: AsyncSession,
