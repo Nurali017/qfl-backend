@@ -200,8 +200,12 @@ async def get_team_players(
                 "name": get_localized_name(p.country, lang),
                 "flag_url": p.country.flag_url,
             }
-        position = infer_position_code(pt.position_ru or pt.position_kz, pt.position_en) \
+        _AMPLUA_TO_POSITION = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+        position = (
+            infer_position_code(pt.position_ru or pt.position_kz, pt.position_en)
             or infer_position_code(p.player_type, p.top_role)
+            or _AMPLUA_TO_POSITION.get(pt.amplua)
+        )
         items.append({
             "id": p.id,
             "first_name": get_localized_field(p, "first_name", lang),
