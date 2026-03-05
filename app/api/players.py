@@ -117,8 +117,19 @@ async def get_player(
 
     teams = list(set(pt.team_id for pt in player_teams_filtered))
 
-    # Get jersey number from the first matching player_team entry
-    jersey_number = player_teams_filtered[0].number if player_teams_filtered else None
+    # Fallback to latest season contracts if current season has none
+    if player_teams_filtered:
+        latest_pts = player_teams_filtered
+    else:
+        all_pts_sorted = sorted(player.player_teams, key=lambda pt: pt.season_id, reverse=True)
+        if all_pts_sorted:
+            latest_season_id = all_pts_sorted[0].season_id
+            latest_pts = [pt for pt in all_pts_sorted if pt.season_id == latest_season_id]
+            teams = list(set(pt.team_id for pt in latest_pts))
+        else:
+            latest_pts = []
+
+    jersey_number = latest_pts[0].number if latest_pts else None
 
     # Build country response
     country_data = None
@@ -137,7 +148,7 @@ async def get_player(
         "birthday": player.birthday,
         "player_type": player.player_type,
         "country": country_data,
-        "photo_url": (player_teams_filtered[0].photo_url if player_teams_filtered else None) or player.photo_url,
+        "photo_url": (latest_pts[0].photo_url if latest_pts else None) or player.photo_url,
         "age": player.age,
         "top_role": get_localized_field(player, "top_role", lang),
         "teams": teams,
@@ -325,9 +336,9 @@ async def get_player_tournament_history(
 ):
     """
     Get player's tournament history (stats by season).
-    Returns all seasons where the player has stats.
+    Returns all seasons where the player has stats OR is in a roster.
     """
-    # Single query with eager loading — no N+1
+    # 1. Seasons with stats
     stats_result = await db.execute(
         select(PlayerSeasonStats)
         .where(PlayerSeasonStats.player_id == player_id)
@@ -335,18 +346,17 @@ async def get_player_tournament_history(
             selectinload(PlayerSeasonStats.season).selectinload(Season.championship),
             selectinload(PlayerSeasonStats.team),
         )
-        .order_by(PlayerSeasonStats.season_id.desc())
     )
     all_stats = stats_result.scalars().all()
 
-    if not all_stats:
-        return PlayerTournamentHistoryResponse(items=[], total=0)
-
     items = []
+    stats_season_ids = set()
+
     for stat in all_stats:
         season = stat.season
         if season is None or not season.is_visible:
             continue
+        stats_season_ids.add(stat.season_id)
 
         team_name = get_localized_field(stat.team, "name", lang) if stat.team else None
         season_name = get_localized_field(season, "name", lang)
@@ -371,5 +381,56 @@ async def get_player_tournament_history(
                 red_cards=stat.red_cards,
             )
         )
+
+    # 2. Seasons from roster (PlayerTeam) without stats
+    roster_query = (
+        select(PlayerTeam)
+        .where(
+            PlayerTeam.player_id == player_id,
+            PlayerTeam.is_active.is_(True),
+            PlayerTeam.is_hidden.is_(False),
+        )
+        .options(
+            selectinload(PlayerTeam.season).selectinload(Season.championship),
+            selectinload(PlayerTeam.team),
+        )
+    )
+    if stats_season_ids:
+        roster_query = roster_query.where(
+            PlayerTeam.season_id.not_in(stats_season_ids)
+        )
+    roster_result = await db.execute(roster_query)
+    roster_entries = roster_result.scalars().all()
+
+    # Deduplicate by season_id (player may be in multiple teams per season)
+    seen_roster_seasons: set[int] = set()
+    for pt in roster_entries:
+        season = pt.season
+        if season is None or not season.is_visible:
+            continue
+        if pt.season_id in seen_roster_seasons:
+            continue
+        seen_roster_seasons.add(pt.season_id)
+
+        team_name = get_localized_field(pt.team, "name", lang) if pt.team else None
+        season_name = get_localized_field(season, "name", lang)
+        championship_name = (
+            get_localized_field(season.championship, "name", lang)
+            if season.championship else None
+        )
+
+        items.append(
+            PlayerTournamentHistoryEntry(
+                season_id=pt.season_id,
+                season_name=season_name,
+                championship_name=championship_name,
+                team_id=pt.team_id,
+                team_name=team_name,
+                position=None,
+            )
+        )
+
+    # Sort by season_id descending
+    items.sort(key=lambda x: x.season_id, reverse=True)
 
     return PlayerTournamentHistoryResponse(items=items, total=len(items))
