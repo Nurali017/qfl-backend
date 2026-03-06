@@ -86,7 +86,7 @@ BROADCASTERS = (
         "name": "Kinopoisk",
         "type": "tv",
         "logo_url": f"{SITE_URL}/sponsors/kinopoisk.webp",
-        "website": "https://www.kinopoisk.ru/",
+        "website": "https://plus.yandex.ru/gift?promocode=KFFPLUS",
         "sort_order": 30,
         "aliases": ("kinopoisk", "кинопоиск"),
     },
