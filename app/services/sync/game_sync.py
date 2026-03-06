@@ -3,12 +3,14 @@ Game sync service.
 
 Handles synchronization of games, game statistics, and game events from SOTA API.
 """
+import asyncio
 import logging
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select, or_
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import selectinload
 
 from app.models import (
     Game, Team, Player, GameTeamStats, GamePlayerStats,
@@ -146,6 +148,10 @@ class GameSyncService(BaseSyncService):
                 red_cards=stats.get("red_cards"),
                 corners=stats.get("corner"),
                 offsides=stats.get("offside"),
+                shots_on_bar=stats.get("shots_on_bar") or stats.get("shot_on_bar"),
+                shots_blocked=stats.get("shots_blocked") or stats.get("shot_blocked"),
+                penalties=stats.get("penalty") or stats.get("penalties"),
+                saves=stats.get("saves") or stats.get("save") or stats.get("save_shot"),
                 extra_stats=extra_stats if extra_stats else None,
             )
             stmt = stmt.on_conflict_do_update(
@@ -163,6 +169,10 @@ class GameSyncService(BaseSyncService):
                     "red_cards": stmt.excluded.red_cards,
                     "corners": stmt.excluded.corners,
                     "offsides": stmt.excluded.offsides,
+                    "shots_on_bar": stmt.excluded.shots_on_bar,
+                    "shots_blocked": stmt.excluded.shots_blocked,
+                    "penalties": stmt.excluded.penalties,
+                    "saves": stmt.excluded.saves,
                     "extra_stats": stmt.excluded.extra_stats,
                 },
             )
@@ -237,7 +247,204 @@ class GameSyncService(BaseSyncService):
 
         await self.db.commit()
         logger.info(f"Synced game stats for {game_id}: {team_count} teams, {player_count} players")
+
+        # Enrich team stats from /em/ live endpoint (has shots_on_bar, saves, etc.)
+        try:
+            em_ok = await self._enrich_team_stats_from_live(game_id, sota_uuid)
+            if em_ok:
+                logger.info(f"Enriched team stats from /em/ for game {game_id}")
+        except Exception as e:
+            logger.warning(f"/em/ team stats enrichment failed for game {game_id}: {e}")
+
+        # Enrich player stats from /em/ endpoint
+        try:
+            em_player_count = await self._enrich_player_stats_from_em(game_id, sota_uuid)
+            if em_player_count:
+                logger.info(f"Enriched {em_player_count} players from /em/ for game {game_id}")
+        except Exception as e:
+            logger.warning(f"/em/ player stats enrichment failed for game {game_id}: {e}")
+
+        # Enrich with v2 stats (after v1 commit — v1 data is never lost)
+        try:
+            v2_count = await self._enrich_with_v2_stats(game_id, sota_uuid)
+            logger.info(f"v2 enrichment: {v2_count} players for game {game_id}")
+        except Exception as e:
+            logger.error(f"v2 enrichment failed for game {game_id}: {e}")
+
         return {"teams": team_count, "players": player_count}
+
+    async def _enrich_team_stats_from_live(self, game_id: int, sota_game_uuid: str) -> bool:
+        """Enrich team stats with data from /em/{id}-stat.json (shots_on_bar, saves, etc.)."""
+        em_data = await self.client.get_live_match_stats(sota_game_uuid)
+
+        # Build lookup: metric -> {home, away}
+        # Capture per-half breakdowns (_1, _2) into by_half dict
+        import re
+        em_stats: dict[str, dict] = {}
+        by_half: dict[str, dict[str, dict]] = {"1": {}, "2": {}}
+        for item in em_data:
+            metric = item.get("metric", "")
+            match = re.match(r"^(.+)_([12])$", metric)
+            if match:
+                base, half = match.groups()
+                by_half[half][base] = {"home": item.get("home"), "away": item.get("away")}
+                continue
+            if "_" in metric and metric.rsplit("_", 1)[-1].isdigit():
+                continue  # still skip _3, _4, _5
+            em_stats[metric] = {"home": item.get("home"), "away": item.get("away")}
+
+        if not em_stats:
+            return False
+
+        game = await self.db.get(Game, game_id)
+        if not game:
+            return False
+
+        # Map of em metric -> (model column, parser)
+        def _parse_int(v):
+            if v is None:
+                return None
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+
+        def _parse_possession(v):
+            if v is None:
+                return None
+            if isinstance(v, str):
+                v = v.replace("%", "").strip()
+            try:
+                return int(v)
+            except (ValueError, TypeError):
+                return None
+
+        METRIC_MAP = {
+            "shots_on_bar": ("shots_on_bar", _parse_int),
+            "shots_blocked": ("shots_blocked", _parse_int),
+            "penalties": ("penalties", _parse_int),
+            "saves": ("saves", _parse_int),
+        }
+
+        for side, team_id in [("home", game.home_team_id), ("away", game.away_team_id)]:
+            if not team_id:
+                continue
+            result = await self.db.execute(
+                select(GameTeamStats).where(
+                    GameTeamStats.game_id == game_id,
+                    GameTeamStats.team_id == team_id,
+                )
+            )
+            ts = result.scalar_one_or_none()
+            if not ts:
+                continue
+
+            for em_key, (col, parser) in METRIC_MAP.items():
+                if em_key in em_stats:
+                    val = parser(em_stats[em_key].get(side))
+                    if val is not None and getattr(ts, col) is None:
+                        setattr(ts, col, val)
+
+            # Also fill possession_percent from /em/ if missing
+            if ts.possession_percent is None and "possessions" in em_stats:
+                pct = _parse_possession(em_stats["possessions"].get(side))
+                if pct is not None:
+                    ts.possession_percent = pct
+
+            # Build per-half extra_stats from captured _1/_2 metrics
+            side_by_half = {}
+            for half_num in ("1", "2"):
+                half_data = {}
+                for base_metric, vals in by_half[half_num].items():
+                    raw = vals.get(side)
+                    if base_metric == "possessions":
+                        parsed = _parse_possession(raw)
+                    else:
+                        parsed = _parse_int(raw)
+                    if parsed is not None:
+                        half_data[base_metric] = parsed
+                if half_data:
+                    side_by_half[half_num] = half_data
+            if side_by_half:
+                ts.extra_stats = {**(ts.extra_stats or {}), "by_half": side_by_half}
+
+        await self.db.commit()
+        return True
+
+    async def _enrich_player_stats_from_em(self, game_id: int, sota_game_uuid: str) -> int:
+        """Fetch per-player stats from /em/{id}-players-{side}.json and store in extra_stats."""
+        result = await self.db.execute(
+            select(GamePlayerStats)
+            .where(GamePlayerStats.game_id == game_id)
+            .options(selectinload(GamePlayerStats.player))
+        )
+        player_stats_rows = list(result.scalars().all())
+
+        # Build lookup: sota_id -> GamePlayerStats row
+        sota_lookup: dict[str, GamePlayerStats] = {}
+        for ps in player_stats_rows:
+            if ps.player and ps.player.sota_id:
+                sota_lookup[str(ps.player.sota_id)] = ps
+
+        if not sota_lookup:
+            return 0
+
+        SKIP_FIELDS = {"kind", "team", "first_name", "last_name", "full_name", "number"}
+        enriched = 0
+
+        for side in ("home", "away"):
+            try:
+                em_players = await self.client.get_live_match_player_stats(sota_game_uuid, side)
+            except Exception as e:
+                logger.warning(f"/em/ player stats for {side} failed: {e}")
+                continue
+
+            if not isinstance(em_players, list):
+                continue
+
+            for ep in em_players:
+                player_id = ep.get("id")
+                if not player_id:
+                    continue
+                ps = sota_lookup.get(str(player_id))
+                if not ps:
+                    continue
+                em_data = {k: v for k, v in ep.items() if k not in SKIP_FIELDS and k != "id"}
+                if em_data:
+                    ps.extra_stats = {**(ps.extra_stats or {}), "em_stats": em_data}
+                    enriched += 1
+
+            await asyncio.sleep(0.2)
+
+        if enriched:
+            await self.db.commit()
+        return enriched
+
+    async def _enrich_with_v2_stats(self, game_id: int, sota_game_uuid: str) -> int:
+        """Fetch v2 per-player stats and merge into extra_stats JSONB."""
+        result = await self.db.execute(
+            select(GamePlayerStats)
+            .where(GamePlayerStats.game_id == game_id)
+            .options(selectinload(GamePlayerStats.player))
+        )
+        player_stats_rows = list(result.scalars().all())
+        enriched = 0
+        for ps in player_stats_rows:
+            if not ps.player or not ps.player.sota_id:
+                continue
+            try:
+                v2_data = await self.client.get_player_game_stats_v2(
+                    str(ps.player.sota_id), sota_game_uuid
+                )
+                if v2_data:
+                    ps.extra_stats = {**(ps.extra_stats or {}), **v2_data}
+                    enriched += 1
+            except Exception as e:
+                logger.warning(f"v2 stats failed for player {ps.player_id}: {e}")
+            await asyncio.sleep(0.2)
+        if enriched:
+            await self.db.commit()
+        return enriched
 
     async def _get_or_create_player_by_sota(
         self,
