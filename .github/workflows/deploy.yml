@@ -84,5 +84,5 @@ jobs:
             docker compose -f docker-compose.prod.yml up -d --no-deps celery_worker celery_beat
 
             echo "=== Cleanup ==="
-            docker image prune -f
+            docker image prune -f || true
             docker compose -f docker-compose.prod.yml ps backend celery_worker celery_beat
