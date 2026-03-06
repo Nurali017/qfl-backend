@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Game, GameEvent, GameEventType, GameLineup, GameTeamStats, GameStatus, LineupType, Team, Player, PlayerTeam
+from app.models import Game, GameEvent, GameEventType, GameLineup, GamePlayerStats, GameTeamStats, GameStatus, LineupType, Team, Player, PlayerTeam
 from app.services.sota_client import SotaClient
 from app.services.sync.lineup_sync import LineupSyncService
 from app.utils.team_name_matcher import TeamNameMatcher
@@ -458,6 +458,133 @@ class LiveSyncService:
             "away_score": game.away_score,
             "metrics_synced": len(metrics),
         }
+
+    @staticmethod
+    def _amplua_to_position(amplua: str | None) -> str:
+        """Convert SOTA amplua code to position string for GamePlayerStats."""
+        if not amplua:
+            return "MID"
+        return {"Gk": "GK", "D": "DEF", "DM": "DEF", "M": "MID", "AM": "MID", "F": "FWD"}.get(amplua, "MID")
+
+    async def sync_live_player_stats(self, game_id: int) -> dict:
+        """
+        Sync per-player stats from /em/{sota_id}-players-{side}.json.
+
+        Upserts into game_player_stats so the "Player Stats" tab works during live matches.
+        Goals/assists are NOT written here (single source of truth = game_events).
+        """
+        game = await self.db.execute(
+            select(Game).where(Game.id == game_id)
+        )
+        game = game.scalar_one_or_none()
+        if not game or not game.sota_id:
+            return {"error": f"Game {game_id} not found or no sota_id"}
+
+        sota_uuid = str(game.sota_id)
+
+        # Build amplua lookup from lineup: player_id -> amplua
+        lineup_result = await self.db.execute(
+            select(GameLineup.player_id, GameLineup.amplua)
+            .where(GameLineup.game_id == game_id)
+        )
+        amplua_map = {row.player_id: row.amplua for row in lineup_result.all()}
+
+        total_upserted = 0
+
+        for side, team_id in (("home", game.home_team_id), ("away", game.away_team_id)):
+            if not team_id:
+                continue
+
+            try:
+                players_data = await self.client.get_live_match_player_stats(sota_uuid, side)
+            except Exception as exc:
+                logger.warning("Failed to fetch live player stats for game %s (%s): %s", game_id, side, exc)
+                continue
+
+            if not isinstance(players_data, list):
+                continue
+
+            for ep in players_data:
+                sota_id_raw = ep.get("id")
+                if not sota_id_raw:
+                    continue
+
+                player_id = await self._get_or_create_player_by_sota(
+                    sota_id_raw,
+                    ep.get("first_name"),
+                    ep.get("last_name"),
+                    team_id=team_id,
+                    season_id=game.season_id,
+                )
+                if player_id is None:
+                    continue
+
+                # Direct-mapped fields
+                shots = self._parse_stat(ep.get("shots"))
+                shots_on_goal = self._parse_stat(ep.get("shots_on_target"))
+                shots_off_goal = self._parse_stat(ep.get("shots_missed"))
+                yellow_cards = self._parse_stat(ep.get("yc"))
+                red_cards = self._parse_stat(ep.get("rc"))
+                offside = self._parse_stat(ep.get("offsides"))
+
+                # Fields without DB column → extra_stats
+                extra = {}
+                for key in ("saves", "shots_on_bar", "shots_blocked", "penalties"):
+                    val = self._parse_stat(ep.get(key))
+                    if val is not None:
+                        extra[key] = val
+
+                # Per-half breakdown → extra_stats.by_half
+                by_half = {}
+                for suffix in ("1", "2", "3", "4", "5"):
+                    half_data = {}
+                    for base in ("goals", "assists", "shots", "shots_on_target", "shots_missed",
+                                 "shots_on_bar", "shots_blocked", "saves", "yc", "rc",
+                                 "offsides", "penalties"):
+                        val = self._parse_stat(ep.get(f"{base}_{suffix}"))
+                        if val is not None:
+                            half_data[base] = val
+                    if half_data:
+                        by_half[suffix] = half_data
+                if by_half:
+                    extra["by_half"] = by_half
+
+                position = self._amplua_to_position(amplua_map.get(player_id))
+
+                values = {
+                    "game_id": game_id,
+                    "player_id": player_id,
+                    "team_id": team_id,
+                    "position": position,
+                    "shots": shots or 0,
+                    "shots_on_goal": shots_on_goal or 0,
+                    "shots_off_goal": shots_off_goal or 0,
+                    "yellow_cards": yellow_cards or 0,
+                    "red_cards": red_cards or 0,
+                    "offside": offside or 0,
+                    "extra_stats": extra if extra else None,
+                }
+
+                stmt = insert(GamePlayerStats).values(**values)
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_game_player_stats",
+                    set_={k: v for k, v in values.items() if k not in ("game_id", "player_id")},
+                )
+                await self.db.execute(stmt)
+                total_upserted += 1
+
+        await self.db.commit()
+        return {"game_id": game_id, "players_upserted": total_upserted}
+
+    @staticmethod
+    def _parse_stat(val) -> int | None:
+        """Parse an integer stat value from SOTA data."""
+        if val is None or val == "":
+            return None
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None
 
     async def sync_live_events(self, game_id: int) -> list[GameEvent]:
         """
