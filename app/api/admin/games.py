@@ -153,7 +153,7 @@ async def list_games(
 @router.get("/referees/search")
 async def search_referees(
     q: str = Query(default="", max_length=100),
-    limit: int = Query(default=30, le=200),
+    limit: int = Query(default=30, le=500),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Referee)
