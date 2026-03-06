@@ -58,6 +58,25 @@ def upgrade() -> None:
             {"known_id": known_id},
         )
 
+    # Backfill date_start/date_end from actual game dates for seasons
+    # that lack them (needed for front-map to build season_options).
+    bind.execute(
+        sa.text("""
+            UPDATE seasons s
+            SET date_start = sub.first_game,
+                date_end   = sub.last_game
+            FROM (
+                SELECT g.season_id, MIN(g.date) AS first_game, MAX(g.date) AS last_game
+                FROM games g
+                GROUP BY g.season_id
+            ) sub
+            WHERE sub.season_id = s.id
+              AND s.frontend_code IS NOT NULL
+              AND s.date_start IS NULL
+              AND sub.first_game IS NOT NULL
+        """)
+    )
+
     # Make previously-hidden seasons visible — but only those that now have
     # a frontend_code AND contain actual game data.
     bind.execute(
