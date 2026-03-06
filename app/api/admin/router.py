@@ -19,6 +19,7 @@ from app.api.admin.cup_draw import router as cup_draw_router
 from app.api.admin.games import router as games_router
 from app.api.admin.contracts import router as contracts_router
 from app.api.admin.coaches import router as coaches_router
+from app.api.admin.referees import router as referees_router
 from app.api.admin.broadcasters import router as broadcasters_router
 from app.api.admin.stadiums import router as stadiums_router
 from app.api.admin.teams import router as teams_router
@@ -31,6 +32,7 @@ router.include_router(pages_router)
 router.include_router(players_router)
 router.include_router(contracts_router)
 router.include_router(coaches_router)
+router.include_router(referees_router)
 router.include_router(files_router)
 router.include_router(ops_router)
 router.include_router(championships_router)
