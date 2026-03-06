@@ -219,6 +219,21 @@ class SotaClient:
         stats_dict = {s["key"]: s["value"] for s in stats_list if "key" in s}
         return stats_dict
 
+    async def get_player_game_stats_v2(
+        self, player_id: str, game_id: str, language: str = "ru"
+    ) -> dict[str, Any]:
+        """GET /v2/players/{player_id}/game_stats/?game_id={game_id} — 50 metrics."""
+        await self.ensure_authenticated()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v2/players/{player_id}/game_stats/",
+            headers=self.get_headers(language),
+            params={"game_id": game_id},
+        )
+        data = response.json()
+        stats_list = data.get("data", {}).get("stats", [])
+        return {s["key"]: s["value"] for s in stats_list if "key" in s}
+
     async def get_player_season_stats(
         self, player_id: str, season_id: int, language: str = "ru"
     ) -> dict[str, Any]:
@@ -339,6 +354,15 @@ class SotaClient:
             "get",
             url,
             params={"access_token": self.access_token},
+        )
+        return response.json()
+
+    async def get_live_match_player_stats(self, game_id: str, side: str) -> list[dict[str, Any]]:
+        """GET /em/{game_id}-players-{side}.json — per-player stats with per-half breakdown."""
+        await self.ensure_authenticated()
+        url = f"https://sota.id/em/{game_id}-players-{side}.json"
+        response = await self._make_request(
+            "get", url, params={"access_token": self.access_token},
         )
         return response.json()
 

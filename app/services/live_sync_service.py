@@ -344,16 +344,22 @@ class LiveSyncService:
             return {"error": "Unexpected stats format"}
 
         # Build lookup: metric -> {home, away}
-        # Skip per-half breakdowns like "goals_1", "shots_2" (ending with _digit)
-        # but keep aggregate metrics like "shots_on_target", "shots_missed"
+        # Capture per-half breakdowns (_1, _2) into by_half dict
+        # Skip _3, _4, _5 (extra time, penalties)
         import re
         metrics = {}
+        by_half = {"1": {}, "2": {}}
         for item in stats_data:
             metric = item.get("metric", "")
             if not metric or metric == "name":
                 continue
+            match = re.match(r"^(.+)_([12])$", metric)
+            if match:
+                base, half = match.groups()
+                by_half[half][base] = {"home": item.get("home"), "away": item.get("away")}
+                continue
             if re.match(r"^.+_\d+$", metric):
-                continue  # skip per-half: goals_1, shots_2, etc.
+                continue  # still skip _3, _4, _5
             metrics[metric] = {"home": item.get("home"), "away": item.get("away")}
 
         def _parse_int(val: any) -> int | None:
@@ -419,6 +425,23 @@ class LiveSyncService:
                     or metrics.get("save_shot", {}).get(side)
                 ),
             }
+
+            # Build per-half extra_stats from captured _1/_2 metrics
+            side_by_half = {}
+            for half_num in ("1", "2"):
+                half_data = {}
+                for base_metric, vals in by_half[half_num].items():
+                    raw = vals.get(side)
+                    if base_metric == "possessions":
+                        parsed = _parse_possession(raw)
+                    else:
+                        parsed = _parse_int(raw)
+                    if parsed is not None:
+                        half_data[base_metric] = parsed
+                if half_data:
+                    side_by_half[half_num] = half_data
+            if side_by_half:
+                values["extra_stats"] = {"by_half": side_by_half}
 
             stmt = insert(GameTeamStats).values(**values)
             stmt = stmt.on_conflict_do_update(
