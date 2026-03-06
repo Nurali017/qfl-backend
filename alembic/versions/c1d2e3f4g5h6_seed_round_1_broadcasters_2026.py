@@ -1,7 +1,7 @@
 """seed round 1 broadcasters for 2026 premier league
 
 Revision ID: c1d2e3f4g5h6
-Revises: w3x4y5z6a7b8
+Revises: x1y2z3a4b5c6
 Create Date: 2026-03-06 18:10:00.000000
 """
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 
 revision = "c1d2e3f4g5h6"
-down_revision = "w3x4y5z6a7b8"
+down_revision = "x1y2z3a4b5c6"
 branch_labels = None
 depends_on = None
 
