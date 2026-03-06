@@ -82,6 +82,12 @@ async def _sync_live_game_events():
                 except Exception as stats_err:
                     logger.warning(f"Failed to sync stats for game {game.id}: {stats_err}")
 
+                # Sync per-player stats (shots, cards, etc. per player)
+                try:
+                    await service.sync_live_player_stats(game.id)
+                except Exception as ps_err:
+                    logger.warning(f"Failed to sync player stats for game {game.id}: {ps_err}")
+
                 results.append({
                     "game_id": game.id,
                     "new_events": len(new_events),
