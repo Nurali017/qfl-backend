@@ -4,11 +4,11 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.models import Game, ScoreTable, Season, Team
+from app.models import Game, GameStatus, ScoreTable, Season, Team
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids
 from app.services.standings import (
     calculate_dynamic_table,
@@ -94,7 +94,40 @@ async def get_season_table(
         if not table_data:
             table_data = await read_score_table(db, season_id, group_team_ids, lang)
     else:
-        table_data = await read_score_table(db, season_id, group_team_ids, lang)
+        # Check if there are live games in this season — if so, use dynamic
+        # calculation that includes live scores instead of pre-calculated table.
+        live_count = await db.scalar(
+            select(func.count()).select_from(Game).where(
+                Game.season_id == season_id,
+                Game.status == GameStatus.live,
+            )
+        )
+        if live_count:
+            table_data = await calculate_dynamic_table(
+                db, season_id, None, None, None, lang,
+                group_team_ids=group_team_ids,
+                include_live=True,
+            )
+            # Dynamic table may only contain teams with games played.
+            # Merge with base table to include all teams.
+            if table_data:
+                base_table = await read_score_table(db, season_id, group_team_ids, lang)
+                if base_table and len(table_data) < len(base_table):
+                    dynamic_ids = {e["team_id"] for e in table_data}
+                    for entry in base_table:
+                        if entry["team_id"] not in dynamic_ids:
+                            table_data.append(entry)
+                    # Re-sort and re-assign positions
+                    table_data.sort(key=lambda e: (
+                        -e["points"], -(e["goals_scored"] - e["goals_conceded"]),
+                        -e.get("wins", 0), -e["goals_scored"],
+                    ))
+                    for i, entry in enumerate(table_data, 1):
+                        entry["position"] = i
+            else:
+                table_data = await read_score_table(db, season_id, group_team_ids, lang)
+        else:
+            table_data = await read_score_table(db, season_id, group_team_ids, lang)
 
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)
@@ -359,7 +392,7 @@ async def get_league_performance(
 
     # Initialize cumulative stats for all teams
     cumulative: dict[int, dict] = {
-        tid: {"points": 0, "gd": 0, "gs": 0}
+        tid: {"points": 0, "gd": 0, "gs": 0, "wins": 0}
         for tid in team_info
     }
     positions_by_team: dict[int, list[int]] = {tid: [] for tid in team_info}
@@ -376,15 +409,17 @@ async def get_league_performance(
 
             if h_score > a_score:
                 cumulative[h_id]["points"] += 3
+                cumulative[h_id]["wins"] += 1
             elif h_score < a_score:
                 cumulative[a_id]["points"] += 3
+                cumulative[a_id]["wins"] += 1
             else:
                 cumulative[h_id]["points"] += 1
                 cumulative[a_id]["points"] += 1
 
         standings = sorted(
             cumulative.items(),
-            key=lambda x: (-x[1]["points"], -x[1]["gd"], -x[1]["gs"]),
+            key=lambda x: (-x[1]["points"], -x[1]["gd"], -x[1]["wins"], -x[1]["gs"]),
         )
         for pos, (tid, _) in enumerate(standings, 1):
             positions_by_team[tid].append(pos)

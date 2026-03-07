@@ -28,7 +28,7 @@ ENTRYPOINT ["/entrypoint.sh"]
 # Dev docker-compose overrides this with: uvicorn app.main:app --reload
 CMD ["gunicorn", "app.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--workers", "2", \
+     "--workers", "4", \
      "--bind", "0.0.0.0:8000", \
      "--timeout", "120", \
      "--graceful-timeout", "30", \
