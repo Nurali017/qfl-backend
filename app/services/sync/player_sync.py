@@ -73,6 +73,105 @@ class PlayerSyncService(BaseSyncService):
         logger.info(f"Synced {count} players for season {season_id}")
         return count
 
+    async def sync_best_players(self, season_id: int) -> int:
+        """
+        Sync goals and assists from the best_players endpoint (single API call per metric).
+
+        Only updates goals/assists columns in PlayerSeasonStats — does not overwrite
+        the other 50+ stat columns that full_sync populates.
+
+        Returns:
+            Number of player stats rows upserted
+        """
+        sota_season_id = await self.get_sota_season_id(season_id)
+
+        # Fetch top scorers and assisters in two API calls
+        try:
+            scorers = await self.client.get_best_players(sota_season_id, metric="goal")
+        except Exception as e:
+            logger.warning("Failed to fetch best scorers for season %d: %s", season_id, e)
+            scorers = []
+
+        try:
+            assisters = await self.client.get_best_players(sota_season_id, metric="goal_pass")
+        except Exception as e:
+            logger.warning("Failed to fetch best assisters for season %d: %s", season_id, e)
+            assisters = []
+
+        if not scorers and not assisters:
+            logger.info("No best_players data for season %d, skipping", season_id)
+            return 0
+
+        # Build lookup: sota_id (str) -> (player_id, team_id)
+        player_teams_result = await self.db.execute(
+            select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
+            .join(Player, Player.id == PlayerTeam.player_id)
+            .where(
+                PlayerTeam.season_id == season_id,
+                PlayerTeam.is_active == True,
+                Player.sota_id.is_not(None),
+            )
+        )
+        lookup: dict[str, tuple[int, int]] = {}
+        for player_id, team_id, sota_id in player_teams_result.fetchall():
+            lookup[str(sota_id)] = (player_id, team_id)
+
+        if not lookup:
+            logger.info("No active player-team mappings for season %d", season_id)
+            return 0
+
+        # Merge scorers + assisters into a combined dict keyed by sota_id
+        # API returns: {"id": "uuid", "value": "16", "name": "...", "team_name": "..."}
+        combined: dict[str, dict] = {}
+        for p in scorers:
+            sid = p.get("id")
+            if sid:
+                try:
+                    combined.setdefault(str(sid), {})["goals"] = int(p.get("value", 0))
+                except (ValueError, TypeError):
+                    pass
+        for p in assisters:
+            sid = p.get("id")
+            if sid:
+                try:
+                    combined.setdefault(str(sid), {})["assists"] = int(p.get("value", 0))
+                except (ValueError, TypeError):
+                    pass
+        count = 0
+        now = datetime.utcnow()
+        for sota_id_str, metrics in combined.items():
+            mapping = lookup.get(sota_id_str)
+            if not mapping:
+                continue
+            player_id, team_id = mapping
+
+            values = {
+                "player_id": player_id,
+                "season_id": season_id,
+                "team_id": team_id,
+                "updated_at": now,
+            }
+            update_set: dict = {"updated_at": now}
+
+            if "goals" in metrics:
+                values["goals"] = metrics["goals"]
+                update_set["goals"] = metrics["goals"]
+            if "assists" in metrics:
+                values["assists"] = metrics["assists"]
+                update_set["assists"] = metrics["assists"]
+
+            stmt = insert(PlayerSeasonStats).values(**values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["player_id", "season_id"],
+                set_=update_set,
+            )
+            await self.db.execute(stmt)
+            count += 1
+
+        await self.db.commit()
+        logger.info("Synced best_players for season %d: %d rows upserted", season_id, count)
+        return count
+
     async def sync_player_season_stats(self, season_id: int) -> int:
         """
         Sync season stats for ALL players in a season from SOTA API v2.

@@ -73,6 +73,23 @@ async def _sync_live_stats():
         return {"games_stats_synced": total_synced, "by_season": results_by_season}
 
 
+async def _sync_best_players():
+    """Sync goals + assists from best_players endpoint for all configured seasons."""
+    async with AsyncSessionLocal() as db:
+        orchestrator = SyncOrchestrator(db)
+        total = 0
+        results_by_season = {}
+        for season_id in settings.sync_season_ids:
+            if not await orchestrator.is_sync_enabled(season_id):
+                logger.info("Season %d: sync disabled, skipping best_players task", season_id)
+                results_by_season[f"season_{season_id}"] = "skipped"
+                continue
+            count = await orchestrator.sync_best_players(season_id)
+            results_by_season[f"season_{season_id}"] = count
+            total += count
+        return {"best_players_synced": total, "by_season": results_by_season}
+
+
 async def _full_sync():
     """Full synchronization for all configured seasons."""
     async with AsyncSessionLocal() as db:
@@ -103,6 +120,12 @@ def sync_games():
 def sync_live_stats():
     """Celery task: Sync statistics for recent games across all configured seasons."""
     return run_async(_sync_live_stats())
+
+
+@celery_app.task(name="app.tasks.sync_tasks.sync_best_players")
+def sync_best_players():
+    """Celery task: Sync goals + assists from best_players endpoint."""
+    return run_async(_sync_best_players())
 
 
 @celery_app.task(name="app.tasks.sync_tasks.full_sync")

@@ -9,7 +9,7 @@ from app.api.deps import get_db
 from app.models import (
     Season, Game, ScoreTable, Team, Player, PlayerTeam,
     PlayerSeasonStats, TeamSeasonStats, Country,
-    GameEvent, GameEventType,
+    GameEvent, GameEventType, GameTeamStats,
 )
 from app.services.season_filters import get_group_team_ids
 from app.services.season_participants import resolve_season_participants
@@ -49,7 +49,7 @@ PLAYER_STATS_SORT_FIELDS = [
 
 
 @router.get("/{season_id}/player-stats", response_model=PlayerStatsTableResponse)
-@cache(expire=7200)
+@cache(expire=900)
 async def get_player_stats_table(
     season_id: int,
     sort_by: str = Query(default="goals"),
@@ -588,14 +588,17 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
         Game.away_score.isnot(None)
     )
 
-    # Query 2: Team stats from TeamSeasonStats
+    # Query 2: Team stats from GameTeamStats (aggregated per-game data)
     team_stats_query = select(
-        func.coalesce(func.sum(TeamSeasonStats.yellow_cards), 0).label("yellow_cards"),
-        func.coalesce(func.sum(TeamSeasonStats.second_yellow_cards), 0).label("second_yellow_cards"),
-        func.coalesce(func.sum(TeamSeasonStats.red_cards), 0).label("red_cards"),
-        func.coalesce(func.sum(TeamSeasonStats.fouls), 0).label("total_fouls"),
-        func.coalesce(func.sum(TeamSeasonStats.penalty), 0).label("penalties"),
-    ).where(TeamSeasonStats.season_id == season_id)
+        func.coalesce(func.sum(GameTeamStats.yellow_cards), 0).label("yellow_cards"),
+        func.coalesce(func.sum(GameTeamStats.red_cards), 0).label("red_cards"),
+        func.coalesce(func.sum(GameTeamStats.fouls), 0).label("total_fouls"),
+        func.coalesce(func.sum(GameTeamStats.penalties), 0).label("penalties"),
+    ).join(Game, GameTeamStats.game_id == Game.id).where(
+        Game.season_id == season_id,
+        Game.home_score.isnot(None),
+        Game.away_score.isnot(None),
+    )
 
     game_result = await db.execute(game_stats_query)
     team_result = await db.execute(team_stats_query)
@@ -610,12 +613,15 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
     total_fouls = team_row.total_fouls or 0
     fouls_per_match = round(total_fouls / matches_played, 0) if matches_played > 0 else 0.0
 
-    # Calculate penalties scored from player stats
+    # Calculate penalties scored from GameEvent
     penalties = team_row.penalties or 0
-    penalty_goals_query = select(
-        func.coalesce(func.sum(PlayerSeasonStats.penalty_success), 0)
-    ).where(PlayerSeasonStats.season_id == season_id)
-    penalty_result = await db.execute(penalty_goals_query)
+    penalty_scored_query = select(func.count()).select_from(GameEvent).join(
+        Game, GameEvent.game_id == Game.id
+    ).where(
+        Game.season_id == season_id,
+        GameEvent.event_type == GameEventType.penalty,
+    )
+    penalty_result = await db.execute(penalty_scored_query)
     penalties_scored = penalty_result.scalar() or 0
 
     return SeasonStatisticsResponse(
@@ -632,7 +638,7 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
         penalties_scored=penalties_scored,
         fouls_per_match=fouls_per_match,
         yellow_cards=team_row.yellow_cards or 0,
-        second_yellow_cards=team_row.second_yellow_cards or 0,
+        second_yellow_cards=0,
         red_cards=team_row.red_cards or 0,
     )
 
