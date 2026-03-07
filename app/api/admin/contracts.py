@@ -59,6 +59,8 @@ def _build_contract_item(pt: PlayerTeam, player: Player, team: Team, season: Sea
         photo_url=pt.photo_url,
         is_active=pt.is_active,
         is_hidden=pt.is_hidden,
+        joined_at=pt.joined_at,
+        left_at=pt.left_at,
     )
 
 
@@ -350,6 +352,8 @@ async def create_contract(
         photo_url=to_object_name(payload.photo_url) if payload.photo_url else None,
         is_active=payload.is_active,
         is_hidden=payload.is_hidden,
+        joined_at=payload.joined_at,
+        left_at=payload.left_at,
     )
     db.add(pt)
     await db.flush()

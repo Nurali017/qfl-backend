@@ -182,6 +182,7 @@ async def get_team_players(
             PlayerTeam.team_id == team_id,
             PlayerTeam.season_id == season_id,
             PlayerTeam.role == 1,
+            PlayerTeam.is_hidden == False,
         )
         .options(
             selectinload(PlayerTeam.player).selectinload(Player.country)
@@ -189,6 +190,7 @@ async def get_team_players(
     )
     player_teams = result.scalars().all()
 
+    _AMPLUA_TO_POSITION = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
     items = []
     for pt in player_teams:
         p = pt.player
@@ -200,7 +202,6 @@ async def get_team_players(
                 "name": get_localized_name(p.country, lang),
                 "flag_url": p.country.flag_url,
             }
-        _AMPLUA_TO_POSITION = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
         position = (
             infer_position_code(pt.position_ru or pt.position_kz, pt.position_en)
             or infer_position_code(p.player_type, p.top_role)
@@ -219,6 +220,9 @@ async def get_team_players(
             "top_role": get_localized_field(p, "top_role", lang),
             "team_id": pt.team_id,
             "number": pt.number,
+            "is_active": pt.is_active,
+            "joined_at": pt.joined_at.isoformat() if pt.joined_at else None,
+            "left_at": pt.left_at.isoformat() if pt.left_at else None,
         })
 
     return {"items": items, "total": len(items)}

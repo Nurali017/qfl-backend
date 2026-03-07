@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
-from app.services.sync.base import BaseSyncService, parse_date, PLAYER_SEASON_STATS_FIELDS
+from app.services.sync.base import BaseSyncService, PLAYER_SEASON_STATS_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class PlayerSyncService(BaseSyncService):
     Service for syncing player data and statistics.
 
     Handles:
-    - Player profiles (with multilingual support)
+    - Player profiles (top_role only; other profile fields are managed locally)
     - Player-team associations
     - Player season statistics (50+ metrics from v2 API)
     """
@@ -39,14 +39,8 @@ class PlayerSyncService(BaseSyncService):
         # Resolve SOTA season ID for API calls
         sota_season_id = await self.get_sota_season_id(season_id)
 
-        # Fetch data in all 3 languages
+        # Fetch Russian data only; top_role is the only player profile field we sync from SOTA.
         players_ru = await self.client.get_players(sota_season_id, language="ru")
-        players_kz = await self.client.get_players(sota_season_id, language="kk")
-        players_en = await self.client.get_players(sota_season_id, language="en")
-
-        # Build lookup dicts by player id
-        kz_by_id = {p["id"]: p for p in players_kz}
-        en_by_id = {p["id"]: p for p in players_en}
 
         count = 0
         for p in players_ru:
@@ -55,43 +49,15 @@ class PlayerSyncService(BaseSyncService):
             except (ValueError, TypeError):
                 logger.warning("Skipping player with invalid SOTA id: %s", p.get("id"))
                 continue
-            p_kz = kz_by_id.get(p["id"], {})
-            p_en = en_by_id.get(p["id"], {})
-
-            # Find country_id by country_name (try Russian first, then English)
-            country_id = await self._find_country_id(p.get("country_name"))
-            if not country_id:
-                country_id = await self._find_country_id(p_en.get("country_name"))
 
             stmt = insert(Player).values(
                 sota_id=sota_id,
-                first_name=p.get("first_name"),  # Russian as default
-                first_name_kz=p_kz.get("first_name"),
-                first_name_en=p_en.get("first_name"),
-                last_name=p.get("last_name"),  # Russian as default
-                last_name_kz=p_kz.get("last_name"),
-                last_name_en=p_en.get("last_name"),
-                birthday=parse_date(p.get("birthday")),
-                player_type=p.get("type"),
-                country_id=country_id,
                 top_role=p.get("top_role"),  # Russian as default
-                # top_role_kz not synced - SOTA returns English for kk
-                top_role_en=p_en.get("top_role"),
                 updated_at=datetime.utcnow(),
             )
 
             update_dict = {
-                "first_name": stmt.excluded.first_name,
-                "first_name_kz": stmt.excluded.first_name_kz,
-                "first_name_en": stmt.excluded.first_name_en,
-                "last_name": stmt.excluded.last_name,
-                "last_name_kz": stmt.excluded.last_name_kz,
-                "last_name_en": stmt.excluded.last_name_en,
-                "birthday": stmt.excluded.birthday,
-                "player_type": stmt.excluded.player_type,
-                "country_id": stmt.excluded.country_id,
                 "top_role": stmt.excluded.top_role,
-                "top_role_en": stmt.excluded.top_role_en,
                 "updated_at": stmt.excluded.updated_at,
             }
 

@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Integer, String, ForeignKey, UniqueConstraint
+from datetime import date
+
+from sqlalchemy import Boolean, Date, Integer, String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -30,6 +32,10 @@ class PlayerTeam(Base):
     is_hidden: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+
+    # Contract dates
+    joined_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    left_at: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     # Contract photo (В-7)
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)

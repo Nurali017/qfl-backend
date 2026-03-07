@@ -158,3 +158,89 @@ class AdminRefereeItem(BaseModel):
 class AdminRefereeAddRequest(BaseModel):
     referee_id: int
     role: RefereeRole
+
+
+class AdminTeamStatsItem(BaseModel):
+    id: int
+    team_id: int
+    team_name: Optional[str] = None
+    possession: Optional[float] = None
+    possession_percent: Optional[int] = None
+    shots: Optional[int] = None
+    shots_on_goal: Optional[int] = None
+    shots_off_goal: Optional[int] = None
+    passes: Optional[int] = None
+    pass_accuracy: Optional[float] = None
+    fouls: Optional[int] = None
+    yellow_cards: Optional[int] = None
+    red_cards: Optional[int] = None
+    corners: Optional[int] = None
+    offsides: Optional[int] = None
+    shots_on_bar: Optional[int] = None
+    shots_blocked: Optional[int] = None
+    penalties: Optional[int] = None
+    saves: Optional[int] = None
+    extra_stats: Optional[dict] = None
+
+
+class AdminTeamStatsUpsertRequest(BaseModel):
+    possession: Optional[float] = None
+    possession_percent: Optional[int] = None
+    shots: Optional[int] = None
+    shots_on_goal: Optional[int] = None
+    shots_off_goal: Optional[int] = None
+    passes: Optional[int] = None
+    pass_accuracy: Optional[float] = None
+    fouls: Optional[int] = None
+    yellow_cards: Optional[int] = None
+    red_cards: Optional[int] = None
+    corners: Optional[int] = None
+    offsides: Optional[int] = None
+    shots_on_bar: Optional[int] = None
+    shots_blocked: Optional[int] = None
+    penalties: Optional[int] = None
+    saves: Optional[int] = None
+
+
+class AdminPlayerStatsItem(BaseModel):
+    id: int
+    player_id: int
+    player_name: Optional[str] = None
+    team_id: int
+    team_name: Optional[str] = None
+    minutes_played: Optional[int] = None
+    started: Optional[bool] = None
+    position: Optional[str] = None
+    shots: int = 0
+    shots_on_goal: int = 0
+    shots_off_goal: int = 0
+    passes: int = 0
+    pass_accuracy: Optional[float] = None
+    duel: int = 0
+    tackle: int = 0
+    corner: int = 0
+    offside: int = 0
+    foul: int = 0
+    yellow_cards: int = 0
+    red_cards: int = 0
+    extra_stats: Optional[dict] = None
+
+
+class AdminPlayerStatsUpsertRequest(BaseModel):
+    team_id: int
+    minutes_played: Optional[int] = None
+    started: Optional[bool] = None
+    position: Optional[str] = None
+    shots: Optional[int] = None
+    shots_on_goal: Optional[int] = None
+    shots_off_goal: Optional[int] = None
+    passes: Optional[int] = None
+    pass_accuracy: Optional[float] = None
+    duel: Optional[int] = None
+    tackle: Optional[int] = None
+    corner: Optional[int] = None
+    offside: Optional[int] = None
+    foul: Optional[int] = None
+    yellow_cards: Optional[int] = None
+    red_cards: Optional[int] = None
+    extra_stats: Optional[dict] = None

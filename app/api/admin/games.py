@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.models import Game, GameStatus, Team, GameLineup, GameEvent, LineupType, GameEventType, Referee, GameReferee, RefereeRole, Broadcaster, GameBroadcaster
+from app.models import Game, GameStatus, Team, GameLineup, GameEvent, LineupType, GameEventType, Referee, GameReferee, RefereeRole, Broadcaster, GameBroadcaster, GameTeamStats, GamePlayerStats, Player
 from app.schemas.admin.games import (
     AdminGameResponse,
     AdminGameUpdateRequest,
@@ -20,6 +20,10 @@ from app.schemas.admin.games import (
     AdminEventUpdateRequest,
     AdminRefereeItem,
     AdminRefereeAddRequest,
+    AdminTeamStatsItem,
+    AdminTeamStatsUpsertRequest,
+    AdminPlayerStatsItem,
+    AdminPlayerStatsUpsertRequest,
 )
 from app.schemas.admin.broadcasters import (
     AdminGameBroadcasterItem,
@@ -646,3 +650,157 @@ async def delete_game_broadcaster(game_id: int, entry_id: int, db: AsyncSession 
     await db.delete(entry)
     await db.commit()
     return {"ok": True}
+
+
+# --- Team Stats endpoints ---
+
+def _team_stats_to_item(ts: GameTeamStats) -> AdminTeamStatsItem:
+    return AdminTeamStatsItem(
+        id=ts.id,
+        team_id=ts.team_id,
+        team_name=ts.team.name if ts.team else None,
+        possession=float(ts.possession) if ts.possession is not None else None,
+        possession_percent=ts.possession_percent,
+        shots=ts.shots,
+        shots_on_goal=ts.shots_on_goal,
+        shots_off_goal=ts.shots_off_goal,
+        passes=ts.passes,
+        pass_accuracy=float(ts.pass_accuracy) if ts.pass_accuracy is not None else None,
+        fouls=ts.fouls,
+        yellow_cards=ts.yellow_cards,
+        red_cards=ts.red_cards,
+        corners=ts.corners,
+        offsides=ts.offsides,
+        shots_on_bar=ts.shots_on_bar,
+        shots_blocked=ts.shots_blocked,
+        penalties=ts.penalties,
+        saves=ts.saves,
+        extra_stats=ts.extra_stats,
+    )
+
+
+@router.get("/{game_id}/team-stats", response_model=list[AdminTeamStatsItem])
+async def list_team_stats(game_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Game).where(Game.id == game_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    stats_result = await db.execute(
+        select(GameTeamStats)
+        .options(selectinload(GameTeamStats.team))
+        .where(GameTeamStats.game_id == game_id)
+        .order_by(GameTeamStats.team_id)
+    )
+    stats = stats_result.scalars().all()
+    return [_team_stats_to_item(ts) for ts in stats]
+
+
+@router.put("/{game_id}/team-stats/{team_id}", response_model=AdminTeamStatsItem)
+async def upsert_team_stats(
+    game_id: int,
+    team_id: int,
+    body: AdminTeamStatsUpsertRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(GameTeamStats)
+        .where(GameTeamStats.game_id == game_id, GameTeamStats.team_id == team_id)
+    )
+    ts = result.scalar_one_or_none()
+    if not ts:
+        ts = GameTeamStats(game_id=game_id, team_id=team_id)
+        db.add(ts)
+
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(ts, field, value)
+
+    await db.commit()
+    await db.refresh(ts)
+
+    # Reload with team
+    reload = await db.execute(
+        select(GameTeamStats)
+        .options(selectinload(GameTeamStats.team))
+        .where(GameTeamStats.id == ts.id)
+    )
+    ts = reload.scalar_one()
+    return _team_stats_to_item(ts)
+
+
+# --- Player Stats endpoints ---
+
+def _player_stats_to_item(ps: GamePlayerStats) -> AdminPlayerStatsItem:
+    player_name = None
+    if ps.player:
+        player_name = " ".join(filter(None, [ps.player.last_name, ps.player.first_name]))
+    return AdminPlayerStatsItem(
+        id=ps.id,
+        player_id=ps.player_id,
+        player_name=player_name,
+        team_id=ps.team_id,
+        team_name=ps.team.name if ps.team else None,
+        minutes_played=ps.minutes_played,
+        started=ps.started,
+        position=ps.position,
+        shots=ps.shots,
+        shots_on_goal=ps.shots_on_goal,
+        shots_off_goal=ps.shots_off_goal,
+        passes=ps.passes,
+        pass_accuracy=float(ps.pass_accuracy) if ps.pass_accuracy is not None else None,
+        duel=ps.duel,
+        tackle=ps.tackle,
+        corner=ps.corner,
+        offside=ps.offside,
+        foul=ps.foul,
+        yellow_cards=ps.yellow_cards,
+        red_cards=ps.red_cards,
+        extra_stats=ps.extra_stats,
+    )
+
+
+@router.get("/{game_id}/player-stats", response_model=list[AdminPlayerStatsItem])
+async def list_player_stats(game_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Game).where(Game.id == game_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    stats_result = await db.execute(
+        select(GamePlayerStats)
+        .options(selectinload(GamePlayerStats.player), selectinload(GamePlayerStats.team))
+        .where(GamePlayerStats.game_id == game_id)
+        .order_by(GamePlayerStats.team_id, GamePlayerStats.started.desc(), GamePlayerStats.minutes_played.desc().nullslast())
+    )
+    stats = stats_result.scalars().all()
+    return [_player_stats_to_item(ps) for ps in stats]
+
+
+@router.put("/{game_id}/player-stats/{player_id}", response_model=AdminPlayerStatsItem)
+async def upsert_player_stats(
+    game_id: int,
+    player_id: int,
+    body: AdminPlayerStatsUpsertRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(GamePlayerStats)
+        .where(GamePlayerStats.game_id == game_id, GamePlayerStats.player_id == player_id)
+    )
+    ps = result.scalar_one_or_none()
+    if not ps:
+        ps = GamePlayerStats(game_id=game_id, player_id=player_id, team_id=body.team_id)
+        db.add(ps)
+
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(ps, field, value)
+
+    await db.commit()
+    await db.refresh(ps)
+
+    # Reload with player and team
+    reload = await db.execute(
+        select(GamePlayerStats)
+        .options(selectinload(GamePlayerStats.player), selectinload(GamePlayerStats.team))
+        .where(GamePlayerStats.id == ps.id)
+    )
+    ps = reload.scalar_one()
+    return _player_stats_to_item(ps)
