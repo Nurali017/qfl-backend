@@ -16,7 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("games", sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True))
+    op.execute(sa.text(
+        "ALTER TABLE games ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ"
+    ))
 
     op.execute(
         sa.text(
