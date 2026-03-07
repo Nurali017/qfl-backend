@@ -7,7 +7,7 @@ from app.api.deps import get_db
 from app.api.admin.deps import require_roles
 from app.caching import invalidate_pattern
 from app.models import Championship, Season
-from app.services.season_visibility import is_season_visible_clause
+from app.services.season_visibility import invalidate_season_cache, is_season_visible_clause
 from app.schemas.admin.seasons import (
     AdminSeasonCreateRequest,
     AdminSeasonUpdateRequest,
@@ -82,6 +82,7 @@ async def create_season(
         raise HTTPException(status_code=400, detail=f"Failed to create season: {exc.orig}") from exc
 
     await db.refresh(obj)
+    invalidate_season_cache()
     await invalidate_pattern("*app.api.seasons*")
     await invalidate_pattern("*app.api.cup*")
     await invalidate_pattern("*app.api.games*")
@@ -115,6 +116,7 @@ async def update_season(
 
     await db.commit()
     await db.refresh(obj)
+    invalidate_season_cache()
     await invalidate_pattern("*app.api.seasons*")
     await invalidate_pattern("*app.api.cup*")
     await invalidate_pattern("*app.api.games*")

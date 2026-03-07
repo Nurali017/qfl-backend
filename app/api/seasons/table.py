@@ -19,6 +19,7 @@ from app.services.table_zones import resolve_table_zone
 from app.services.season_visibility import ensure_visible_season_or_404
 from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from fastapi_cache.decorator import cache
 from app.schemas.stats import (
     ScoreTableResponse,
     ScoreTableEntryResponse,
@@ -32,6 +33,7 @@ _ensure_visible_season = ensure_visible_season_or_404
 
 
 @router.get("/{season_id}/table")
+@cache(expire=60)
 async def get_season_table(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
@@ -218,6 +220,7 @@ async def get_season_table(
 
 
 @router.get("/{season_id}/results-grid", response_model=ResultsGridResponse)
+@cache(expire=300)
 async def get_results_grid(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
@@ -383,6 +386,7 @@ async def get_results_grid(
 
 
 @router.get("/{season_id}/league-performance")
+@cache(expire=300)
 async def get_league_performance(
     season_id: int,
     team_ids: str | None = Query(default=None, description="Comma-separated team IDs to filter"),

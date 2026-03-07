@@ -156,14 +156,31 @@ async def get_team_overview(
         _build_overview_match(game, lang) for game in upcoming_games[:fixtures_limit]
     ]
 
-    # Standings window: score_table first, then fallback to finished games.
-    score_table_result = await db.execute(
-        select(ScoreTable)
-        .where(ScoreTable.season_id == season_id)
-        .options(selectinload(ScoreTable.team))
-        .order_by(ScoreTable.position.asc())
+    # Standings window: load only ±3 positions around the team.
+    team_pos_result = await db.execute(
+        select(ScoreTable.position).where(
+            ScoreTable.season_id == season_id,
+            ScoreTable.team_id == team_id,
+        )
     )
-    score_table_entries = score_table_result.scalars().all()
+    team_position = team_pos_result.scalar_one_or_none()
+
+    if team_position is not None:
+        start_pos = max(1, team_position - 3)
+        end_pos = team_position + 3
+        score_table_result = await db.execute(
+            select(ScoreTable)
+            .where(
+                ScoreTable.season_id == season_id,
+                ScoreTable.position >= start_pos,
+                ScoreTable.position <= end_pos,
+            )
+            .options(selectinload(ScoreTable.team))
+            .order_by(ScoreTable.position.asc())
+        )
+        score_table_entries = score_table_result.scalars().all()
+    else:
+        score_table_entries = []
 
     standings: list[TeamOverviewStandingEntry] = []
     if score_table_entries:

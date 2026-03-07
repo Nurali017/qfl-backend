@@ -76,8 +76,9 @@ async def _sync_live_game_events():
 
         for game in active_games:
             try:
-                new_events = await service.sync_live_events(game.id)
-                total_new_events += len(new_events)
+                sync_result = await service.sync_live_events(game.id)
+                events_added = sync_result.get("added", 0)
+                total_new_events += events_added
 
                 # Also sync live lineup (starters/substitutes from live feed)
                 try:
@@ -99,11 +100,13 @@ async def _sync_live_game_events():
 
                 results.append({
                     "game_id": game.id,
-                    "new_events": len(new_events),
+                    "new_events": events_added,
+                    "updated_events": sync_result.get("updated", 0),
+                    "deleted_events": sync_result.get("deleted", 0),
                 })
 
-                if new_events:
-                    logger.info(f"Synced {len(new_events)} new events for game {game.id}")
+                if events_added:
+                    logger.info(f"Synced {events_added} new events for game {game.id}")
 
             except Exception as e:
                 logger.error(f"Failed to sync events for game {game.id}: {e}")

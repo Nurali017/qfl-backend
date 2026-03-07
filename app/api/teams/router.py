@@ -33,11 +33,13 @@ from app.utils.localization import get_localized_name, get_localized_city, get_l
 from app.utils.error_messages import get_error_message
 from app.utils.positions import infer_position_code
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 @router.get("", response_model=TeamListResponse)
+@cache(expire=3600)
 async def get_teams(
     season_id: int | None = None,
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),
@@ -82,6 +84,7 @@ async def get_teams(
 
 
 @router.get("/{team_id}", response_model=TeamDetailResponse)
+@cache(expire=3600)
 async def get_team(
     team_id: int,
     lang: str = Query(default="kz", description="Language: kz, ru, or en"),
@@ -124,6 +127,7 @@ async def get_team(
 
 
 @router.get("/{team_id}/seasons", response_model=TeamSeasonsResponse)
+@cache(expire=3600)
 async def get_team_seasons(
     team_id: int,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
@@ -167,6 +171,7 @@ async def get_team_seasons(
 
 
 @router.get("/{team_id}/players")
+@cache(expire=300)
 async def get_team_players(
     team_id: int,
     season_id: int = Query(default=None),
@@ -229,6 +234,7 @@ async def get_team_players(
 
 
 @router.get("/{team_id}/games")
+@cache(expire=300)
 async def get_team_games(
     team_id: int,
     season_id: int = Query(default=None),
@@ -303,6 +309,7 @@ async def get_team_games(
 
 
 @router.get("/{team_id}/coaches")
+@cache(expire=3600)
 async def get_team_coaches(
     team_id: int,
     season_id: int = Query(default=None),
