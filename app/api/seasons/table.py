@@ -155,6 +155,18 @@ async def get_season_table(
                     group_team_ids=group_team_ids,
                 )
                 if dynamic:
+                    # Merge: add teams from score_table that have no games yet
+                    if table_data and len(dynamic) < len(table_data):
+                        dynamic_ids = {e["team_id"] for e in dynamic}
+                        for entry in table_data:
+                            if entry["team_id"] not in dynamic_ids:
+                                dynamic.append(entry)
+                        dynamic.sort(key=lambda e: (
+                            -e["points"], -(e["goals_scored"] - e["goals_conceded"]),
+                            -e.get("wins", 0), -e["goals_scored"],
+                        ))
+                        for i, entry in enumerate(dynamic, 1):
+                            entry["position"] = i
                     table_data = dynamic
 
     team_ids = [entry["team_id"] for entry in table_data]
