@@ -866,7 +866,7 @@ class LineupSyncService(BaseSyncService):
 
         live_result = await self.sync_live_positions_and_kits(
             game_id,
-            mode="live_read",
+            mode="finished_repair",
             auto_commit=False,
             touch_live_sync_timestamp=False,
         )
