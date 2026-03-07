@@ -5,10 +5,10 @@ from datetime import date
 from itertools import groupby
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
-from app.models import Game, GameTeamStats, ScoreTable
+from app.models import Game, GameStatus, GameTeamStats, ScoreTable
 from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.stats import NextGameInfo
@@ -176,20 +176,13 @@ async def calculate_dynamic_table(
 
     When include_live=True, also includes live games (treating NULL scores as 0).
     """
-    from sqlalchemy import or_
-    from app.models import GameStatus
-
-    score_filter = (
-        Game.home_score.isnot(None),
-        Game.away_score.isnot(None),
-    )
+    finished_statuses = [GameStatus.finished, GameStatus.technical_defeat]
     if include_live:
         score_filter = (
-            or_(
-                Game.home_score.isnot(None) & Game.away_score.isnot(None),
-                Game.status == GameStatus.live,
-            ),
+            Game.status.in_(finished_statuses + [GameStatus.live]),
         )
+    else:
+        score_filter = (Game.status.in_(finished_statuses),)
 
     query = (
         select(Game)
@@ -233,8 +226,11 @@ async def calculate_dynamic_table(
     for game in games:
         home_id = game.home_team_id
         away_id = game.away_team_id
-        home_score = game.home_score or 0
-        away_score = game.away_score or 0
+        # Skip live games that haven't had scores set yet
+        if game.home_score is None and game.away_score is None:
+            continue
+        home_score = game.home_score if game.home_score is not None else 0
+        away_score = game.away_score if game.away_score is not None else 0
 
         if home_away != "away":
             stats = team_stats[home_id]

@@ -100,6 +100,8 @@ class ScoreTableResponse(BaseModel):
     season_id: int
     filters: ScoreTableFilters | None = None
     table: list[ScoreTableEntryResponse] = []
+    has_live: bool = False
+    live_team_ids: list[int] = []
 
 
 class TeamResultsGridEntry(BaseModel):
