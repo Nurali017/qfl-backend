@@ -147,12 +147,15 @@ async def get_season_table(
                 table_data = await read_score_table(db, season_id, group_team_ids, lang)
         else:
             table_data = await read_score_table(db, season_id, group_team_ids, lang)
-            # Fallback: if score_table not populated yet, calculate from finished games
-            if not table_data:
-                table_data = await calculate_dynamic_table(
+            # Fallback: if score_table not populated or all zeros, calculate from finished games
+            has_real_data = table_data and any(e.get("games_played", 0) > 0 for e in table_data)
+            if not has_real_data:
+                dynamic = await calculate_dynamic_table(
                     db, season_id, None, None, None, lang,
                     group_team_ids=group_team_ids,
                 )
+                if dynamic:
+                    table_data = dynamic
 
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)
