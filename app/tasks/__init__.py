@@ -38,7 +38,7 @@ if settings.sota_enabled:
         },
         "sync-live-events": {
             "task": "app.tasks.live_tasks.sync_live_game_events",
-            "schedule": 5.0,
+            "schedule": 15.0,
         },
         "end-finished-games-every-10min": {
             "task": "app.tasks.live_tasks.end_finished_games",
