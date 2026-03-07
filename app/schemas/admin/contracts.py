@@ -1,3 +1,4 @@
+from datetime import date
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -23,6 +24,8 @@ class AdminContractListItem(BaseModel):
     photo_url: str | None
     is_active: bool
     is_hidden: bool
+    joined_at: date | None
+    left_at: date | None
 
 
 class AdminContractCreateRequest(BaseModel):
@@ -38,6 +41,8 @@ class AdminContractCreateRequest(BaseModel):
     photo_url: str | None = None
     is_active: bool = True
     is_hidden: bool = False
+    joined_at: date | None = None
+    left_at: date | None = None
 
 
 class AdminContractUpdateRequest(BaseModel):
@@ -53,6 +58,8 @@ class AdminContractUpdateRequest(BaseModel):
     photo_url: str | None = None
     is_active: bool | None = None
     is_hidden: bool | None = None
+    joined_at: date | None = None
+    left_at: date | None = None
 
 
 class AdminContractResponse(AdminContractListItem):

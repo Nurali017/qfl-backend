@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Season, Team, Championship
 from app.services.file_storage import FileStorageService
-from app.services.sync.base import BaseSyncService, parse_date
+from app.services.sync.base import BaseSyncService
 from app.utils.file_urls import to_object_name
 
 logger = logging.getLogger(__name__)
@@ -47,22 +47,18 @@ class ReferenceSyncService(BaseSyncService):
 
     async def sync_seasons(self) -> int:
         """
-        Update existing local seasons from SOTA API (names, dates, languages).
+        Check mapped seasons against SOTA API without overwriting local reference data.
 
         Only updates seasons that have a sota_season_id mapping and sync_enabled=True.
         Does NOT create new seasons — seasons are managed manually via admin/migrations.
 
         Returns:
-            Number of seasons updated
+            Number of seasons confirmed in SOTA
         """
-        # Fetch data in all 3 languages
+        # Fetch Russian data only; local season labels and dates are authoritative.
         seasons_ru = await self.client.get_seasons(language="ru")
-        seasons_kz = await self.client.get_seasons(language="kk")
-        seasons_en = await self.client.get_seasons(language="en")
 
-        # Build lookup dicts by SOTA season id
-        kz_by_id = {s["id"]: s for s in seasons_kz}
-        en_by_id = {s["id"]: s for s in seasons_en}
+        # Build lookup dict by SOTA season id
         ru_by_id = {s["id"]: s for s in seasons_ru}
 
         # Find all local seasons that have SOTA mapping and sync enabled
@@ -85,19 +81,11 @@ class ReferenceSyncService(BaseSyncService):
                 )
                 continue
 
-            s_kz = kz_by_id.get(sota_id, {})
-            s_en = en_by_id.get(sota_id, {})
-
-            local.name = s_ru["name"]
-            local.name_kz = s_kz.get("name")
-            local.name_en = s_en.get("name")
-            local.date_start = parse_date(s_ru.get("date_start"))
-            local.date_end = parse_date(s_ru.get("date_end"))
-            local.updated_at = datetime.utcnow()
+            # Names and dates are managed locally; we only verify the season still exists in SOTA.
             count += 1
 
         await self.db.commit()
-        logger.info(f"Updated {count} seasons from SOTA")
+        logger.info(f"Confirmed {count} mapped seasons in SOTA")
         return count
 
     async def sync_teams(self) -> int:
@@ -127,26 +115,14 @@ class ReferenceSyncService(BaseSyncService):
                 name=t["name"],  # Russian as default
                 name_kz=t_kz.get("name"),
                 name_en=t_en.get("name"),
-                logo_url=t.get("logo"),
-                logo_updated_at=datetime.utcnow() if t.get("logo") else None,
-                city=t.get("city"),  # Russian as default
-                city_kz=t_kz.get("city"),
-                city_en=t_en.get("city"),
                 updated_at=datetime.utcnow(),
             )
             update_dict = {
                 "name": stmt.excluded.name,
                 "name_kz": stmt.excluded.name_kz,
                 "name_en": stmt.excluded.name_en,
-                "city": stmt.excluded.city,
-                "city_kz": stmt.excluded.city_kz,
-                "city_en": stmt.excluded.city_en,
                 "updated_at": stmt.excluded.updated_at,
             }
-
-            if t.get("logo"):
-                update_dict["logo_url"] = stmt.excluded.logo_url
-                update_dict["logo_updated_at"] = stmt.excluded.logo_updated_at
 
             stmt = stmt.on_conflict_do_update(
                 index_elements=["id"],

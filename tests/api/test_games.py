@@ -282,6 +282,42 @@ class TestGamesAPI:
         assert data["team_stats"] == []
         assert data["player_stats"] == []
 
+    async def test_get_game_stats_keeps_null_pass_accuracy(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_game,
+        sample_player,
+        sample_teams,
+    ):
+        """Game stats endpoint should serialize missing pass accuracy as null."""
+        from app.models import GamePlayerStats, GameTeamStats
+
+        team_stats = GameTeamStats(
+            game_id=sample_game.id,
+            team_id=sample_teams[0].id,
+            passes=321,
+            pass_accuracy=None,
+        )
+        player_stats = GamePlayerStats(
+            game_id=sample_game.id,
+            player_id=sample_player.id,
+            team_id=sample_teams[0].id,
+            passes=25,
+            pass_accuracy=None,
+        )
+        test_session.add_all([team_stats, player_stats])
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/games/{sample_game.id}/stats")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert len(data["team_stats"]) == 1
+        assert data["team_stats"][0]["pass_accuracy"] is None
+        assert len(data["player_stats"]) == 1
+        assert data["player_stats"][0]["pass_accuracy"] is None
+
     async def test_get_games_list_includes_protocol_url(
         self,
         client: AsyncClient,

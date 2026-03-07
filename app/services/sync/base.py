@@ -140,6 +140,8 @@ GAME_PLAYER_STATS_FIELDS = {
 GAME_TEAM_STATS_FIELDS = {
     "possession", "possession_percent", "shot", "shots_on_goal", "shots_off_goal",
     "pass", "pass_accuracy", "foul", "yellow_cards", "red_cards", "corner", "offside",
+    "shots_on_bar", "shot_on_bar", "shots_blocked", "shot_blocked",
+    "penalty", "penalties", "saves", "save", "save_shot",
 }
 
 
