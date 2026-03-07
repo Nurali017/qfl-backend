@@ -14,6 +14,7 @@ from app.schemas.game_lineup import (
     GameLineupResponse, LineupCoach, LineupCoaches, LineupCountryBrief,
     LineupPlayer, LineupReferee, LineupRendering, LineupTeam, LineupTeams,
 )
+from app.utils.localization import get_localized_field
 from app.services.lineup import (
     resolve_lineup_position_fallback,
     detect_formation,
@@ -193,8 +194,8 @@ async def get_game_lineup(
 
             player_model = LineupPlayer(
                 player_id=entry.player_id,
-                first_name=player.first_name if player else None,
-                last_name=player.last_name if player else None,
+                first_name=get_localized_field(player, "first_name", lang) if player else None,
+                last_name=get_localized_field(player, "last_name", lang) if player else None,
                 country=_build_country(player.country) if player else None,
                 shirt_number=(
                     next(
