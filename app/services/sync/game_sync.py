@@ -476,23 +476,36 @@ class GameSyncService(BaseSyncService):
         await self.db.flush()
         return player.id
 
+    def _event_signature(self, event_type_value: str, half: int, minute: int,
+                         player_id: int | None, player_name: str | None) -> tuple:
+        """Build a signature tuple for event matching."""
+        name = player_name.strip().lower() if player_name else ""
+        return (half, minute, event_type_value, player_id, name)
+
+    def _signatures_match(self, sig_a: tuple, sig_b: tuple) -> bool:
+        """Check if two event signatures match (by player_id OR by name)."""
+        half_a, min_a, type_a, pid_a, name_a = sig_a
+        half_b, min_b, type_b, pid_b, name_b = sig_b
+        if half_a != half_b or min_a != min_b or type_a != type_b:
+            return False
+        if pid_a and pid_b and pid_a == pid_b:
+            return True
+        if name_a and name_b and name_a == name_b:
+            return True
+        return False
+
     async def sync_game_events(self, game_id: int) -> dict:
         """
         Sync events for a specific game from SOTA /em/ endpoint.
 
-        Works for both live and completed games.
-
-        Args:
-            game_id: Game int ID
-
-        Returns:
-            Dict with game_id and events_added count
+        Full reconciliation: adds new events, updates changed ones,
+        deletes SOTA events that no longer exist. Manual events are protected.
         """
         game = await self.db.get(Game, game_id)
         if not game:
-            return {"error": f"Game {game_id} not found", "events_added": 0}
+            return {"error": f"Game {game_id} not found", "added": 0, "updated": 0, "deleted": 0}
         if not game.sota_id:
-            return {"error": f"Game {game_id} has no sota_id", "events_added": 0}
+            return {"error": f"Game {game_id} has no sota_id", "added": 0, "updated": 0, "deleted": 0}
         sota_uuid = str(game.sota_id)
 
         # Load teams
@@ -505,29 +518,33 @@ class GameSyncService(BaseSyncService):
             result = await self.db.execute(select(Team).where(Team.id == game.away_team_id))
             away_team = result.scalar_one_or_none()
 
-        # Get existing events
+        # Load all existing events
         result = await self.db.execute(
             select(GameEvent).where(GameEvent.game_id == game_id)
         )
         existing_events = list(result.scalars().all())
 
-        # Create deduplication set
-        existing_signatures = set()
-        for e in existing_events:
-            normalized_name = e.player_name.strip().lower() if e.player_name else ""
+        # Separate SOTA events from manual events
+        sota_events = [e for e in existing_events if e.source == "sota"]
 
-            if e.player_id:
-                sig_by_id = (e.half, e.minute, e.event_type.value, str(e.player_id))
-                existing_signatures.add(sig_by_id)
+        # Build list-based signature map for SOTA events (supports duplicates)
+        sota_by_sig: dict[tuple, list[GameEvent]] = {}
+        for e in sota_events:
+            sig = self._event_signature(e.event_type.value, e.half, e.minute, e.player_id, e.player_name)
+            sota_by_sig.setdefault(sig, []).append(e)
 
-            if normalized_name:
-                sig_by_name = (e.half, e.minute, e.event_type.value, normalized_name)
-                existing_signatures.add(sig_by_name)
-
-        # Fetch events from SOTA
+        # Fetch fresh events from SOTA
         events_data = await self.client.get_live_match_events(sota_uuid)
 
-        # Action type mapping
+        # Safety check: if SOTA returns empty but we have SOTA events, skip deletion
+        skip_deletes = False
+        if not events_data and sota_events:
+            logger.warning(
+                "Game %s: SOTA returned empty events but %d sota events exist in DB — skipping deletes",
+                game_id, len(sota_events),
+            )
+            skip_deletes = True
+
         ACTION_TYPE_MAP = {
             "ГОЛ": GameEventType.goal,
             "АВТОГОЛ": GameEventType.own_goal,
@@ -540,8 +557,12 @@ class GameSyncService(BaseSyncService):
             "ЗАМЕНА": GameEventType.substitution,
         }
 
-        new_events = []
+        # Track which DB events were matched
+        matched_db_events: set[int] = set()
+        added = 0
+        updated = 0
         assists_map: dict[tuple, dict] = {}
+        all_goal_events: list[GameEvent] = []
 
         for event_data in events_data:
             action = event_data.get("action", "")
@@ -549,7 +570,6 @@ class GameSyncService(BaseSyncService):
             if not event_type:
                 continue
 
-            # Check if goal was scored from penalty (standard field)
             standard = (event_data.get("standard") or "").strip().upper()
             if event_type == GameEventType.goal and standard == "ПЕНАЛЬТИ":
                 event_type = GameEventType.penalty
@@ -560,7 +580,6 @@ class GameSyncService(BaseSyncService):
             last_name1 = event_data.get("last_name1", "")
             player_name = f"{first_name1} {last_name1}".strip()
 
-            # Determine team ID (normalized comparison)
             team_name = event_data.get("team1", "")
             team_name_normalized = team_name.strip().lower() if team_name else ""
             team_id = None
@@ -569,31 +588,11 @@ class GameSyncService(BaseSyncService):
             elif away_team and away_team.name and away_team.name.strip().lower() == team_name_normalized:
                 team_id = game.away_team_id
 
-            # Find player ID from lineup
             player_id = await self._find_player_id_from_lineup(
                 game_id, first_name1, last_name1, team_id
             )
 
-            # Check for duplicate using player_id and normalized name signatures.
-            normalized_name = player_name.strip().lower() if player_name else ""
-
-            is_duplicate = False
-            if player_id:
-                sig_by_id = (half, minute, event_type.value, str(player_id))
-                if sig_by_id in existing_signatures:
-                    is_duplicate = True
-
-            if normalized_name and not is_duplicate:
-                sig_by_name = (half, minute, event_type.value, normalized_name)
-                if sig_by_name in existing_signatures:
-                    is_duplicate = True
-
-            if is_duplicate:
-                continue
-
-            # Collect assists into map, don't create separate DB records.
-            # Key by (half, minute, team_id) — SOTA sends player2 empty on assists,
-            # so we link by team: assist giver and goal scorer are on the same team.
+            # Collect assists into map
             if event_type == GameEventType.assist:
                 key = (half, minute, team_id)
                 assists_map[key] = {
@@ -602,7 +601,7 @@ class GameSyncService(BaseSyncService):
                 }
                 continue
 
-            # Find player2 ID (for substitutions; SOTA player2 on goals = opponent, not assister)
+            # Find player2
             first_name2 = event_data.get("first_name2", "")
             last_name2 = event_data.get("last_name2", "")
             team2_name = event_data.get("team2", "")
@@ -617,58 +616,92 @@ class GameSyncService(BaseSyncService):
                 game_id, first_name2, last_name2, team2_id
             )
 
-            # Create event
-            event = GameEvent(
-                game_id=game_id,
-                half=half,
-                minute=minute,
-                event_type=event_type,
-                team_id=team_id,
-                team_name=team_name,
-                player_id=player_id,
-                player_number=self._parse_number(event_data.get("number1")),
-                player_name=player_name,
-                player2_id=player2_id,
-                player2_number=self._parse_number(event_data.get("number2")),
-                player2_name=f"{first_name2} {last_name2}".strip(),
-                player2_team_name=team2_name,
+            # Build new event fields
+            new_fields = {
+                "half": half,
+                "minute": minute,
+                "event_type": event_type,
+                "team_id": team_id,
+                "team_name": team_name,
+                "player_id": player_id,
+                "player_number": self._parse_number(event_data.get("number1")),
+                "player_name": player_name,
+                "player2_id": player2_id,
+                "player2_number": self._parse_number(event_data.get("number2")),
+                "player2_name": f"{first_name2} {last_name2}".strip(),
+                "player2_team_name": team2_name,
+            }
+
+            # Try to match against existing SOTA event
+            sota_sig = self._event_signature(event_type.value, half, minute, player_id, player_name)
+            matched_event = None
+            for sig, candidates in sota_by_sig.items():
+                if self._signatures_match(sota_sig, sig):
+                    for candidate in candidates:
+                        if candidate.id not in matched_db_events:
+                            matched_event = candidate
+                            break
+                    if matched_event:
+                        break
+
+            if matched_event:
+                # Mark as matched
+                matched_db_events.add(matched_event.id)
+                # Check if fields changed, update if needed
+                changed = False
+                for field, value in new_fields.items():
+                    old_value = getattr(matched_event, field)
+                    if field == "event_type":
+                        if old_value != value:
+                            changed = True
+                            setattr(matched_event, field, value)
+                    elif old_value != value:
+                        changed = True
+                        setattr(matched_event, field, value)
+                if changed:
+                    updated += 1
+                # Track for assist linking
+                if event_type in (GameEventType.goal, GameEventType.penalty):
+                    all_goal_events.append(matched_event)
+            else:
+                # Insert new event
+                event = GameEvent(
+                    game_id=game_id,
+                    source="sota",
+                    **new_fields,
+                )
+                self.db.add(event)
+                added += 1
+                if event_type in (GameEventType.goal, GameEventType.penalty):
+                    all_goal_events.append(event)
+
+        # Delete unmatched SOTA events
+        deleted = 0
+        if not skip_deletes:
+            for e in sota_events:
+                if e.id not in matched_db_events:
+                    await self.db.delete(e)
+                    deleted += 1
+
+        # Link assists to all goal events (clear first, then re-link)
+        for event in all_goal_events:
+            key = (event.half, event.minute, event.team_id)
+            assist_info = assists_map.get(key)
+            if assist_info:
+                event.assist_player_id = assist_info["player_id"]
+                event.assist_player_name = assist_info["player_name"]
+            else:
+                event.assist_player_id = None
+                event.assist_player_name = None
+
+        if added or updated or deleted or assists_map:
+            await self.db.commit()
+            logger.info(
+                "Game %s: events added=%d updated=%d deleted=%d assists=%d",
+                game_id, added, updated, deleted, len(assists_map),
             )
 
-            self.db.add(event)
-            new_events.append(event)
-            if player_id:
-                sig_by_id = (half, minute, event_type.value, str(player_id))
-                existing_signatures.add(sig_by_id)
-            if normalized_name:
-                sig_by_name = (half, minute, event_type.value, normalized_name)
-                existing_signatures.add(sig_by_name)
-
-        # Link assists to new goals in this batch (by half, minute, team)
-        for event in new_events:
-            if event.event_type in (GameEventType.goal, GameEventType.penalty):
-                key = (event.half, event.minute, event.team_id)
-                assist_info = assists_map.get(key)
-                if assist_info:
-                    event.assist_player_id = assist_info["player_id"]
-                    event.assist_player_name = assist_info["player_name"]
-
-        # Also link assists to existing goals in DB that don't have assists yet
-        if assists_map:
-            for existing_event in existing_events:
-                if (existing_event.event_type in (GameEventType.goal, GameEventType.penalty)
-                        and not existing_event.assist_player_id):
-                    key = (existing_event.half, existing_event.minute, existing_event.team_id)
-                    assist_info = assists_map.get(key)
-                    if assist_info:
-                        existing_event.assist_player_id = assist_info["player_id"]
-                        existing_event.assist_player_name = assist_info["player_name"]
-
-        events_added = len(new_events)
-        if new_events or assists_map:
-            await self.db.commit()
-            logger.info(f"Game {game_id}: added {events_added} events, linked {len(assists_map)} assists")
-
-        return {"game_id": game_id, "events_added": events_added}
+        return {"game_id": game_id, "added": added, "updated": updated, "deleted": deleted}
 
     async def _find_player_id_from_lineup(
         self, game_id: int, first_name: str, last_name: str, team_id: int | None
@@ -720,7 +753,9 @@ class GameSyncService(BaseSyncService):
         )
         games = list(result.scalars().all())
 
-        total_events = 0
+        total_added = 0
+        total_updated = 0
+        total_deleted = 0
         games_synced = 0
         errors = []
 
@@ -728,7 +763,9 @@ class GameSyncService(BaseSyncService):
             try:
                 result = await self.sync_game_events(game.id)
                 if "error" not in result:
-                    total_events += result.get("events_added", 0)
+                    total_added += result.get("added", 0)
+                    total_updated += result.get("updated", 0)
+                    total_deleted += result.get("deleted", 0)
                     games_synced += 1
                 else:
                     errors.append({"game_id": game.id, "error": result["error"]})
@@ -738,7 +775,9 @@ class GameSyncService(BaseSyncService):
 
         return {
             "games_synced": games_synced,
-            "total_events_added": total_events,
+            "total_added": total_added,
+            "total_updated": total_updated,
+            "total_deleted": total_deleted,
             "errors": errors,
         }
 

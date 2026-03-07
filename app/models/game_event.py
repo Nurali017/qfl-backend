@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Enum, Index
+from sqlalchemy import Integer, String, DateTime, ForeignKey, Enum, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -32,6 +32,7 @@ class GameEvent(Base):
         Index("ix_game_events_game_id", "game_id"),
         Index("ix_game_events_game_minute", "game_id", "half", "minute"),
         Index("ix_game_events_game_type", "game_id", "event_type"),
+        Index("ix_game_events_game_source", "game_id", "source"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -62,6 +63,11 @@ class GameEvent(Base):
     player2_number: Mapped[int | None] = mapped_column(Integer)
     player2_name: Mapped[str | None] = mapped_column(String(255))
     player2_team_name: Mapped[str | None] = mapped_column(String(255))
+
+    # Source: "sota" (from sync) or "manual" (created via admin panel)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="sota", server_default=text("'sota'")
+    )
 
     # Assist info (only for goal events)
     assist_player_id: Mapped[int | None] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"))

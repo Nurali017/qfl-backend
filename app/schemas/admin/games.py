@@ -118,6 +118,7 @@ class AdminEventItem(BaseModel):
     player2_name: Optional[str] = None
     assist_player_id: Optional[int] = None
     assist_player_name: Optional[str] = None
+    source: str = "sota"
 
 
 class AdminEventAddRequest(BaseModel):
