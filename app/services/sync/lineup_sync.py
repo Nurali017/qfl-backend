@@ -470,12 +470,14 @@ class LineupSyncService(BaseSyncService):
         """
         Recalculate field_position for starters using formation slots + top_role hints.
 
+        Only overwrites players that have NO field_position from SOTA.
+        Players with a SOTA-assigned position keep it.
         Only runs when we have a full set of starters (11 = 1 GK + 10 outfield).
         Returns count of updated rows.
         """
         rows = (
             await self.db.execute(
-                select(GameLineup.player_id, GameLineup.amplua, Player.top_role)
+                select(GameLineup.player_id, GameLineup.amplua, Player.top_role, GameLineup.field_position)
                 .join(Player, Player.id == GameLineup.player_id)
                 .where(
                     GameLineup.game_id == game_id,
@@ -491,6 +493,9 @@ class LineupSyncService(BaseSyncService):
         if len(outfield) < 10:
             return 0
 
+        # Track which players already have a SOTA-assigned field_position
+        has_sota_position = {r[0] for r in rows if r[3] is not None}
+
         starters = [
             {"player_id": r[0], "amplua": r[1], "top_role": r[2]}
             for r in rows
@@ -502,6 +507,9 @@ class LineupSyncService(BaseSyncService):
 
         updated = 0
         for assignment in assignments:
+            # Skip players that already have a SOTA-assigned position
+            if assignment["player_id"] in has_sota_position:
+                continue
             res = await self.db.execute(
                 GameLineup.__table__.update()
                 .where(

@@ -159,7 +159,7 @@ async def get_player(
     }
 
 
-@router.get("/{player_id}/stats", response_model=PlayerSeasonStatsResponse)
+@router.get("/{player_id}/stats", response_model=PlayerSeasonStatsResponse | None)
 async def get_player_stats(
     player_id: int,
     season_id: int = Query(default=None),
@@ -187,10 +187,7 @@ async def get_player_stats(
     stats = result.scalar_one_or_none()
 
     if not stats:
-        raise HTTPException(
-            status_code=404,
-            detail="Stats not found. Run /sync/player-season-stats first.",
-        )
+        return None
 
     payload = PlayerSeasonStatsResponse.model_validate(stats).model_dump()
     return sanitize_non_finite_numbers(payload)
@@ -290,7 +287,7 @@ async def get_player_teammates(
             PlayerTeam.season_id == season_id,
         )
     )
-    player_team = player_team_result.scalar_one_or_none()
+    player_team = player_team_result.scalars().first()
 
     if not player_team:
         return PlayerTeammatesListResponse(items=[], total=0)

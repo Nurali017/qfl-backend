@@ -399,6 +399,7 @@ async def list_events(game_id: int, db: AsyncSession = Depends(get_db)):
             player2_name=ev.player2_name,
             assist_player_id=ev.assist_player_id,
             assist_player_name=ev.assist_player_name,
+            source=ev.source,
         )
         for ev in events
     ]
@@ -423,6 +424,7 @@ async def add_event(game_id: int, body: AdminEventAddRequest, db: AsyncSession =
         player2_name=body.player2_name,
         assist_player_id=body.assist_player_id,
         assist_player_name=body.assist_player_name,
+        source="manual",
     )
     db.add(ev)
     await db.commit()
@@ -441,6 +443,7 @@ async def add_event(game_id: int, body: AdminEventAddRequest, db: AsyncSession =
         player2_name=ev.player2_name,
         assist_player_id=ev.assist_player_id,
         assist_player_name=ev.assist_player_name,
+        source=ev.source,
     )
 
 
@@ -488,6 +491,7 @@ async def update_event(game_id: int, event_id: int, body: AdminEventUpdateReques
         player2_name=ev.player2_name,
         assist_player_id=ev.assist_player_id,
         assist_player_name=ev.assist_player_name,
+        source=ev.source,
     )
 
 
