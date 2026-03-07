@@ -26,15 +26,12 @@ from app.schemas.stats import (
     ResultsGridResponse,
     TeamResultsGridEntry,
 )
-from fastapi_cache.decorator import cache
-
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
 _ensure_visible_season = ensure_visible_season_or_404
 
 
 @router.get("/{season_id}/table")
-@cache(expire=7200)
 async def get_season_table(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
@@ -83,25 +80,47 @@ async def get_season_table(
     )
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
+    live_games_result = await db.execute(
+        select(Game.home_team_id, Game.away_team_id).where(
+            Game.season_id == season_id,
+            Game.status == GameStatus.live,
+        )
+    )
+    live_games = live_games_result.all()
+    live_team_ids = list({tid for row in live_games for tid in (row.home_team_id, row.away_team_id) if tid})
+    live_count = len(live_games)
+
     if has_filters:
         table_data = await calculate_dynamic_table(
             db, season_id, tour_from, tour_to, home_away, lang,
             group_team_ids=group_team_ids,
             final_stage_ids=final_stage_ids_list,
+            include_live=bool(live_count),
         )
-        # Fallback: if dynamic calculation returned nothing (e.g. no games played yet),
-        # fall back to score_table
-        if not table_data:
+        # Merge with base table so teams without matches in the filter still appear
+        if table_data:
+            base_table = await read_score_table(db, season_id, group_team_ids, lang)
+            if base_table and len(table_data) < len(base_table):
+                dynamic_ids = {e["team_id"] for e in table_data}
+                for entry in base_table:
+                    if entry["team_id"] not in dynamic_ids:
+                        table_data.append({
+                            **entry,
+                            "games_played": 0, "wins": 0, "draws": 0,
+                            "losses": 0, "goals_scored": 0, "goals_conceded": 0,
+                            "goal_difference": 0, "points": 0, "form": None,
+                        })
+                table_data.sort(key=lambda e: (
+                    -e["points"], -(e["goals_scored"] - e["goals_conceded"]),
+                    -e.get("wins", 0), -e["goals_scored"],
+                ))
+                for i, entry in enumerate(table_data, 1):
+                    entry["position"] = i
+        else:
+            # Fallback: if dynamic calculation returned nothing, fall back to score_table
             table_data = await read_score_table(db, season_id, group_team_ids, lang)
     else:
-        # Check if there are live games in this season — if so, use dynamic
-        # calculation that includes live scores instead of pre-calculated table.
-        live_count = await db.scalar(
-            select(func.count()).select_from(Game).where(
-                Game.season_id == season_id,
-                Game.status == GameStatus.live,
-            )
-        )
+        # If there are live games, use dynamic calculation that includes live scores
         if live_count:
             table_data = await calculate_dynamic_table(
                 db, season_id, None, None, None, lang,
@@ -128,6 +147,12 @@ async def get_season_table(
                 table_data = await read_score_table(db, season_id, group_team_ids, lang)
         else:
             table_data = await read_score_table(db, season_id, group_team_ids, lang)
+            # Fallback: if score_table not populated yet, calculate from finished games
+            if not table_data:
+                table_data = await calculate_dynamic_table(
+                    db, season_id, None, None, None, lang,
+                    group_team_ids=group_team_ids,
+                )
 
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)
@@ -174,11 +199,10 @@ async def get_season_table(
             )
         )
 
-    return ScoreTableResponse(season_id=season_id, filters=filters, table=table)
+    return ScoreTableResponse(season_id=season_id, filters=filters, table=table, has_live=bool(live_count), live_team_ids=live_team_ids)
 
 
 @router.get("/{season_id}/results-grid", response_model=ResultsGridResponse)
-@cache(expire=7200)
 async def get_results_grid(
     season_id: int,
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
@@ -227,8 +251,7 @@ async def get_results_grid(
         select(Game)
         .where(
             Game.season_id == season_id,
-            Game.home_score.isnot(None),
-            Game.away_score.isnot(None),
+            Game.status.in_([GameStatus.finished, GameStatus.technical_defeat]),
             Game.tour.isnot(None),
         )
     )
@@ -247,8 +270,20 @@ async def get_results_grid(
     if not score_entries and not games:
         return ResultsGridResponse(season_id=season_id, total_tours=0, teams=[])
 
-    # Find max tour
-    max_tour = max((g.tour for g in games), default=0)
+    # Find max tour from ALL matches (including upcoming) so the tour slider
+    # shows the full season, not just played tours.
+    season = await db.get(Season, season_id)
+    all_tours_max = await db.scalar(
+        select(func.max(Game.tour)).where(
+            Game.season_id == season_id,
+            Game.tour.isnot(None),
+        )
+    )
+    max_tour = (
+        (season.total_rounds if season and season.total_rounds else None)
+        or all_tours_max
+        or max((g.tour for g in games), default=0)
+    )
 
     score_by_team_id: dict[int, ScoreTable] = {
         entry.team_id: entry for entry in score_entries
@@ -333,7 +368,6 @@ async def get_results_grid(
 
 
 @router.get("/{season_id}/league-performance")
-@cache(expire=7200)
 async def get_league_performance(
     season_id: int,
     team_ids: str | None = Query(default=None, description="Comma-separated team IDs to filter"),
@@ -356,8 +390,7 @@ async def get_league_performance(
         select(Game)
         .where(
             Game.season_id == season_id,
-            Game.home_score.isnot(None),
-            Game.away_score.isnot(None),
+            Game.status.in_([GameStatus.finished, GameStatus.technical_defeat, GameStatus.live]),
             Game.tour.isnot(None),
         )
         .options(selectinload(Game.home_team), selectinload(Game.away_team))
@@ -399,8 +432,12 @@ async def get_league_performance(
 
     for tour in range(1, max_tour + 1):
         for game in games_by_tour.get(tour, []):
+            # Skip live games without scores yet
+            if game.home_score is None and game.away_score is None:
+                continue
             h_id, a_id = game.home_team_id, game.away_team_id
-            h_score, a_score = game.home_score, game.away_score
+            h_score = game.home_score if game.home_score is not None else 0
+            a_score = game.away_score if game.away_score is not None else 0
 
             cumulative[h_id]["gs"] += h_score
             cumulative[h_id]["gd"] += h_score - a_score
