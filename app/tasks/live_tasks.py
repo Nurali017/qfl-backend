@@ -19,9 +19,18 @@ logger = logging.getLogger(__name__)
 
 async def _check_upcoming_games():
     """Check for games starting within 30 minutes and sync their lineups."""
+    from app.utils.live_flag import set_live_flag
+
     async with AsyncSessionLocal() as db:
         client = get_sota_client()
         service = LiveSyncService(db, client)
+
+        # Ensure Redis flag is set if there are live games in DB
+        # (covers cases where status was set to 'live' outside start_live_tracking)
+        active_games = await service.get_active_games()
+        if active_games:
+            await set_live_flag()
+            logger.info(f"Live flag set for {len(active_games)} active game(s)")
 
         upcoming_games = await service.get_upcoming_games(minutes_ahead=30)
 
