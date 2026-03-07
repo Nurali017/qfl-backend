@@ -76,51 +76,61 @@ class SyncOrchestrator:
         logger.info(f"Reference sync complete: {results}")
         return results
 
-    async def sync_players(self, season_id: int) -> int:
+    async def sync_players(self, season_id: int, force: bool = False) -> int:
         """
         Sync players for a season.
 
         Args:
             season_id: Season ID to sync players for
+            force: If True, bypass sync_enabled check
 
         Returns:
             Number of players synced
         """
-        if not await self.is_sync_enabled(season_id):
+        if not force and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping players sync")
             return 0
         logger.info(f"Syncing players for season {season_id}")
         return await self.player.sync_players(season_id)
 
-    async def sync_player_stats(self, season_id: int) -> int:
+    async def sync_player_stats(self, season_id: int, force: bool = False) -> int:
         """
         Sync player season statistics.
 
         Args:
             season_id: Season ID to sync stats for
+            force: If True, bypass sync_enabled check
 
         Returns:
             Number of player stats synced
         """
-        if not await self.is_sync_enabled(season_id):
+        if not force and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping player stats sync")
             return 0
         logger.info(f"Syncing player stats for season {season_id}")
         return await self.player.sync_player_season_stats(season_id)
 
+    async def sync_best_players(self, season_id: int, force: bool = False) -> int:
+        """Sync goals + assists from best_players endpoint (lightweight, 2 API calls)."""
+        if not force and not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping best_players sync")
+            return 0
+        return await self.player.sync_best_players(season_id)
+
     # ==================== Game sync methods ====================
 
-    async def sync_games(self, season_id: int) -> int:
+    async def sync_games(self, season_id: int, force: bool = False) -> int:
         """
         Sync games for a season.
 
         Args:
             season_id: Season ID to sync games for
+            force: If True, bypass sync_enabled check
 
         Returns:
             Number of games synced
         """
-        if not await self.is_sync_enabled(season_id):
+        if not force and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping games sync")
             return 0
         logger.info(f"Syncing games for season {season_id}")
@@ -150,17 +160,18 @@ class SyncOrchestrator:
         """
         return await self.game.sync_game_events(game_id)
 
-    async def sync_all_game_events(self, season_id: int | None = None) -> dict:
+    async def sync_all_game_events(self, season_id: int | None = None, force: bool = False) -> dict:
         """
         Sync events for all games in a season.
 
         Args:
             season_id: Season ID (uses default if None)
+            force: If True, bypass sync_enabled check
 
         Returns:
             Dict with sync results
         """
-        if season_id is not None and not await self.is_sync_enabled(season_id):
+        if not force and season_id is not None and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping all game events sync")
             return {"skipped": True, "reason": "sync disabled for season"}
         return await self.game.sync_all_game_events(season_id)
@@ -213,33 +224,35 @@ class SyncOrchestrator:
 
     # ==================== Stats sync methods ====================
 
-    async def sync_score_table(self, season_id: int) -> int:
+    async def sync_score_table(self, season_id: int, force: bool = False) -> int:
         """
         Sync league table for a season.
 
         Args:
             season_id: Season ID to sync
+            force: If True, bypass sync_enabled check
 
         Returns:
             Number of entries synced
         """
-        if not await self.is_sync_enabled(season_id):
+        if not force and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping score table sync")
             return 0
         logger.info(f"Syncing score table for season {season_id}")
         return await self.stats.sync_score_table(season_id)
 
-    async def sync_team_season_stats(self, season_id: int) -> int:
+    async def sync_team_season_stats(self, season_id: int, force: bool = False) -> int:
         """
         Sync team season statistics.
 
         Args:
             season_id: Season ID to sync
+            force: If True, bypass sync_enabled check
 
         Returns:
             Number of team stats synced
         """
-        if not await self.is_sync_enabled(season_id):
+        if not force and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping team season stats sync")
             return 0
         logger.info(f"Syncing team season stats for season {season_id}")
@@ -247,7 +260,7 @@ class SyncOrchestrator:
 
     # ==================== Full sync operations ====================
 
-    async def full_sync(self, season_id: int) -> dict[str, Any]:
+    async def full_sync(self, season_id: int, force: bool = False) -> dict[str, Any]:
         """
         Perform full synchronization for a season.
 
@@ -261,11 +274,12 @@ class SyncOrchestrator:
 
         Args:
             season_id: Season ID to sync
+            force: If True, bypass sync_enabled check
 
         Returns:
             Dict with sync results for each operation
         """
-        if not await self.is_sync_enabled(season_id):
+        if not force and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping full sync")
             return {"skipped": True, "reason": "sync disabled for season"}
 
@@ -277,19 +291,19 @@ class SyncOrchestrator:
         results.update(ref_results)
 
         # 2. Players
-        results["players"] = await self.sync_players(season_id)
+        results["players"] = await self.sync_players(season_id, force=force)
 
         # 3. Games
-        results["games"] = await self.sync_games(season_id)
+        results["games"] = await self.sync_games(season_id, force=force)
 
         # 4. Score table
-        results["score_table"] = await self.sync_score_table(season_id)
+        results["score_table"] = await self.sync_score_table(season_id, force=force)
 
         # 5. Team season stats
-        results["team_season_stats"] = await self.sync_team_season_stats(season_id)
+        results["team_season_stats"] = await self.sync_team_season_stats(season_id, force=force)
 
         # 6. Player season stats
-        results["player_season_stats"] = await self.sync_player_stats(season_id)
+        results["player_season_stats"] = await self.sync_player_stats(season_id, force=force)
 
         logger.info(f"Full sync complete for season {season_id}: {results}")
         return results

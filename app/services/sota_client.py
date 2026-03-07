@@ -188,6 +188,21 @@ class SotaClient:
         )
         return response.json()
 
+    async def get_best_players(
+        self, season_id: int, metric: str, max_players: int = 100,
+        language: str = "ru",
+    ) -> list[dict]:
+        """Get top players by metric (e.g. 'goal', 'goal_pass') for a season."""
+        await self.ensure_authenticated()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v1/seasons/{season_id}/best_players/",
+            headers=self.get_headers(language),
+            params={"metrics": metric, "max": max_players},
+        )
+        data = response.json()
+        return data.get("data", {}).get("players", [])
+
     async def get_team_season_stats(
         self, team_id: int, season_id: int, language: str = "ru"
     ) -> dict[str, Any]:
