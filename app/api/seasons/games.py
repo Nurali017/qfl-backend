@@ -12,6 +12,7 @@ from app.schemas.team import TeamWithScore
 from app.services.season_visibility import ensure_visible_season_or_404
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -19,6 +20,7 @@ _ensure_visible_season = ensure_visible_season_or_404
 
 
 @router.get("/{season_id}/games")
+@cache(expire=300)
 async def get_season_games(
     season_id: int,
     tour: int | None = None,
@@ -90,6 +92,7 @@ async def get_season_games(
 
 
 @router.get("/{season_id}/stages/{stage_id}/games")
+@cache(expire=300)
 async def get_stage_games(
     season_id: int,
     stage_id: int,

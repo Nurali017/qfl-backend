@@ -10,11 +10,13 @@ from app.models import (
 from app.schemas.team import TeamSeasonStatsResponse
 from app.services.season_visibility import resolve_visible_season_id
 from app.utils.error_messages import get_error_message
+from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 @router.get("/{team_id}/stats", response_model=TeamSeasonStatsResponse)
+@cache(expire=300)
 async def get_team_stats(
     team_id: int,
     season_id: int = Query(default=None),

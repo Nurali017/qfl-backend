@@ -78,6 +78,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET=qfl-files
       - MINIO_SECURE=false
+      - DATABASE_POOL_CLASS=null
     depends_on:
       - db
       - redis
@@ -98,6 +99,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET=qfl-files
       - MINIO_SECURE=false
+      - DATABASE_POOL_CLASS=null
     depends_on:
       - db
       - redis

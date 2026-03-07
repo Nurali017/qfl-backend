@@ -103,6 +103,11 @@ def cleanup_event_loop() -> None:
 
     if _loop is not None and not _loop.is_closed():
         try:
+            # Dispose SQLAlchemy engine to release all DB connections
+            from app.database import engine
+            _loop.run_until_complete(engine.dispose())
+            logger.info("SQLAlchemy engine disposed")
+
             # Cancel all pending tasks
             pending = asyncio.all_tasks(_loop)
             for task in pending:

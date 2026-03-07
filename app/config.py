@@ -5,6 +5,9 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/qfl_db"
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
+    database_pool_class: str = ""  # "" = QueuePool (default), "null" = NullPool
 
     # MinIO (S3-compatible object storage)
     minio_endpoint: str = "localhost:9000"

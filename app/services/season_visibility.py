@@ -1,9 +1,39 @@
+import time
+
 from fastapi import HTTPException
 from sqlalchemy import exists, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Season
+
+# ── In-memory cache for visible season IDs (60s TTL) ──
+_visible_ids: set[int] | None = None
+_current_id: int | None = None
+_expires_at: float = 0
+_CACHE_TTL = 60
+
+
+def _is_cache_valid() -> bool:
+    return _visible_ids is not None and time.monotonic() < _expires_at
+
+
+async def _load_season_cache(db: AsyncSession) -> None:
+    global _visible_ids, _current_id, _expires_at
+    result = await db.execute(
+        select(Season.id, Season.is_current).where(Season.is_visible.is_(True))
+    )
+    rows = result.all()
+    _visible_ids = {row.id for row in rows}
+    _current_id = next((row.id for row in rows if row.is_current), None)
+    _expires_at = time.monotonic() + _CACHE_TTL
+
+
+def invalidate_season_cache() -> None:
+    global _visible_ids, _current_id, _expires_at
+    _visible_ids = None
+    _current_id = None
+    _expires_at = 0
 
 
 def is_season_visible_clause() -> ColumnElement[bool]:
@@ -28,14 +58,11 @@ def season_unscoped_or_visible_clause(season_id_column: ColumnElement[int | None
 
 async def ensure_visible_season_or_404(db: AsyncSession, season_id: int) -> None:
     """Raise a generic 404 for hidden or missing seasons."""
-    result = await db.execute(
-        select(Season.id).where(
-            Season.id == season_id,
-            is_season_visible_clause(),
-        )
-    )
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Season not found")
+    if not _is_cache_valid():
+        await _load_season_cache(db)
+    if season_id in _visible_ids:  # type: ignore[operator]
+        return
+    raise HTTPException(status_code=404, detail="Season not found")
 
 
 async def get_current_season_id(db: AsyncSession) -> int:
@@ -44,11 +71,11 @@ async def get_current_season_id(db: AsyncSession) -> int:
     This allows admins to switch the current season dynamically without restart.
     """
     from app.config import get_settings
-    result = await db.execute(
-        select(Season.id).where(Season.is_current == True, is_season_visible_clause()).limit(1)
-    )
-    db_current = result.scalar_one_or_none()
-    return db_current if db_current is not None else get_settings().current_season_id
+    if not _is_cache_valid():
+        await _load_season_cache(db)
+    if _current_id is not None:
+        return _current_id
+    return get_settings().current_season_id
 
 
 async def resolve_visible_season_id(db: AsyncSession, season_id: int | None) -> int:

@@ -14,6 +14,7 @@ from app.services.cup_rounds import build_playoff_bracket_from_rounds, build_sch
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from fastapi_cache.decorator import cache
 from app.schemas.season import SeasonListResponse, SeasonResponse, SeasonSyncUpdate
 from app.schemas.stage import StageResponse, StageListResponse
 from app.schemas.playoff_bracket import PlayoffBracketResponse
@@ -96,6 +97,7 @@ def _get_goal_period_index(half: int | None, minute: int | None) -> int:
 
 
 @router.get("", response_model=SeasonListResponse)
+@cache(expire=3600)
 async def get_seasons(db: AsyncSession = Depends(get_db)):
     """Get all seasons."""
     result = await db.execute(
@@ -140,6 +142,7 @@ async def update_season_sync(
 
 
 @router.get("/{season_id}", response_model=SeasonResponse)
+@cache(expire=3600)
 async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
     """Get season by ID."""
     result = await db.execute(
@@ -164,6 +167,7 @@ async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{season_id}/stages", response_model=StageListResponse)
+@cache(expire=3600)
 async def get_season_stages(
     season_id: int,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
@@ -194,6 +198,7 @@ async def get_season_stages(
 
 
 @router.get("/{season_id}/bracket", response_model=PlayoffBracketResponse)
+@cache(expire=300)
 async def get_season_bracket(
     season_id: int,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
@@ -232,6 +237,7 @@ async def get_season_bracket(
 
 
 @router.get("/{season_id}/teams", response_model=SeasonParticipantListResponse)
+@cache(expire=3600)
 async def get_season_teams(
     season_id: int,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
@@ -260,6 +266,7 @@ async def get_season_teams(
 
 
 @router.get("/{season_id}/groups", response_model=SeasonGroupsResponse)
+@cache(expire=3600)
 async def get_season_groups(
     season_id: int,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
