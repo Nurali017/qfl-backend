@@ -369,7 +369,10 @@ async def get_team_overview(
         .options(selectinload(PlayerTeam.player).selectinload(Player.country))
     )
     staff_contracts = staff_result.scalars().all()
-    staff_contracts.sort(key=lambda ct: ct.role or 99)
+    staff_contracts.sort(key=lambda ct: (
+        ct.role or 99,
+        0 if (ct.position_kz or ct.position_ru or "").strip() in ("Бас бапкер", "Главный тренер") else 1,
+    ))
 
     staff_preview = []
     for ct in staff_contracts[:4]:

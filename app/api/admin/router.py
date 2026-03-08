@@ -23,6 +23,7 @@ from app.api.admin.referees import router as referees_router
 from app.api.admin.broadcasters import router as broadcasters_router
 from app.api.admin.stadiums import router as stadiums_router
 from app.api.admin.teams import router as teams_router
+from app.api.admin.media_videos import router as media_videos_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(auth_router)
@@ -48,3 +49,4 @@ router.include_router(games_router)
 router.include_router(broadcasters_router)
 router.include_router(stadiums_router)
 router.include_router(teams_router)
+router.include_router(media_videos_router)

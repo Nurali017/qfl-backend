@@ -138,8 +138,11 @@ async def get_game_lineup(
             )
         )
         contracts = contracts_result.scalars().all()
-        # Sort by role integer (2=head coach first, then 3, 4, etc.)
-        contracts.sort(key=lambda c: c.role or 99)
+        # Sort by role integer; head coach first within same role group
+        contracts.sort(key=lambda c: (
+            c.role or 99,
+            0 if (c.position_kz or c.position_ru or "").strip() in ("Бас бапкер", "Главный тренер") else 1,
+        ))
 
         coaches_list = []
         for contract in contracts:

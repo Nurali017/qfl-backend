@@ -362,9 +362,15 @@ async def get_team_coaches(
             "country": country_data,
         })
 
-    # Sort by role integer: 2=Coach, 3=Staff, 4=Admin
-    role_sort = {c.player.id: c.role or 99 for c in contracts}
-    items.sort(key=lambda x: role_sort.get(x["id"], 99))
+    # Sort by role integer: 2=Coach, 3=Staff, 4=Admin; head coach first within group
+    def _coach_priority(ct):
+        role = ct.role or 99
+        pos = (ct.position_kz or ct.position_ru or "").strip()
+        is_head = 0 if pos in ("Бас бапкер", "Главный тренер") else 1
+        return (role, is_head)
+
+    sort_key = {c.player.id: _coach_priority(c) for c in contracts}
+    items.sort(key=lambda x: sort_key.get(x["id"], (99, 1)))
 
     return {"items": items, "total": len(items)}
 

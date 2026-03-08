@@ -65,6 +65,30 @@ class LiveSyncService:
         )
         return list(result.scalars().all())
 
+    async def get_games_to_start(self) -> list[Game]:
+        """Get games whose scheduled start time has passed (within last 30 min)."""
+        now = datetime.now()
+        today = now.date()
+        current_time = now.time()
+        # Only auto-start games whose time passed within the last 30 minutes
+        earliest_time = (now - timedelta(minutes=30)).time()
+
+        result = await self.db.execute(
+            select(Game).where(
+                and_(
+                    Game.date == today,
+                    Game.time.isnot(None),
+                    Game.time <= current_time,
+                    Game.time >= earliest_time,
+                    Game.status == GameStatus.created,
+                    Game.sota_id.isnot(None),
+                    Game.sync_disabled == False,
+                    Game.is_schedule_tentative == False,
+                )
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_active_games(self) -> list[Game]:
         """Get games that are currently live."""
         result = await self.db.execute(
@@ -75,7 +99,7 @@ class LiveSyncService:
     async def get_games_to_end(self) -> list[Game]:
         """Get live games that should have ended (started > 2 hours ago)."""
         now = datetime.now()
-        cutoff = now - timedelta(hours=2)
+        cutoff = now - timedelta(hours=2, minutes=15)
 
         # Combine date + time into a timestamp for proper comparison.
         # COALESCE(time, '00:00:00') handles nullable time field.
