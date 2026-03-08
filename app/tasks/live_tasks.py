@@ -25,110 +25,128 @@ async def _sync_live_game_events():
         return {"active_games": 0, "total_new_events": 0, "results": [], "skipped": True}
 
     async with AsyncSessionLocal() as db:
-        client = get_sota_client()
-        service = LiveSyncService(db, client)
+        try:
+            client = get_sota_client()
+            service = LiveSyncService(db, client)
 
-        active_games = await service.get_active_games()
+            active_games = await service.get_active_games()
 
-        if not active_games:
-            await clear_live_flag()
-            return {"active_games": 0, "total_new_events": 0, "results": []}
+            if not active_games:
+                await clear_live_flag()
+                await db.commit()
+                return {"active_games": 0, "total_new_events": 0, "results": []}
 
-        # Refresh flag TTL while games are live
-        await set_live_flag()
+            # Refresh flag TTL while games are live
+            await set_live_flag()
 
-        results = []
-        total_new_events = 0
+            results = []
+            total_new_events = 0
 
-        for game in active_games:
-            try:
-                sync_result = await service.sync_live_events(game.id)
-                events_added = sync_result.get("added", 0)
-                total_new_events += events_added
-
-                # Also sync live lineup (starters/substitutes from live feed)
+            for game in active_games:
                 try:
-                    await service.sync_live_lineup(game.id)
-                except Exception as lineup_err:
-                    logger.warning(f"Failed to sync lineup for game {game.id}: {lineup_err}")
+                    sync_result = await service.sync_live_events(game.id)
+                    events_added = sync_result.get("added", 0)
+                    total_new_events += events_added
 
-                # Also sync live stats (score, shots, possession, etc.)
-                try:
-                    await service.sync_live_stats(game.id)
-                except Exception as stats_err:
-                    logger.warning(f"Failed to sync stats for game {game.id}: {stats_err}")
+                    # Also sync live lineup (starters/substitutes from live feed)
+                    try:
+                        await service.sync_live_lineup(game.id)
+                    except Exception as lineup_err:
+                        logger.warning(f"Failed to sync lineup for game {game.id}: {lineup_err}")
 
-                # Sync per-player stats (shots, cards, etc. per player)
-                try:
-                    await service.sync_live_player_stats(game.id)
-                except Exception as ps_err:
-                    logger.warning(f"Failed to sync player stats for game {game.id}: {ps_err}")
+                    # Also sync live stats (score, shots, possession, etc.)
+                    try:
+                        await service.sync_live_stats(game.id)
+                    except Exception as stats_err:
+                        logger.warning(f"Failed to sync stats for game {game.id}: {stats_err}")
 
-                results.append({
-                    "game_id": game.id,
-                    "new_events": events_added,
-                    "updated_events": sync_result.get("updated", 0),
-                    "deleted_events": sync_result.get("deleted", 0),
-                })
+                    # Sync per-player stats (shots, cards, etc. per player)
+                    try:
+                        await service.sync_live_player_stats(game.id)
+                    except Exception as ps_err:
+                        logger.warning(f"Failed to sync player stats for game {game.id}: {ps_err}")
 
-                if events_added:
-                    logger.info(f"Synced {events_added} new events for game {game.id}")
+                    results.append({
+                        "game_id": game.id,
+                        "new_events": events_added,
+                        "updated_events": sync_result.get("updated", 0),
+                        "deleted_events": sync_result.get("deleted", 0),
+                    })
 
-            except Exception as e:
-                logger.error(f"Failed to sync events for game {game.id}: {e}")
-                results.append({"game_id": game.id, "error": str(e)})
+                    if events_added:
+                        logger.info(f"Synced {events_added} new events for game {game.id}")
 
-        return {
-            "active_games": len(active_games),
-            "total_new_events": total_new_events,
-            "results": results,
-        }
+                except Exception as e:
+                    logger.error(f"Failed to sync events for game {game.id}: {e}")
+                    results.append({"game_id": game.id, "error": str(e)})
+
+            await db.commit()
+            return {
+                "active_games": len(active_games),
+                "total_new_events": total_new_events,
+                "results": results,
+            }
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def _auto_start_live_games():
     """Find games whose scheduled time has passed and start live tracking."""
     async with AsyncSessionLocal() as db:
-        client = get_sota_client()
-        service = LiveSyncService(db, client)
+        try:
+            client = get_sota_client()
+            service = LiveSyncService(db, client)
 
-        games = await service.get_games_to_start()
-        if not games:
-            return {"started": 0, "results": []}
+            games = await service.get_games_to_start()
+            if not games:
+                await db.commit()
+                return {"started": 0, "results": []}
 
-        results = []
-        for game in games:
-            try:
-                result = await service.start_live_tracking(game.id)
-                results.append(result)
-                logger.info(f"Auto-started live tracking for game {game.id}")
-            except Exception as e:
-                logger.error(f"Failed to auto-start game {game.id}: {e}")
-                results.append({"game_id": game.id, "error": str(e)})
+            results = []
+            for game in games:
+                try:
+                    result = await service.start_live_tracking(game.id)
+                    results.append(result)
+                    logger.info(f"Auto-started live tracking for game {game.id}")
+                except Exception as e:
+                    logger.error(f"Failed to auto-start game {game.id}: {e}")
+                    results.append({"game_id": game.id, "error": str(e)})
 
-        return {
-            "started": len([r for r in results if r.get("is_live")]),
-            "results": results,
-        }
+            await db.commit()
+            return {
+                "started": len([r for r in results if r.get("is_live")]),
+                "results": results,
+            }
+        except Exception:
+            await db.rollback()
+            raise
 
 
 async def _auto_end_finished_games():
     """End games that have been live for over 2h15m."""
     async with AsyncSessionLocal() as db:
-        client = get_sota_client()
-        service = LiveSyncService(db, client)
-        games = await service.get_games_to_end()
-        if not games:
-            return {"ended": 0, "results": []}
-        results = []
-        for game in games:
-            try:
-                await service.stop_live_tracking(game.id)
-                results.append({"game_id": game.id, "status": "ended"})
-                logger.info(f"Auto-ended game {game.id}")
-            except Exception as e:
-                logger.error(f"Failed to auto-end game {game.id}: {e}")
-                results.append({"game_id": game.id, "error": str(e)})
-        return {"ended": len([r for r in results if "status" in r]), "results": results}
+        try:
+            client = get_sota_client()
+            service = LiveSyncService(db, client)
+            games = await service.get_games_to_end()
+            if not games:
+                await db.commit()
+                return {"ended": 0, "results": []}
+            results = []
+            for game in games:
+                try:
+                    await service.stop_live_tracking(game.id)
+                    results.append({"game_id": game.id, "status": "ended"})
+                    logger.info(f"Auto-ended game {game.id}")
+                except Exception as e:
+                    logger.error(f"Failed to auto-end game {game.id}: {e}")
+                    results.append({"game_id": game.id, "error": str(e)})
+            await db.commit()
+            return {"ended": len([r for r in results if "status" in r]), "results": results}
+        except Exception:
+            await db.rollback()
+            raise
 
 
 # ==================== Celery Tasks ====================
