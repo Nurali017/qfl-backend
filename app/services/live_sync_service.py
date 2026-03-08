@@ -959,11 +959,6 @@ class LiveSyncService:
         game.finished_at = utcnow()
         await self.db.commit()
 
-        # Schedule post-match protocol syncs at +2min and +7min
-        from app.tasks.live_tasks import sync_single_game_protocol
-        sync_single_game_protocol.apply_async(args=[game_id], countdown=120)
-        sync_single_game_protocol.apply_async(args=[game_id], countdown=420)
-
         # Clear flag if no other live games remain
         remaining = await self.db.execute(
             select(func.count()).select_from(Game).where(Game.status == GameStatus.live)
