@@ -66,10 +66,11 @@ class LiveSyncService:
         return list(result.scalars().all())
 
     async def get_games_to_start(self) -> list[Game]:
-        """Get games whose scheduled start time has passed (within last 30 min)."""
+        """Get games whose scheduled start time is within 1 min ahead or up to 30 min ago."""
         now = datetime.now()
         today = now.date()
-        current_time = now.time()
+        # Allow starting 1 minute before scheduled time
+        latest_time = (now + timedelta(minutes=1)).time()
         # Only auto-start games whose time passed within the last 30 minutes
         earliest_time = (now - timedelta(minutes=30)).time()
 
@@ -78,7 +79,7 @@ class LiveSyncService:
                 and_(
                     Game.date == today,
                     Game.time.isnot(None),
-                    Game.time <= current_time,
+                    Game.time <= latest_time,
                     Game.time >= earliest_time,
                     Game.status == GameStatus.created,
                     Game.sota_id.isnot(None),
