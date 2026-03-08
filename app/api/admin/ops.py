@@ -69,60 +69,6 @@ async def sync_games(
         return SyncResponse(status=SyncStatus.FAILED, message=f"Games sync failed: {exc}")
 
 
-@router.post("/sync/teams", response_model=SyncResponse)
-async def sync_teams(
-    db: AsyncSession = Depends(get_db),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
-):
-    try:
-        count = await SyncOrchestrator(db).reference.sync_teams()
-        return SyncResponse(status=SyncStatus.SUCCESS, message="Teams sync completed", details={"teams_synced": count})
-    except Exception as exc:
-        return SyncResponse(status=SyncStatus.FAILED, message=f"Teams sync failed: {exc}")
-
-
-@router.post("/sync/team-logos", response_model=SyncResponse)
-async def sync_team_logos(
-    db: AsyncSession = Depends(get_db),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
-):
-    try:
-        count = await SyncOrchestrator(db).reference.sync_team_logos()
-        return SyncResponse(status=SyncStatus.SUCCESS, message="Team logos sync completed", details={"teams_updated": count})
-    except Exception as exc:
-        return SyncResponse(status=SyncStatus.FAILED, message=f"Team logos sync failed: {exc}")
-
-
-@router.post("/sync/players", response_model=SyncResponse)
-async def sync_players(
-    season_id: int = Query(default=None),
-    force: bool = Query(default=False),
-    db: AsyncSession = Depends(get_db),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
-):
-    season_id = season_id or await get_current_season_id(db)
-    try:
-        count = await SyncOrchestrator(db).sync_players(season_id, force=force)
-        return SyncResponse(status=SyncStatus.SUCCESS, message="Players sync completed", details={"players_synced": count})
-    except Exception as exc:
-        return SyncResponse(status=SyncStatus.FAILED, message=f"Players sync failed: {exc}")
-
-
-@router.post("/sync/score-table", response_model=SyncResponse)
-async def sync_score_table(
-    season_id: int = Query(default=None),
-    force: bool = Query(default=False),
-    db: AsyncSession = Depends(get_db),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
-):
-    season_id = season_id or await get_current_season_id(db)
-    try:
-        count = await SyncOrchestrator(db).sync_score_table(season_id, force=force)
-        return SyncResponse(status=SyncStatus.SUCCESS, message="Score table sync completed", details={"rows_synced": count})
-    except Exception as exc:
-        return SyncResponse(status=SyncStatus.FAILED, message=f"Score table sync failed: {exc}")
-
-
 @router.post("/sync/team-season-stats", response_model=SyncResponse)
 async def sync_team_season_stats(
     season_id: int = Query(default=None),

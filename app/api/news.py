@@ -48,6 +48,35 @@ def _article_type_from_query(value: str | None) -> ArticleType | None:
     raise HTTPException(status_code=400, detail="article_type must be news or analytics")
 
 
+async def _resolve_news_by_id_and_lang(
+    db: AsyncSession, news_id: int, lang_enum: Language
+) -> "News | None":
+    """Resolve a news article by ID and language, falling back via translation_group_id."""
+    # Fast path: direct lookup
+    result = await db.execute(
+        select(News).where(News.id == news_id, News.language == lang_enum)
+    )
+    news = result.scalar_one_or_none()
+    if news:
+        return news
+
+    # Fallback: find translation_group_id from any language, then find the requested language
+    group_result = await db.execute(
+        select(News.translation_group_id).where(News.id == news_id).limit(1)
+    )
+    group_id = group_result.scalar_one_or_none()
+    if not group_id:
+        return None
+
+    result = await db.execute(
+        select(News).where(
+            News.translation_group_id == group_id,
+            News.language == lang_enum,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 def _news_order_by(sort: str):
     if sort == "date_asc":
         return [asc(News.publish_date), asc(News.id)]
@@ -203,13 +232,12 @@ async def get_news_navigation(
     """Get previous and next news articles for navigation."""
     lang_enum = _resolve_language(lang)
 
-    # Get current article
-    current = (await db.execute(
-        select(News.publish_date, News.id).where(News.id == news_id, News.language == lang_enum)
-    )).first()
-
-    if not current:
+    # Resolve current article with language fallback
+    resolved = await _resolve_news_by_id_and_lang(db, news_id, lang_enum)
+    if not resolved:
         raise HTTPException(status_code=404, detail=get_error_message("news_not_found", lang))
+
+    current = resolved
 
     previous = None
     next_item = None
@@ -344,15 +372,12 @@ async def get_news_item(
 ):
     """Get single news article by ID with images from MinIO."""
     lang_enum = _resolve_language(lang)
-    result = await db.execute(
-        select(News).where(News.id == news_id, News.language == lang_enum)
-    )
-    news = result.scalar_one_or_none()
+    news = await _resolve_news_by_id_and_lang(db, news_id, lang_enum)
     if not news:
         raise HTTPException(status_code=404, detail=get_error_message("news_not_found", lang))
 
     # Get images from MinIO
-    images = await FileStorageService.get_files_by_news_id(str(news_id))
+    images = await FileStorageService.get_files_by_news_id(str(news.id))
 
     response = NewsResponse.model_validate(news).model_dump()
     response["image_url"] = normalize_news_media_url(

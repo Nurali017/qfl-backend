@@ -1,11 +1,11 @@
 """
 Player sync service.
 
-Handles synchronization of players and player season statistics from SOTA API.
+Handles synchronization of player season statistics from SOTA API.
+Player profiles (top_role) are managed locally — no longer synced from SOTA.
 """
 import logging
 from datetime import datetime
-from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -18,60 +18,12 @@ logger = logging.getLogger(__name__)
 
 class PlayerSyncService(BaseSyncService):
     """
-    Service for syncing player data and statistics.
+    Service for syncing player statistics.
 
     Handles:
-    - Player profiles (top_role only; other profile fields are managed locally)
-    - Player-team associations
+    - Best players (goals/assists from lightweight endpoint)
     - Player season statistics (50+ metrics from v2 API)
     """
-
-    async def sync_players(self, season_id: int) -> int:
-        """
-        Sync players for a specific season with all 3 languages.
-
-        Args:
-            season_id: Season ID to sync players for
-
-        Returns:
-            Number of players synced
-        """
-        # Resolve SOTA season ID for API calls
-        sota_season_id = await self.get_sota_season_id(season_id)
-
-        # Fetch Russian data only; top_role is the only player profile field we sync from SOTA.
-        players_ru = await self.client.get_players(sota_season_id, language="ru")
-
-        count = 0
-        for p in players_ru:
-            try:
-                sota_id = UUID(p["id"])
-            except (ValueError, TypeError):
-                logger.warning("Skipping player with invalid SOTA id: %s", p.get("id"))
-                continue
-
-            stmt = insert(Player).values(
-                sota_id=sota_id,
-                top_role=p.get("top_role"),  # Russian as default
-                updated_at=datetime.utcnow(),
-            )
-
-            update_dict = {
-                "top_role": stmt.excluded.top_role,
-                "updated_at": stmt.excluded.updated_at,
-            }
-
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["sota_id"],
-                set_=update_dict,
-            )
-            await self.db.execute(stmt)
-            # player_teams (squad composition) is managed locally — not synced from SOTA
-            count += 1
-
-        await self.db.commit()
-        logger.info(f"Synced {count} players for season {season_id}")
-        return count
 
     async def sync_best_players(self, season_id: int) -> int:
         """

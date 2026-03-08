@@ -1,8 +1,8 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import delete, desc, or_, select
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy import delete, desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
@@ -71,10 +71,11 @@ async def _next_news_id(db: AsyncSession) -> int:
     return (current or 0) + 1
 
 
-def _apply_payload(
+async def _apply_payload(
     item: News,
     payload: AdminNewsTranslationPayload | AdminNewsTranslationPatchPayload,
     admin_id: int,
+    db: AsyncSession,
     *,
     partial: bool = False,
 ) -> None:
@@ -91,7 +92,37 @@ def _apply_payload(
     if should_update("is_slider"):
         if payload.is_slider is None:
             raise HTTPException(status_code=400, detail="is_slider cannot be null")
+
+        was_slider = item.is_slider
         item.is_slider = payload.is_slider
+
+        if payload.is_slider and not was_slider:
+            # Transitioning to slider: auto-assign order if not explicitly provided
+            if not should_update("slider_order") or payload.slider_order is None:
+                lang = item.language
+                max_order_result = await db.execute(
+                    select(func.max(News.slider_order)).where(
+                        News.is_slider == True,
+                        News.language == lang,
+                    )
+                )
+                max_order = max_order_result.scalar_one_or_none() or 0
+                item.slider_order = max_order + 1
+        elif not payload.is_slider and was_slider:
+            # Removing from slider: compact remaining orders
+            old_order = item.slider_order
+            item.slider_order = None
+            if old_order is not None:
+                lang = item.language
+                await db.execute(
+                    update(News)
+                    .where(
+                        News.is_slider == True,
+                        News.language == lang,
+                        News.slider_order > old_order,
+                    )
+                    .values(slider_order=News.slider_order - 1)
+                )
 
     if should_update("article_type"):
         parsed_article_type = _article_type_from_str(payload.article_type)
@@ -114,7 +145,9 @@ def _apply_payload(
     if should_update("championship_code"):
         item.championship_code = payload.championship_code
     if should_update("slider_order"):
-        item.slider_order = payload.slider_order
+        # Only set explicit slider_order if is_slider transition didn't already handle it
+        if not should_update("is_slider") or payload.is_slider == item.is_slider:
+            item.slider_order = payload.slider_order
     if should_update("publish_date"):
         item.publish_date = payload.publish_date
     if should_update("source_url"):
@@ -365,8 +398,8 @@ async def create_material(
         created_by_admin_id=current_admin.id,
     )
 
-    _apply_payload(ru_item, payload.ru, current_admin.id)
-    _apply_payload(kz_item, payload.kz, current_admin.id)
+    await _apply_payload(ru_item, payload.ru, current_admin.id, db)
+    await _apply_payload(kz_item, payload.kz, current_admin.id, db)
 
     db.add_all([ru_item, kz_item])
     await db.commit()
@@ -398,13 +431,13 @@ async def update_material(
         ru_item = by_lang.get(Language.RU)
         if not ru_item:
             raise HTTPException(status_code=400, detail="RU translation is missing. Use add translation endpoint")
-        _apply_payload(ru_item, payload.ru, current_admin.id, partial=True)
+        await _apply_payload(ru_item, payload.ru, current_admin.id, db, partial=True)
 
     if payload.kz is not None:
         kz_item = by_lang.get(Language.KZ)
         if not kz_item:
             raise HTTPException(status_code=400, detail="KZ translation is missing. Use add translation endpoint")
-        _apply_payload(kz_item, payload.kz, current_admin.id, partial=True)
+        await _apply_payload(kz_item, payload.kz, current_admin.id, db, partial=True)
 
     await db.commit()
     await invalidate_pattern("*app.api.news*")
@@ -462,7 +495,7 @@ async def create_missing_translation(
         translation_group_id=group_id,
         created_by_admin_id=current_admin.id,
     )
-    _apply_payload(item, payload.data, current_admin.id)
+    await _apply_payload(item, payload.data, current_admin.id, db)
 
     db.add(item)
     await db.commit()
@@ -547,3 +580,38 @@ async def upload_inline_image(
         category="news_content",
     )
     return {"location": result["url"]}
+
+
+@router.put("/slider-order/{lang}")
+async def reorder_slider(
+    lang: str,
+    news_ids: list[int] = Body(..., description="Ordered list of news IDs"),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
+):
+    """Reorder slider items for a given language. The list order becomes the slider_order."""
+    lang_enum = _lang_from_str(lang)
+
+    # Verify all IDs are valid sliders in this language
+    result = await db.execute(
+        select(News).where(
+            News.id.in_(news_ids),
+            News.language == lang_enum,
+            News.is_slider == True,
+        )
+    )
+    sliders = {item.id: item for item in result.scalars().all()}
+
+    missing = [nid for nid in news_ids if nid not in sliders]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"IDs not found or not sliders in {lang}: {missing}",
+        )
+
+    for order, nid in enumerate(news_ids, start=1):
+        sliders[nid].slider_order = order
+
+    await db.commit()
+    await invalidate_pattern("*app.api.news*")
+    return {"ok": True}
