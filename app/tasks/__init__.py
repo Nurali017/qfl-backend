@@ -30,7 +30,7 @@ if settings.sota_enabled:
         },
         "auto-start-live-games": {
             "task": "app.tasks.live_tasks.auto_start_live_games",
-            "schedule": crontab(minute="*/2"),
+            "schedule": crontab(minute="*/1"),
         },
         "sync-live-events": {
             "task": "app.tasks.live_tasks.sync_live_game_events",
