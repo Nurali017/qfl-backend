@@ -1,5 +1,6 @@
 import logging
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -40,7 +41,7 @@ async def _sync_live_stats():
     async with AsyncSessionLocal() as db:
         try:
             orchestrator = SyncOrchestrator(db)
-            three_days_ago = date.today() - timedelta(days=3)
+            three_days_ago = datetime.now(ZoneInfo("Asia/Almaty")).date() - timedelta(days=3)
 
             total_synced = 0
             results_by_season = {}

@@ -46,26 +46,6 @@ class LiveSyncService:
         self.db = db
         self.client = client
 
-    async def get_upcoming_games(self, minutes_ahead: int = 30) -> list[Game]:
-        """Get games that start within the next N minutes."""
-        now = datetime.now()
-        today = now.date()
-        current_time = now.time()
-        cutoff_time = (now + timedelta(minutes=minutes_ahead)).time()
-
-        result = await self.db.execute(
-            select(Game).where(
-                and_(
-                    Game.date == today,
-                    Game.time >= current_time,
-                    Game.time <= cutoff_time,
-                    Game.status == GameStatus.created,
-                    Game.has_lineup == False,
-                )
-            )
-        )
-        return list(result.scalars().all())
-
     async def get_games_to_start(self) -> list[Game]:
         """Get games whose scheduled start time is within 1 min ahead or up to 30 min ago."""
         now = datetime.now(ZoneInfo("Asia/Almaty"))
