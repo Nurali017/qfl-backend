@@ -13,6 +13,7 @@ from app.schemas.sync import SyncResponse, SyncStatus
 from app.services.live_sync_service import LiveSyncService
 from app.services.season_visibility import get_current_season_id
 from app.services.sota_client import SotaClient, get_sota_client
+from app.caching import invalidate_pattern
 from app.services.sync import SyncOrchestrator
 router = APIRouter(prefix="/ops", tags=["admin-ops"])
 
@@ -148,6 +149,7 @@ async def sync_best_players(
     season_id = season_id or await get_current_season_id(db)
     try:
         count = await SyncOrchestrator(db).sync_best_players(season_id, force=force)
+        await invalidate_pattern("*app.api.seasons.stats*")
         return SyncResponse(status=SyncStatus.SUCCESS, message="Best players sync completed", details={"players_synced": count})
     except Exception as exc:
         return SyncResponse(status=SyncStatus.FAILED, message=f"Best players sync failed: {exc}")
