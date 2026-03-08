@@ -83,6 +83,8 @@ class ScoreTableEntryResponse(BaseModel):
     points: int | None = None
     form: str | None = None
     note: str | None = None
+    total_red_cards: int | None = None
+    total_yellow_cards: int | None = None
     zone: Literal["champion", "euro_cups", "relegation"] | None = None
     next_game: NextGameInfo | None = None
 

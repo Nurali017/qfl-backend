@@ -24,6 +24,9 @@ class AdminSeasonCreateRequest(BaseModel):
     sort_order: int = 0
     colors: dict | None = None
     final_stage_ids: list[int] | None = None
+    champion_spots: int = 1
+    euro_cup_spots: int = 2
+    relegation_spots: int = 0
     sync_enabled: bool = True
     is_visible: bool = True
     is_current: bool = False
@@ -51,6 +54,9 @@ class AdminSeasonUpdateRequest(BaseModel):
     total_rounds: int | None = None
     sort_order: int | None = None
     colors: dict | None = None
+    champion_spots: int | None = None
+    euro_cup_spots: int | None = None
+    relegation_spots: int | None = None
     final_stage_ids: list[int] | None = None
 
 
@@ -72,6 +78,9 @@ class AdminSeasonResponse(BaseModel):
     total_rounds: int | None = None
     sort_order: int = 0
     colors: dict | None = None
+    champion_spots: int = 1
+    euro_cup_spots: int = 2
+    relegation_spots: int = 0
     final_stage_ids: list[int] | None = None
     sync_enabled: bool = True
     is_visible: bool = True

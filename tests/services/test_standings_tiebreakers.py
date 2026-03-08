@@ -4,7 +4,7 @@ import pytest
 from datetime import date, time
 from uuid import uuid4
 
-from app.models import Game, GameTeamStats, Season, Team, Championship
+from app.models import Game, GameStatus, GameTeamStats, Season, Team, Championship
 from app.services.standings import (
     calculate_dynamic_table,
     _primary_sort_key,
@@ -34,6 +34,7 @@ def _make_game(gid, season_id, tour, home_id, away_id, home_score, away_score):
         away_team_id=away_id,
         home_score=home_score,
         away_score=away_score,
+        status=GameStatus.finished,
     )
 
 
@@ -283,32 +284,32 @@ class TestCalculateDynamicTableTiebreakers:
             # Alpha wins
             Game(id=1001, sota_id=uuid4(), date=date(2026, 5, 1), time=time(18, 0),
                  tour=1, season_id=99, home_team_id=100, away_team_id=300,
-                 home_score=2, away_score=0),
+                 home_score=2, away_score=0, status=GameStatus.finished),
             Game(id=1002, sota_id=uuid4(), date=date(2026, 5, 2), time=time(18, 0),
                  tour=2, season_id=99, home_team_id=100, away_team_id=400,
-                 home_score=2, away_score=1),
+                 home_score=2, away_score=1, status=GameStatus.finished),
             # Alpha draw
             Game(id=1003, sota_id=uuid4(), date=date(2026, 5, 3), time=time(18, 0),
                  tour=3, season_id=99, home_team_id=100, away_team_id=200,
-                 home_score=1, away_score=1),
+                 home_score=1, away_score=1, status=GameStatus.finished),
             # Beta wins
             Game(id=1004, sota_id=uuid4(), date=date(2026, 5, 4), time=time(18, 0),
                  tour=1, season_id=99, home_team_id=200, away_team_id=300,
-                 home_score=2, away_score=1),
+                 home_score=2, away_score=1, status=GameStatus.finished),
             # Beta draws
             Game(id=1005, sota_id=uuid4(), date=date(2026, 5, 5), time=time(18, 0),
                  tour=2, season_id=99, home_team_id=200, away_team_id=400,
-                 home_score=1, away_score=1),
+                 home_score=1, away_score=1, status=GameStatus.finished),
             Game(id=1006, sota_id=uuid4(), date=date(2026, 5, 6), time=time(18, 0),
                  tour=4, season_id=99, home_team_id=400, away_team_id=200,
-                 home_score=0, away_score=0),
+                 home_score=0, away_score=0, status=GameStatus.finished),
             Game(id=1007, sota_id=uuid4(), date=date(2026, 5, 7), time=time(18, 0),
                  tour=5, season_id=99, home_team_id=300, away_team_id=200,
-                 home_score=0, away_score=0),
+                 home_score=0, away_score=0, status=GameStatus.finished),
             # Filler so Gamma/Delta don't interfere at top
             Game(id=1008, sota_id=uuid4(), date=date(2026, 5, 8), time=time(18, 0),
                  tour=4, season_id=99, home_team_id=300, away_team_id=400,
-                 home_score=0, away_score=0),
+                 home_score=0, away_score=0, status=GameStatus.finished),
         ]
         test_session.add_all(games)
         await test_session.commit()
@@ -337,15 +338,15 @@ class TestCalculateDynamicTableTiebreakers:
             # Alpha beats Beta 1-0 (H2H)
             Game(id=2001, sota_id=uuid4(), date=date(2026, 6, 1), time=time(18, 0),
                  tour=1, season_id=99, home_team_id=100, away_team_id=200,
-                 home_score=1, away_score=0),
+                 home_score=1, away_score=0, status=GameStatus.finished),
             # Alpha loses to Gamma 0-1
             Game(id=2002, sota_id=uuid4(), date=date(2026, 6, 2), time=time(18, 0),
                  tour=2, season_id=99, home_team_id=300, away_team_id=100,
-                 home_score=1, away_score=0),
+                 home_score=1, away_score=0, status=GameStatus.finished),
             # Beta beats Gamma 1-0
             Game(id=2003, sota_id=uuid4(), date=date(2026, 6, 3), time=time(18, 0),
                  tour=2, season_id=99, home_team_id=200, away_team_id=300,
-                 home_score=1, away_score=0),
+                 home_score=1, away_score=0, status=GameStatus.finished),
         ]
         test_session.add_all(games)
         await test_session.commit()
@@ -369,7 +370,7 @@ class TestCalculateDynamicTableTiebreakers:
             # Alpha vs Beta draw 1-1
             Game(id=3001, sota_id=uuid4(), date=date(2026, 7, 1), time=time(18, 0),
                  tour=1, season_id=99, home_team_id=100, away_team_id=200,
-                 home_score=1, away_score=1),
+                 home_score=1, away_score=1, status=GameStatus.finished),
         ]
         test_session.add_all(games)
         await test_session.flush()
@@ -394,7 +395,7 @@ class TestCalculateDynamicTableTiebreakers:
         game = Game(
             id=4001, sota_id=uuid4(), date=date(2026, 8, 1), time=time(18, 0),
             tour=1, season_id=99, home_team_id=100, away_team_id=200,
-            home_score=2, away_score=0,
+            home_score=2, away_score=0, status=GameStatus.finished,
         )
         test_session.add(game)
         await test_session.flush()
