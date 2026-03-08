@@ -137,6 +137,7 @@ async def _sync_extended_stats():
 
             # 2. Re-sync game stats (with v2 enrichment)
             game_results = []
+            game_errors = []
             for game in games:
                 try:
                     r = await orchestrator.sync_game_stats(game.id)
@@ -144,6 +145,7 @@ async def _sync_extended_stats():
                     seasons_to_sync.add(game.season_id)
                 except Exception as e:
                     logger.warning("Extended game stats failed for game %s: %s", game.id, e)
+                    game_errors.append(f"Game {game.id}: {e}")
 
             # 3. Sync team + player season stats for affected seasons
             season_results = {}
@@ -160,18 +162,27 @@ async def _sync_extended_stats():
             await db.commit()
 
             # 4. Telegram notification
-            if season_results:
+            if season_results or game_errors:
                 lines = ["📊 Extended stats synced (24h+ post-match)"]
                 for sid, counts in season_results.items():
                     lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
+                if game_errors:
+                    lines.append(f"⚠️ Errors ({len(game_errors)}):")
+                    for err in game_errors[:5]:
+                        lines.append(f"  {err}")
                 await send_telegram_message("\n".join(lines))
 
             return {
                 "games_resynced": len(game_results),
                 "seasons_synced": season_results,
+                "errors": game_errors,
             }
-        except Exception:
+        except Exception as e:
             await db.rollback()
+            try:
+                await send_telegram_message(f"❌ Extended stats sync failed:\n{e}")
+            except Exception:
+                pass
             raise
 
 
