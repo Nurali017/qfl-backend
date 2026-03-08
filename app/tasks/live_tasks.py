@@ -156,40 +156,6 @@ async def _auto_end_finished_games():
             raise
 
 
-async def _sync_single_game_protocol(game_id: int):
-    """Re-sync events & stats for a single finished game."""
-    async with AsyncSessionLocal() as db:
-        try:
-            game = await db.get(Game, game_id)
-            if not game or not game.sota_id or game.sync_disabled:
-                return {"game_id": game_id, "skipped": True}
-
-            client = get_sota_client()
-            service = LiveSyncService(db, client)
-
-            events = await service.sync_live_events(game_id)
-            await service.sync_live_stats(game_id)
-            await service.sync_live_player_stats(game_id)
-
-            has_changes = (
-                events.get("added", 0) > 0
-                or events.get("updated", 0) > 0
-                or events.get("deleted", 0) > 0
-            )
-            if has_changes:
-                ev = events
-                await send_telegram_message(
-                    f"\U0001f4cb Post-match sync Game #{game_id}: "
-                    f"+{ev.get('added', 0)} / ~{ev.get('updated', 0)} / -{ev.get('deleted', 0)} \u0441\u043e\u0431\u044b\u0442\u0438\u0439"
-                )
-
-            await db.commit()
-            return {"game_id": game_id, "events": events}
-        except Exception:
-            await db.rollback()
-            raise
-
-
 async def _sync_post_match_protocol():
     """Re-sync events & stats for recently finished games (within 6 hours)."""
     cutoff = utcnow() - timedelta(hours=6)
@@ -274,9 +240,3 @@ def auto_end_finished_games():
 def sync_post_match_protocol():
     """Celery task: Re-sync protocol for recently finished games. Runs every 30 minutes."""
     return run_async(_sync_post_match_protocol())
-
-
-@celery_app.task(name="app.tasks.live_tasks.sync_single_game_protocol")
-def sync_single_game_protocol(game_id: int):
-    """Celery task: Re-sync protocol for a single game. Scheduled at +2min and +7min after finish."""
-    return run_async(_sync_single_game_protocol(game_id))
