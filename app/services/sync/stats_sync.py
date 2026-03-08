@@ -1,7 +1,8 @@
 """
 Stats sync service.
 
-Handles synchronization of score tables and team season statistics from SOTA API.
+Handles synchronization of team season statistics from SOTA API.
+Score table is managed locally — no longer synced from SOTA.
 """
 import logging
 from datetime import datetime
@@ -17,101 +18,11 @@ logger = logging.getLogger(__name__)
 
 class StatsSyncService(BaseSyncService):
     """
-    Service for syncing league tables and team season statistics.
+    Service for syncing team season statistics.
 
     Handles:
-    - Score table (league standings)
     - Team season statistics (92 metrics from v2 API)
     """
-
-    async def sync_score_table(self, season_id: int) -> int:
-        """
-        Sync league table for a season.
-
-        Args:
-            season_id: Season ID to sync
-
-        Returns:
-            Number of entries synced
-        """
-        # Resolve SOTA season ID for API calls
-        sota_season_id = await self.get_sota_season_id(season_id)
-        table_data = await self.client.get_score_table(sota_season_id)
-        count = 0
-
-        # Handle different response formats
-        # API returns: {"result": "success", "data": {"table": [...]}}
-        if isinstance(table_data, list):
-            entries = table_data
-        elif isinstance(table_data, dict):
-            # Try nested data.table first
-            data = table_data.get("data", {})
-            if isinstance(data, dict):
-                entries = data.get("table", [])
-            else:
-                entries = table_data.get("table", table_data.get("results", []))
-        else:
-            entries = []
-
-        for idx, entry in enumerate(entries, start=1):
-            # Skip non-dict entries
-            if not isinstance(entry, dict):
-                continue
-
-            # Get team_id - API uses 'id' for team ID
-            team_id = entry.get("team_id") or entry.get("id")
-            if not team_id:
-                continue
-
-            # Parse goals string like "53:19" into scored and conceded
-            goals_str = entry.get("goals", "0:0")
-            goals_scored, goals_conceded = 0, 0
-            if isinstance(goals_str, str) and ":" in goals_str:
-                parts = goals_str.split(":")
-                goals_scored = int(parts[0]) if parts[0].isdigit() else 0
-                goals_conceded = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-
-            form_list = entry.get("form", [])
-            form_str = "".join(form_list) if isinstance(form_list, list) else (form_list or "")
-
-            # Position is determined by array order (API returns sorted by points)
-            stmt = insert(ScoreTable).values(
-                season_id=season_id,
-                team_id=team_id,
-                position=idx,
-                games_played=entry.get("matches") or entry.get("games_played"),
-                wins=entry.get("wins"),
-                draws=entry.get("draws"),
-                losses=entry.get("losses"),
-                goals_scored=entry.get("goals_scored") or goals_scored,
-                goals_conceded=entry.get("goals_conceded") or goals_conceded,
-                goal_difference=(goals_scored - goals_conceded) if goals_scored or goals_conceded else entry.get("goal_difference"),
-                points=entry.get("points"),
-                form=form_str,
-                updated_at=datetime.utcnow(),
-            )
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["season_id", "team_id"],
-                set_={
-                    "position": stmt.excluded.position,
-                    "games_played": stmt.excluded.games_played,
-                    "wins": stmt.excluded.wins,
-                    "draws": stmt.excluded.draws,
-                    "losses": stmt.excluded.losses,
-                    "goals_scored": stmt.excluded.goals_scored,
-                    "goals_conceded": stmt.excluded.goals_conceded,
-                    "goal_difference": stmt.excluded.goal_difference,
-                    "points": stmt.excluded.points,
-                    "form": stmt.excluded.form,
-                    "updated_at": stmt.excluded.updated_at,
-                },
-            )
-            await self.db.execute(stmt)
-            count += 1
-
-        await self.db.commit()
-        logger.info(f"Synced score table for season {season_id}: {count} entries")
-        return count
 
     async def sync_team_season_stats(self, season_id: int) -> int:
         """
