@@ -13,7 +13,7 @@ class ScoreTable(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"))
+    season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"), index=True)
     team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id"), index=True)
     position: Mapped[int | None] = mapped_column(Integer)
     games_played: Mapped[int | None] = mapped_column(Integer)
