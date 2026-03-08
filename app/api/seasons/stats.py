@@ -28,7 +28,6 @@ from app.schemas.country import CountryInPlayer
 
 # Import helpers from router module
 from app.api.seasons.router import GOAL_PERIOD_LABELS, _get_goal_period_index
-from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -49,7 +48,6 @@ PLAYER_STATS_SORT_FIELDS = [
 
 
 @router.get("/{season_id}/player-stats", response_model=PlayerStatsTableResponse)
-@cache(expire=900)
 async def get_player_stats_table(
     season_id: int,
     sort_by: str = Query(default="goals"),
@@ -247,7 +245,6 @@ TEAM_STATS_SORT_FIELDS = [
 
 
 @router.get("/{season_id}/team-stats", response_model=TeamStatsTableResponse)
-@cache(expire=7200)
 async def get_team_stats_table(
     season_id: int,
     sort_by: str = Query(default="points"),
@@ -552,7 +549,6 @@ async def get_team_stats_table(
 
 
 @router.get("/{season_id}/statistics", response_model=SeasonStatisticsResponse)
-@cache(expire=7200)
 async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_db)):
     """
     Get aggregated tournament statistics for a season.

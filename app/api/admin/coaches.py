@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
-from app.caching import invalidate_pattern
 from app.models import AdminUser, Championship, Coach, CoachRole, Country, Season, Team, TeamCoach
 from app.schemas.admin.coaches import (
     AdminCoachAssignmentCreateRequest,
@@ -257,8 +256,6 @@ async def create_coach_assignment(
     await db.flush()
     tc_id = tc.id
     await db.commit()
-    await invalidate_pattern("*app.api.teams*")
-    await invalidate_pattern("*app.api.seasons*")
 
     coach_name = f"{coach.last_name} {coach.first_name}"
     await notify_coach_change(
@@ -346,8 +343,6 @@ async def update_coach_assignment(
         setattr(tc, field, value)
 
     await db.commit()
-    await invalidate_pattern("*app.api.teams*")
-    await invalidate_pattern("*app.api.seasons*")
 
     row = await _fetch_assignment_row(db, assignment_id)
     tc2, coach2, team2, season2 = row
@@ -377,8 +372,6 @@ async def delete_coach_assignment(
 
     await db.delete(tc)
     await db.commit()
-    await invalidate_pattern("*app.api.teams*")
-    await invalidate_pattern("*app.api.seasons*")
 
     await notify_coach_change(
         action="удалено",
@@ -476,8 +469,6 @@ async def bulk_copy_coach_assignments(
         created_names.append(coaches_map.get(src.coach_id, f"#{src.coach_id}"))
 
     await db.commit()
-    await invalidate_pattern("*app.api.teams*")
-    await invalidate_pattern("*app.api.seasons*")
 
     # Build detailed notification
     msg_parts = [

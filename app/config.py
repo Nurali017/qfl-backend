@@ -28,9 +28,6 @@ class Settings(BaseSettings):
     # Redis (Celery broker)
     redis_url: str = "redis://localhost:6379/0"
 
-    # Redis (cache — DB 1, separate from Celery)
-    redis_cache_url: str = "redis://localhost:6379/1"
-
     # Current season (default for API when season_id not specified)
     current_season_id: int = 200
 
@@ -61,9 +58,6 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_notifications_enabled: bool = False
-
-    # Feature flags
-    cache_enabled: bool = False
 
     class Config:
         env_file = ".env"

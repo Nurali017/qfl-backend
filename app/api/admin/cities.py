@@ -4,7 +4,6 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.caching import invalidate_pattern
 from app.models import City
 from app.schemas.admin.cities import (
     AdminCityCreateRequest,
@@ -45,7 +44,6 @@ async def create_city(
     db.add(obj)
     await db.commit()
     await db.refresh(obj)
-    await invalidate_pattern("*app.api.cities*")
     return AdminCityResponse.model_validate(obj)
 
 
@@ -65,7 +63,6 @@ async def update_city(
 
     await db.commit()
     await db.refresh(obj)
-    await invalidate_pattern("*app.api.cities*")
     return AdminCityResponse.model_validate(obj)
 
 
@@ -78,4 +75,3 @@ async def delete_city(id: int, db: AsyncSession = Depends(get_db)):
 
     await db.delete(obj)
     await db.commit()
-    await invalidate_pattern("*app.api.cities*")

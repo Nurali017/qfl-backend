@@ -4,7 +4,6 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.caching import invalidate_pattern
 from app.models import Club
 from app.schemas.admin.clubs import (
     AdminClubCreateRequest,
@@ -54,7 +53,6 @@ async def create_club(
     db.add(obj)
     await db.commit()
     await db.refresh(obj)
-    await invalidate_pattern("*app.api.clubs*")
     return AdminClubResponse.model_validate(obj)
 
 
@@ -74,7 +72,6 @@ async def update_club(
 
     await db.commit()
     await db.refresh(obj)
-    await invalidate_pattern("*app.api.clubs*")
     return AdminClubResponse.model_validate(obj)
 
 
@@ -87,4 +84,3 @@ async def delete_club(id: int, db: AsyncSession = Depends(get_db)):
 
     await db.delete(obj)
     await db.commit()
-    await invalidate_pattern("*app.api.clubs*")

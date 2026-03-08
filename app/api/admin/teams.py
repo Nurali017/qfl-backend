@@ -7,7 +7,6 @@ from sqlalchemy.orm import selectinload
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
-from app.caching import invalidate_pattern
 from app.models import AdminUser, Player, PlayerTeam, Team
 from app.schemas.admin.teams import (
     AdminTeamDetailResponse,
@@ -96,7 +95,6 @@ async def update_team(
 
     await db.commit()
     await db.refresh(team)
-    await invalidate_pattern("*app.api.teams*")
 
     # Reload with stadium
     result = await db.execute(

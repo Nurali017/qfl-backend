@@ -27,7 +27,6 @@ from app.utils.game_grouping import group_games_by_date
 from app.config import get_settings
 from app.services.season_visibility import ensure_visible_season_or_404, get_current_season_id
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids
-from fastapi_cache.decorator import cache
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -64,7 +63,6 @@ def _build_stadium_info(stadium: Stadium | None, lang: str) -> StadiumInfo | Non
 
 
 @router.get("")
-@cache(expire=1800)
 async def get_games(
     season_id: int | None = Query(default=None),
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),

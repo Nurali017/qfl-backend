@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
-from app.caching import invalidate_pattern
 from app.models import AdminUser, Championship, Player, PlayerTeam, Season, Team
 from app.schemas.admin.contracts import (
     AdminContractBulkCopyItem,
@@ -253,7 +252,6 @@ async def bulk_copy_contracts(
         created_names.append(players_map.get(src.player_id, f"#{src.player_id}"))
 
     await db.commit()
-    await invalidate_pattern("*app.api.seasons*")
 
     # Build detailed notification
     msg_parts = [
@@ -359,7 +357,6 @@ async def create_contract(
     await db.flush()
     pt_id = pt.id
     await db.commit()
-    await invalidate_pattern("*app.api.seasons*")
 
     await notify_contract_change(
         action="создан",
@@ -431,7 +428,6 @@ async def update_contract(
         setattr(pt, field, value)
 
     await db.commit()
-    await invalidate_pattern("*app.api.seasons*")
 
     row = await _fetch_contract_row(db, contract_id)
     pt2, player2, team2, season2 = row
@@ -461,7 +457,6 @@ async def delete_contract(
 
     await db.delete(pt)
     await db.commit()
-    await invalidate_pattern("*app.api.seasons*")
 
     await notify_contract_change(
         action="удалён",

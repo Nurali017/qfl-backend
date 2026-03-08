@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, literal_column
 from sqlalchemy.orm import selectinload
-from fastapi_cache.decorator import cache
 
 from app.api.deps import get_db
 from app.models import Game, GameStatus, Stadium, Team
@@ -24,7 +23,6 @@ router = APIRouter(prefix="/seasons", tags=["seasons"])
 
 
 @router.get("/{season_id}/attendance", response_model=AttendanceResponse)
-@cache(expire=7200)
 async def get_season_attendance(
     season_id: int,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
