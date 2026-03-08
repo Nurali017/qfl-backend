@@ -14,7 +14,6 @@ from app.models import (
     Team,
     TeamSeasonStats,
 )
-from app.models.coach import Coach, TeamCoach
 from app.schemas.team import (
     TeamOverviewCoachPreview,
     TeamOverviewFormEntry,
@@ -355,30 +354,38 @@ async def get_team_overview(
         ),
     )
 
-    coaches_result = await db.execute(
-        select(TeamCoach)
-        .where(
-            TeamCoach.team_id == team_id,
-            TeamCoach.season_id == season_id,
-            TeamCoach.is_active == True,
-        )
-        .options(selectinload(TeamCoach.coach).selectinload(Coach.country))
-    )
-    team_coaches = coaches_result.scalars().all()
-    role_order = {"head_coach": 0, "assistant": 1, "goalkeeper_coach": 2, "fitness_coach": 3, "other": 4}
-    team_coaches.sort(key=lambda item: role_order.get(item.role.value, 99))
+    _ROLE_FALLBACK_KZ = {2: "Бапкер", 3: "Персонал", 4: "Әкімші"}
+    _ROLE_FALLBACK_RU = {2: "Тренер", 3: "Персонал", 4: "Администратор"}
 
-    staff_preview = [
-        TeamOverviewCoachPreview(
-            id=item.coach.id,
-            first_name=get_localized_field(item.coach, "first_name", lang) or item.coach.first_name,
-            last_name=get_localized_field(item.coach, "last_name", lang) or item.coach.last_name,
-            photo_url=item.coach.photo_url,
-            role=item.role.value,
-            country_name=get_localized_name(item.coach.country, lang) if item.coach.country else None,
+    staff_result = await db.execute(
+        select(PlayerTeam)
+        .where(
+            PlayerTeam.team_id == team_id,
+            PlayerTeam.season_id == season_id,
+            PlayerTeam.role != 1,
+            PlayerTeam.is_hidden == False,
+            PlayerTeam.is_active == True,
         )
-        for item in team_coaches[:4]
-    ]
+        .options(selectinload(PlayerTeam.player).selectinload(Player.country))
+    )
+    staff_contracts = staff_result.scalars().all()
+    staff_contracts.sort(key=lambda ct: ct.role or 99)
+
+    staff_preview = []
+    for ct in staff_contracts[:4]:
+        p = ct.player
+        if lang == "kz":
+            role_text = ct.position_kz or ct.position_ru or _ROLE_FALLBACK_KZ.get(ct.role, "")
+        else:
+            role_text = ct.position_ru or ct.position_kz or _ROLE_FALLBACK_RU.get(ct.role, "")
+        staff_preview.append(TeamOverviewCoachPreview(
+            id=p.id,
+            first_name=get_localized_field(p, "first_name", lang) or p.first_name,
+            last_name=get_localized_field(p, "last_name", lang) or p.last_name,
+            photo_url=ct.photo_url or p.photo_url,
+            role=role_text,
+            country_name=get_localized_name(p.country, lang) if p.country else None,
+        ))
 
     overview_team = TeamOverviewTeam(
         id=team.id,

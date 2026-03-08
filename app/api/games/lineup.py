@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import (
-    Game, GameStatus, Player, PlayerTeam, GameLineup, GameReferee, Coach, TeamCoach, Season,
+    Game, GameStatus, Player, PlayerTeam, GameLineup, GameReferee, Season,
 )
 from app.models.referee import Referee
 from app.schemas.game_lineup import (
@@ -122,39 +122,43 @@ async def get_game_lineup(
                 country=_build_country(ref.country),
             ))
 
-    # Get coaches for home and away teams
+    # Get coaches for home and away teams (from PlayerTeam contracts with role != 1)
     async def get_team_coaches(team_id: int) -> list[LineupCoach]:
-        coaches_result = await db.execute(
-            select(TeamCoach)
-            .where(TeamCoach.team_id == team_id, TeamCoach.season_id == game.season_id)
+        contracts_result = await db.execute(
+            select(PlayerTeam)
+            .where(
+                PlayerTeam.team_id == team_id,
+                PlayerTeam.season_id == game.season_id,
+                PlayerTeam.role != 1,
+                PlayerTeam.is_hidden == False,  # noqa: E712
+                PlayerTeam.is_active == True,  # noqa: E712
+            )
             .options(
-                selectinload(TeamCoach.coach).selectinload(Coach.country),
+                selectinload(PlayerTeam.player).selectinload(Player.country),
             )
         )
-        team_coaches = coaches_result.scalars().all()
+        contracts = contracts_result.scalars().all()
+        # Sort by role integer (2=head coach first, then 3, 4, etc.)
+        contracts.sort(key=lambda c: c.role or 99)
 
         coaches_list = []
-        for tc in team_coaches:
-            coach = tc.coach
-            if coach:
-                if lang == "kz":
-                    first_name = coach.first_name_kz or coach.first_name
-                    last_name = coach.last_name_kz or coach.last_name
-                elif lang == "en":
-                    first_name = coach.first_name_en or coach.first_name
-                    last_name = coach.last_name_en or coach.last_name
-                else:
-                    first_name = coach.first_name
-                    last_name = coach.last_name
+        for contract in contracts:
+            player = contract.player
+            if not player:
+                continue
+            first_name = get_localized_field(player, "first_name", lang)
+            last_name = get_localized_field(player, "last_name", lang)
+            role_text = get_localized_field(contract, "position", lang) or str(contract.role)
+            photo = contract.photo_url or player.photo_url
 
-                coaches_list.append(LineupCoach(
-                    id=coach.id,
-                    first_name=first_name,
-                    last_name=last_name,
-                    role=tc.role.value,
-                    photo_url=coach.photo_url,
-                    country=_build_country(coach.country),
-                ))
+            coaches_list.append(LineupCoach(
+                id=player.id,
+                first_name=first_name,
+                last_name=last_name,
+                role=role_text,
+                photo_url=photo,
+                country=_build_country(player.country),
+            ))
         return coaches_list
 
     home_coaches = await get_team_coaches(game.home_team_id) if game.home_team_id else []

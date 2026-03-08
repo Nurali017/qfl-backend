@@ -15,7 +15,6 @@ from app.models import (
 )
 from app.models.news import NewsTeam
 from app.schemas.news import NewsListItem
-from app.models.coach import Coach, TeamCoach
 from app.schemas.game import TeamGameItem
 from app.schemas.team import (
     TeamDetailResponse,
@@ -319,42 +318,53 @@ async def get_team_coaches(
     """Get coaching staff for a team in a specific season."""
     season_id = await resolve_visible_season_id(db, season_id)
 
+    _ROLE_FALLBACK_KZ = {2: "Бапкер", 3: "Персонал", 4: "Әкімші"}
+    _ROLE_FALLBACK_RU = {2: "Тренер", 3: "Персонал", 4: "Администратор"}
+
     result = await db.execute(
-        select(TeamCoach)
+        select(PlayerTeam)
         .where(
-            TeamCoach.team_id == team_id,
-            TeamCoach.season_id == season_id,
-            TeamCoach.is_active == True,
+            PlayerTeam.team_id == team_id,
+            PlayerTeam.season_id == season_id,
+            PlayerTeam.role != 1,
+            PlayerTeam.is_hidden == False,
+            PlayerTeam.is_active == True,
         )
         .options(
-            selectinload(TeamCoach.coach).selectinload(Coach.country),
+            selectinload(PlayerTeam.player).selectinload(Player.country),
         )
     )
-    team_coaches = result.scalars().all()
+    contracts = result.scalars().all()
 
     items = []
-    for tc in team_coaches:
-        c = tc.coach
+    for ct in contracts:
+        p = ct.player
         country_data = None
-        if c.country:
+        if p.country:
             country_data = {
-                "id": c.country.id,
-                "code": c.country.code,
-                "name": get_localized_name(c.country, lang),
-                "flag_url": c.country.flag_url,
+                "id": p.country.id,
+                "code": p.country.code,
+                "name": get_localized_name(p.country, lang),
+                "flag_url": p.country.flag_url,
             }
+
+        if lang == "kz":
+            role_text = ct.position_kz or ct.position_ru or _ROLE_FALLBACK_KZ.get(ct.role, "")
+        else:
+            role_text = ct.position_ru or ct.position_kz or _ROLE_FALLBACK_RU.get(ct.role, "")
+
         items.append({
-            "id": c.id,
-            "first_name": get_localized_field(c, "first_name", lang),
-            "last_name": get_localized_field(c, "last_name", lang),
-            "photo_url": c.photo_url,
-            "role": tc.role.value,
+            "id": p.id,
+            "first_name": get_localized_field(p, "first_name", lang),
+            "last_name": get_localized_field(p, "last_name", lang),
+            "photo_url": ct.photo_url or p.photo_url,
+            "role": role_text,
             "country": country_data,
         })
 
-    # Sort: head_coach first, then by role
-    role_order = {"head_coach": 0, "assistant": 1, "goalkeeper_coach": 2, "fitness_coach": 3, "other": 4}
-    items.sort(key=lambda x: role_order.get(x["role"], 99))
+    # Sort by role integer: 2=Coach, 3=Staff, 4=Admin
+    role_sort = {c.player.id: c.role or 99 for c in contracts}
+    items.sort(key=lambda x: role_sort.get(x["id"], 99))
 
     return {"items": items, "total": len(items)}
 
