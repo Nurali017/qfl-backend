@@ -11,6 +11,7 @@ from app.api.deps import get_db
 from app.models import Game, GameStatus, ScoreTable, Season, Team
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids
 from app.services.standings import (
+    _primary_sort_key,
     calculate_dynamic_table,
     read_score_table,
     get_next_games_for_teams,
@@ -73,13 +74,6 @@ async def get_season_table(
             filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
             return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
 
-    has_filters = (
-        tour_from is not None
-        or tour_to is not None
-        or home_away is not None
-        or group_team_ids is not None
-        or final_stage_ids_list is not None
-    )
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
     live_games_result = await db.execute(
@@ -92,84 +86,46 @@ async def get_season_table(
     live_team_ids = list({tid for row in live_games for tid in (row.home_team_id, row.away_team_id) if tid})
     live_count = len(live_games)
 
-    if has_filters:
-        table_data = await calculate_dynamic_table(
-            db, season_id, tour_from, tour_to, home_away, lang,
-            group_team_ids=group_team_ids,
-            final_stage_ids=final_stage_ids_list,
-            include_live=bool(live_count),
-        )
-        # Merge with base table so teams without matches in the filter still appear
-        if table_data:
-            base_table = await read_score_table(db, season_id, group_team_ids, lang)
-            if base_table and len(table_data) < len(base_table):
+    # Always calculate table dynamically with full tiebreakers (H2H + cards)
+    table_data = await calculate_dynamic_table(
+        db, season_id, tour_from, tour_to, home_away, lang,
+        group_team_ids=group_team_ids,
+        final_stage_ids=final_stage_ids_list,
+        include_live=bool(live_count),
+    )
+
+    # Merge with score_table for: team list (teams with 0 games) + notes (point penalties)
+    base_table = await read_score_table(db, season_id, group_team_ids, lang)
+    if table_data:
+        if base_table:
+            # Transfer notes (point penalties) from score_table
+            note_map = {e["team_id"]: e.get("note") for e in base_table if e.get("note")}
+            for entry in table_data:
+                if entry["team_id"] in note_map:
+                    entry["note"] = note_map[entry["team_id"]]
+            # Add teams without matches in this filter range
+            if len(table_data) < len(base_table):
                 dynamic_ids = {e["team_id"] for e in table_data}
                 for entry in base_table:
                     if entry["team_id"] not in dynamic_ids:
                         table_data.append({
-                            **entry,
+                            "team_id": entry["team_id"],
+                            "team_name": entry["team_name"],
+                            "team_logo": entry.get("team_logo"),
                             "games_played": 0, "wins": 0, "draws": 0,
                             "losses": 0, "goals_scored": 0, "goals_conceded": 0,
                             "goal_difference": 0, "points": 0, "form": None,
+                            "note": entry.get("note"),
+                            "total_red_cards": 0, "total_yellow_cards": 0,
                         })
-                table_data.sort(key=lambda e: (
-                    -e["points"], -(e["goals_scored"] - e["goals_conceded"]),
-                    -e.get("wins", 0), -e["goals_scored"],
-                ))
+                # Stable sort preserves H2H ordering from calculate_dynamic_table
+                table_data.sort(key=_primary_sort_key)
                 for i, entry in enumerate(table_data, 1):
                     entry["position"] = i
-        else:
-            # Fallback: if dynamic calculation returned nothing, fall back to score_table
-            table_data = await read_score_table(db, season_id, group_team_ids, lang)
+    elif base_table:
+        table_data = base_table
     else:
-        # If there are live games, use dynamic calculation that includes live scores
-        if live_count:
-            table_data = await calculate_dynamic_table(
-                db, season_id, None, None, None, lang,
-                group_team_ids=group_team_ids,
-                include_live=True,
-            )
-            # Dynamic table may only contain teams with games played.
-            # Merge with base table to include all teams.
-            if table_data:
-                base_table = await read_score_table(db, season_id, group_team_ids, lang)
-                if base_table and len(table_data) < len(base_table):
-                    dynamic_ids = {e["team_id"] for e in table_data}
-                    for entry in base_table:
-                        if entry["team_id"] not in dynamic_ids:
-                            table_data.append(entry)
-                    # Re-sort and re-assign positions
-                    table_data.sort(key=lambda e: (
-                        -e["points"], -(e["goals_scored"] - e["goals_conceded"]),
-                        -e.get("wins", 0), -e["goals_scored"],
-                    ))
-                    for i, entry in enumerate(table_data, 1):
-                        entry["position"] = i
-            else:
-                table_data = await read_score_table(db, season_id, group_team_ids, lang)
-        else:
-            table_data = await read_score_table(db, season_id, group_team_ids, lang)
-            # Fallback: if score_table not populated or all zeros, calculate from finished games
-            has_real_data = table_data and any(e.get("games_played", 0) > 0 for e in table_data)
-            if not has_real_data:
-                dynamic = await calculate_dynamic_table(
-                    db, season_id, None, None, None, lang,
-                    group_team_ids=group_team_ids,
-                )
-                if dynamic:
-                    # Merge: add teams from score_table that have no games yet
-                    if table_data and len(dynamic) < len(table_data):
-                        dynamic_ids = {e["team_id"] for e in dynamic}
-                        for entry in table_data:
-                            if entry["team_id"] not in dynamic_ids:
-                                dynamic.append(entry)
-                        dynamic.sort(key=lambda e: (
-                            -e["points"], -(e["goals_scored"] - e["goals_conceded"]),
-                            -e.get("wins", 0), -e["goals_scored"],
-                        ))
-                        for i, entry in enumerate(dynamic, 1):
-                            entry["position"] = i
-                    table_data = dynamic
+        table_data = []
 
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)
@@ -205,6 +161,8 @@ async def get_season_table(
                 points=entry["points"],
                 form=entry["form"],
                 note=entry.get("note"),
+                total_red_cards=entry.get("total_red_cards"),
+                total_yellow_cards=entry.get("total_yellow_cards"),
                 zone=resolve_table_zone(
                     position=entry["position"],
                     total_rows=total_rows,

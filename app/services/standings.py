@@ -220,6 +220,7 @@ async def calculate_dynamic_table(
         "goals_scored": 0,
         "goals_conceded": 0,
         "points": 0,
+        "note": None,
         "form_list": [],
     })
 
