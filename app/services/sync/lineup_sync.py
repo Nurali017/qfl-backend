@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import date, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Literal
 from uuid import UUID
 
@@ -725,7 +726,7 @@ class LineupSyncService(BaseSyncService):
         """
         Repair positioning and kit colors for finished matches.
         """
-        today = date.today()
+        today = datetime.now(ZoneInfo("Asia/Almaty")).date()
         result: dict = {
             "processed": 0,
             "updated_games": 0,

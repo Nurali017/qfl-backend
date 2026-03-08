@@ -1,8 +1,9 @@
 """Standings calculation logic: dynamic table, pre-computed score_table, next games."""
 
 from collections import defaultdict
-from datetime import date
+from datetime import datetime
 from itertools import groupby
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import or_, select
@@ -118,7 +119,7 @@ async def get_next_games_for_teams(
     if not team_ids:
         return {}
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     query = (
         select(Game)
         .where(

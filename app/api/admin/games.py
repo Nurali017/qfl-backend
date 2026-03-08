@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, and_, or_
@@ -119,7 +120,7 @@ async def list_games(
     if date_to is not None:
         filters.append(Game.date <= date_to)
 
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     if status == "live":
         filters.append(Game.status == GameStatus.live)
     elif status == "upcoming":
