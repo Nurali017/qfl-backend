@@ -2,9 +2,9 @@
 Celery tasks for live match synchronization.
 
 Tasks:
-- check_upcoming_games: Check for games starting soon, sync lineups
-- sync_live_game_events: Sync events for active games
-- end_finished_games: Auto-end games that should have finished
+- auto_start_live_games: Auto-start live tracking for games whose scheduled time has passed
+- sync_live_game_events: Sync events, lineup, and stats for active games
+- auto_end_finished_games: Auto-end games that have been live for over 2h15m
 """
 import logging
 
@@ -15,40 +15,6 @@ from app.services.sota_client import get_sota_client
 from app.utils.async_celery import run_async
 
 logger = logging.getLogger(__name__)
-
-
-async def _check_upcoming_games():
-    """Check for games starting within 30 minutes and sync their lineups."""
-    from app.utils.live_flag import set_live_flag
-
-    async with AsyncSessionLocal() as db:
-        client = get_sota_client()
-        service = LiveSyncService(db, client)
-
-        # Ensure Redis flag is set if there are live games in DB
-        # (covers cases where status was set to 'live' outside start_live_tracking)
-        active_games = await service.get_active_games()
-        if active_games:
-            await set_live_flag()
-            logger.info(f"Live flag set for {len(active_games)} active game(s)")
-
-        upcoming_games = await service.get_upcoming_games(minutes_ahead=30)
-
-        results = []
-        for game in upcoming_games:
-            try:
-                result = await service.sync_pregame_lineup(game.id)
-                results.append(result)
-                logger.info(f"Pre-game lineup synced for game {game.id}")
-            except Exception as e:
-                logger.error(f"Failed to sync lineup for game {game.id}: {e}")
-                results.append({"game_id": game.id, "error": str(e)})
-
-        return {
-            "upcoming_games_found": len(upcoming_games),
-            "lineups_synced": len([r for r in results if "error" not in r]),
-            "results": results,
-        }
 
 
 async def _sync_live_game_events():
@@ -119,46 +85,68 @@ async def _sync_live_game_events():
         }
 
 
-async def _end_finished_games():
-    """Auto-end games that have been live for too long (> 2 hours)."""
+async def _auto_start_live_games():
+    """Find games whose scheduled time has passed and start live tracking."""
     async with AsyncSessionLocal() as db:
         client = get_sota_client()
         service = LiveSyncService(db, client)
 
-        games_to_end = await service.get_games_to_end()
+        games = await service.get_games_to_start()
+        if not games:
+            return {"started": 0, "results": []}
 
         results = []
-        for game in games_to_end:
+        for game in games:
+            try:
+                result = await service.start_live_tracking(game.id)
+                results.append(result)
+                logger.info(f"Auto-started live tracking for game {game.id}")
+            except Exception as e:
+                logger.error(f"Failed to auto-start game {game.id}: {e}")
+                results.append({"game_id": game.id, "error": str(e)})
+
+        return {
+            "started": len([r for r in results if r.get("is_live")]),
+            "results": results,
+        }
+
+
+async def _auto_end_finished_games():
+    """End games that have been live for over 2h15m."""
+    async with AsyncSessionLocal() as db:
+        client = get_sota_client()
+        service = LiveSyncService(db, client)
+        games = await service.get_games_to_end()
+        if not games:
+            return {"ended": 0, "results": []}
+        results = []
+        for game in games:
             try:
                 await service.stop_live_tracking(game.id)
                 results.append({"game_id": game.id, "status": "ended"})
                 logger.info(f"Auto-ended game {game.id}")
             except Exception as e:
-                logger.error(f"Failed to end game {game.id}: {e}")
+                logger.error(f"Failed to auto-end game {game.id}: {e}")
                 results.append({"game_id": game.id, "error": str(e)})
-
-        return {
-            "games_ended": len([r for r in results if "status" in r]),
-            "results": results,
-        }
+        return {"ended": len([r for r in results if "status" in r]), "results": results}
 
 
 # ==================== Celery Tasks ====================
 
 
-@celery_app.task(name="app.tasks.live_tasks.check_upcoming_games")
-def check_upcoming_games():
-    """Celery task: Check for upcoming games and sync their lineups. Runs every 5 minutes."""
-    return run_async(_check_upcoming_games())
+@celery_app.task(name="app.tasks.live_tasks.auto_start_live_games")
+def auto_start_live_games():
+    """Celery task: Auto-start live tracking when game time arrives. Runs every 2 minutes."""
+    return run_async(_auto_start_live_games())
 
 
 @celery_app.task(name="app.tasks.live_tasks.sync_live_game_events")
 def sync_live_game_events():
-    """Celery task: Sync events for all active games. Runs every 30 seconds."""
+    """Celery task: Sync events for all active games. Runs every 15 seconds."""
     return run_async(_sync_live_game_events())
 
 
-@celery_app.task(name="app.tasks.live_tasks.end_finished_games")
-def end_finished_games():
-    """Celery task: Auto-end games that should have finished. Runs every 10 minutes."""
-    return run_async(_end_finished_games())
+@celery_app.task(name="app.tasks.live_tasks.auto_end_finished_games")
+def auto_end_finished_games():
+    """Celery task: Auto-end games that have been live for over 2h15m. Runs every 5 minutes."""
+    return run_async(_auto_end_finished_games())

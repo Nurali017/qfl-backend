@@ -28,9 +28,17 @@ if settings.sota_enabled:
             "task": "app.tasks.sync_tasks.sync_best_players",
             "schedule": crontab(minute="*/15"),
         },
+        "auto-start-live-games": {
+            "task": "app.tasks.live_tasks.auto_start_live_games",
+            "schedule": crontab(minute="*/2"),
+        },
         "sync-live-events": {
             "task": "app.tasks.live_tasks.sync_live_game_events",
             "schedule": 15.0,
+        },
+        "auto-end-finished-games": {
+            "task": "app.tasks.live_tasks.auto_end_finished_games",
+            "schedule": crontab(minute="*/5"),
         },
     }
 else:

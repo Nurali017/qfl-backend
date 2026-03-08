@@ -33,6 +33,7 @@ from app.models.team_of_week import TeamOfWeek
 from app.models.cup_draw import CupDraw
 from app.models.broadcaster import Broadcaster
 from app.models.game_broadcaster import GameBroadcaster
+from app.models.media_video import MediaVideo
 
 __all__ = [
     "Season",
@@ -76,4 +77,5 @@ __all__ = [
     "CupDraw",
     "Broadcaster",
     "GameBroadcaster",
+    "MediaVideo",
 ]

@@ -1,11 +1,9 @@
 """
-Pre-game lineup sync service.
+Lineup sync service.
 
-Syncs from SOTA /public/v1/games/{game_id}/pre_game_lineup/ endpoint:
-- Referees + their roles
-- Coaches + team assignments for the season
-- Player lineups (starters/substitutes)
-- Live positions from /em/{game_id}-team-{home,away}.json (amplua/position)
+Uses /em/ live feed as the sole lineup source (explicit ОСНОВНЫЕ/ЗАПАСНЫЕ markers).
+- Player lineups (starters/substitutes) from /em/{game_id}-team-{home,away}.json
+- Live positions, formations, kit colors
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import (
@@ -33,6 +31,7 @@ from app.utils.lineup_feed_parser import (
     STARTING_MARKERS,
     SUBS_MARKERS,
     normalize_lineup_entry,
+    parse_team_lineup_feed,
 )
 from app.utils.lineup_positions import derive_field_positions, infer_formation
 
@@ -244,6 +243,25 @@ class LineupSyncService(BaseSyncService):
                 ),
             )
             .values(lineup_type=LineupType.substitute)
+        )
+        return int(result.rowcount or 0)
+
+    async def _delete_stale_lineup_players(
+        self,
+        *,
+        game_id: int,
+        team_id: int,
+        keep_player_ids: set[int],
+    ) -> int:
+        """Delete lineup players not present in the authoritative SOTA protocol."""
+        if not keep_player_ids:
+            return 0
+        result = await self.db.execute(
+            delete(GameLineup).where(
+                GameLineup.game_id == game_id,
+                GameLineup.team_id == team_id,
+                ~GameLineup.player_id.in_(sorted(keep_player_ids)),
+            )
         )
         return int(result.rowcount or 0)
 
@@ -555,6 +573,7 @@ class LineupSyncService(BaseSyncService):
         timeout_seconds: float | None = None,
         auto_commit: bool = True,
         touch_live_sync_timestamp: bool = True,
+        allow_insert_override: bool | None = None,
     ) -> dict:
         """
         Enrich lineup records with live SOTA positioning and kit colors.
@@ -629,14 +648,24 @@ class LineupSyncService(BaseSyncService):
                 setattr(game, kit_field, kit_color)
                 result["kit_colors_updated"] += 1
 
+            effective_allow_insert = (
+                allow_insert_override
+                if allow_insert_override is not None
+                else (mode == "finished_repair")
+            )
+            effective_create_missing = (
+                allow_insert_override
+                if allow_insert_override is not None
+                else (mode == "finished_repair")
+            )
             team_result = await self._apply_live_team_updates(
                 game_uuid=game_id,
                 team_id=team_id,
                 live_data=live_data,
-                allow_insert=(mode == "finished_repair"),
+                allow_insert=effective_allow_insert,
                 update_lineup_type=(mode == "finished_repair"),
                 update_captain=(mode == "finished_repair"),
-                create_missing_players=(mode == "finished_repair"),
+                create_missing_players=effective_create_missing,
                 strict_lineup_sections=(mode == "finished_repair"),
             )
             result["positions_updated"] += team_result["positions_updated"]
@@ -775,19 +804,48 @@ class LineupSyncService(BaseSyncService):
 
         return result
 
+    async def _get_matchday_player_ids(
+        self,
+        *,
+        sota_uuid: str,
+        side: str,
+        vsporte_id: str | None,
+    ) -> set[int] | None:
+        """Parse /em/ feed and return set of player_id for match-day squad."""
+        live_data = await self._fetch_live_team_data(
+            game_id=sota_uuid,
+            side=side,
+            timeout_seconds=5.0,
+            vsporte_id=vsporte_id,
+        )
+        if not live_data:
+            return None
+        parsed = parse_team_lineup_feed(live_data)
+        if not (parsed["has_starting_marker"] and parsed["has_subs_marker"]):
+            return None
+        player_ids: set[int] = set()
+        for p in parsed["main"] + parsed["subs"]:
+            pid = await self._resolve_player_id_by_sota(
+                {"id": p.get("id")}, create_if_missing=False,
+            )
+            if pid:
+                player_ids.add(pid)
+        return player_ids if len(player_ids) >= 11 else None
+
     async def sync_pre_game_lineup(self, game_id: int) -> dict[str, int]:
         """
-        Sync pre-game lineup data for a specific game.
+        Sync pre-game lineup using /em/ live feed as the sole source.
 
-        Returns dict with counts:
-        - referees
-        - coaches
-        - lineups
+        The /em/ feed has explicit ОСНОВНЫЕ/ЗАПАСНЫЕ markers and contains
+        only match-day players (not the full 25-man squad).
+
+        Returns dict with counts of synced entities.
         """
         result: dict[str, int] = {
             "referees": 0,
             "coaches": 0,
             "lineups": 0,
+            "players_deleted": 0,
             "positions_updated": 0,
             "players_added": 0,
             "formations_updated": 0,
@@ -799,79 +857,8 @@ class LineupSyncService(BaseSyncService):
             return result
         sota_uuid = str(game.sota_id)
 
-        try:
-            lineup_data = await self.client.get_pre_game_lineup(sota_uuid)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Failed to fetch pre-game lineup for game %s: %s", game_id, e)
-            return result
-
-        if not isinstance(lineup_data, dict):
-            return result
-
-        for team_key, team_id in (("home_team", game.home_team_id), ("away_team", game.away_team_id)):
-            if not team_id:
-                continue
-
-            team_data = lineup_data.get(team_key, {})
-            if not isinstance(team_data, dict):
-                continue
-
-            all_players = team_data.get("lineup", []) or []
-            explicit_substitutes = team_data.get("substitutes", []) or []
-
-            if explicit_substitutes:
-                starters = all_players
-                substitutes = explicit_substitutes
-            else:
-                field_players = [p for p in all_players if not p.get("is_gk")]
-                goalkeepers = [p for p in all_players if p.get("is_gk")]
-
-                starter_field = field_players[:10]
-                starter_gk = goalkeepers[:1] if goalkeepers else []
-                starters = starter_gk + starter_field
-
-                substitutes = goalkeepers[1:] + field_players[10:]
-
-            for player_data, lineup_type in (
-                *((p, LineupType.starter) for p in starters),
-                *((p, LineupType.substitute) for p in substitutes),
-            ):
-                player_internal_id = await self._ensure_player_exists(player_data)
-                if player_internal_id is None:
-                    continue
-
-                gl_stmt = insert(GameLineup).values(
-                    game_id=game_id,
-                    team_id=team_id,
-                    player_id=player_internal_id,
-                    lineup_type=lineup_type,
-                    shirt_number=player_data.get("number"),
-                    is_captain=player_data.get("is_captain", False),
-                )
-                gl_stmt = gl_stmt.on_conflict_do_update(
-                    index_elements=["game_id", "player_id"],
-                    set_={
-                        "team_id": gl_stmt.excluded.team_id,
-                        "lineup_type": gl_stmt.excluded.lineup_type,
-                        "shirt_number": gl_stmt.excluded.shirt_number,
-                        "is_captain": gl_stmt.excluded.is_captain,
-                    },
-                )
-                await self.db.execute(gl_stmt)
-                result["lineups"] += 1
-
-        if result["lineups"] > 0:
-            await self.db.execute(
-                Game.__table__
-                .update()
-                .where(Game.id == game_id)
-                .values(
-                    has_lineup=True,
-                    lineup_source="sota_api",
-                    updated_at=datetime.utcnow(),
-                )
-            )
-
+        # /em/ feed — единственный источник: добавляет игроков
+        # с правильной классификацией ОСНОВНЫЕ/ЗАПАСНЫЕ
         live_result = await self.sync_live_positions_and_kits(
             game_id,
             mode="finished_repair",
@@ -880,8 +867,38 @@ class LineupSyncService(BaseSyncService):
         )
         result["positions_updated"] += int(live_result.get("positions_updated", 0))
         result["players_added"] += int(live_result.get("players_added", 0))
+        result["lineups"] = int(live_result.get("players_added", 0))
         result["formations_updated"] += int(live_result.get("formations_updated", 0))
         result["kit_colors_updated"] += int(live_result.get("kit_colors_updated", 0))
+
+        # Обновить has_lineup если появились игроки
+        if result["players_added"] > 0 or live_result.get("status") == "updated":
+            await self.db.execute(
+                Game.__table__.update()
+                .where(Game.id == game_id)
+                .values(
+                    has_lineup=True,
+                    lineup_source="sota_live",
+                    updated_at=datetime.utcnow(),
+                )
+            )
+
+        # Сузить до матчевого дня и удалить лишних
+        for side, team_id in (("home", game.home_team_id), ("away", game.away_team_id)):
+            if not team_id:
+                continue
+            matchday_ids = await self._get_matchday_player_ids(
+                sota_uuid=sota_uuid,
+                side=side,
+                vsporte_id=game.vsporte_id,
+            )
+            if matchday_ids:
+                deleted = await self._delete_stale_lineup_players(
+                    game_id=game_id,
+                    team_id=team_id,
+                    keep_player_ids=matchday_ids,
+                )
+                result["players_deleted"] += deleted
 
         await self.db.commit()
         return result
