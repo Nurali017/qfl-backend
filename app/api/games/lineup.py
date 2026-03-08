@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import get_db
 from app.models import (
@@ -54,13 +54,13 @@ async def get_game_lineup(
         select(Game)
         .where(Game.id == game_id)
         .options(
-            selectinload(Game.home_team),
-            selectinload(Game.away_team),
-            selectinload(Game.season)
-            .selectinload(Season.championship),
+            joinedload(Game.home_team),
+            joinedload(Game.away_team),
+            joinedload(Game.season)
+            .joinedload(Season.championship),
         )
     )
-    game = game_result.scalar_one_or_none()
+    game = game_result.unique().scalar_one_or_none()
 
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
