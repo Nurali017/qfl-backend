@@ -84,7 +84,7 @@ class LiveSyncService:
     async def get_games_to_end(self) -> list[Game]:
         """Get live games that should have ended (started > 2 hours ago)."""
         now = datetime.now(ZoneInfo("Asia/Almaty"))
-        cutoff = now - timedelta(hours=2, minutes=6)
+        cutoff = (now - timedelta(hours=2, minutes=6)).replace(tzinfo=None)
 
         # Combine date + time into a timestamp for proper comparison.
         # COALESCE(time, '00:00:00') handles nullable time field.
