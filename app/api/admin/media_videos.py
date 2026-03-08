@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.caching import invalidate_pattern
 from app.models.media_video import MediaVideo
 from app.schemas.admin.media_videos import (
     AdminMediaVideoResponse,
@@ -67,7 +66,6 @@ async def create_media_video(
     db.add(video)
     await db.commit()
     await db.refresh(video)
-    await invalidate_pattern("*app.api.media_videos*")
     return _to_response(video)
 
 
@@ -96,7 +94,6 @@ async def update_media_video(
 
     await db.commit()
     await db.refresh(video)
-    await invalidate_pattern("*app.api.media_videos*")
     return _to_response(video)
 
 
@@ -111,4 +108,3 @@ async def delete_media_video(
         raise HTTPException(status_code=404, detail="Media video not found")
     await db.delete(video)
     await db.commit()
-    await invalidate_pattern("*app.api.media_videos*")

@@ -5,8 +5,6 @@ from uuid import uuid4
 from datetime import date, time
 
 from httpx import AsyncClient, ASGITransport
-from fastapi_cache import FastAPICache
-from fastapi_cache.backends.inmemory import InMemoryBackend
 from sqlalchemy import event, String
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -85,9 +83,6 @@ async def client(test_session) -> AsyncGenerator[AsyncClient, None]:
         yield test_session
 
     app.dependency_overrides[get_db] = override_get_db
-
-    # Initialize FastAPICache with in-memory backend for tests
-    FastAPICache.init(InMemoryBackend(), prefix="test", expire=0)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import get_current_admin, require_roles
 from app.api.deps import get_db
-from app.caching import invalidate_pattern
 from app.models import AdminUser
 from app.schemas.admin.cup_draw import (
     AddPairRequest,
@@ -33,11 +32,6 @@ router = APIRouter(
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def _invalidate_cup_related_cache() -> None:
-    await invalidate_pattern("*app.api.seasons*")
-    await invalidate_pattern("*app.api.cup*")
 
 
 def _draw_to_response(draw, teams_by_id: dict | None = None) -> CupDrawResponse:
@@ -123,7 +117,6 @@ async def add_pair_endpoint(
         "cup_draw_action action=add_pair season_id=%s round_key=%s sort_order=%s admin_user_id=%s",
         season_id, round_key, body.sort_order, current_admin.id,
     )
-    await _invalidate_cup_related_cache()
     return await _enrich_draw(db, draw)
 
 
@@ -144,7 +137,6 @@ async def publish_pair_endpoint(
         "cup_draw_action action=publish_pair season_id=%s round_key=%s sort_order=%s admin_user_id=%s",
         season_id, round_key, sort_order, current_admin.id,
     )
-    await _invalidate_cup_related_cache()
     return await _enrich_draw(db, draw)
 
 
@@ -165,7 +157,6 @@ async def delete_pair_endpoint(
         "cup_draw_action action=delete_pair season_id=%s round_key=%s sort_order=%s admin_user_id=%s",
         season_id, round_key, sort_order, current_admin.id,
     )
-    await _invalidate_cup_related_cache()
     return await _enrich_draw(db, draw)
 
 
@@ -181,7 +172,6 @@ async def complete_draw_endpoint(
         "cup_draw_action action=complete season_id=%s round_key=%s admin_user_id=%s",
         season_id, round_key, current_admin.id,
     )
-    await _invalidate_cup_related_cache()
     return await _enrich_draw(db, draw)
 
 

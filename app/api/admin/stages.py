@@ -4,7 +4,6 @@ from sqlalchemy import select, func
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.caching import invalidate_pattern
 from app.models import Season, Stage
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.schemas.admin.stages import (
@@ -54,7 +53,6 @@ async def create_stage(
     db.add(obj)
     await db.commit()
     await db.refresh(obj)
-    await invalidate_pattern("*app.api.seasons*")
     return AdminStageResponse.model_validate(obj)
 
 
@@ -81,7 +79,6 @@ async def update_stage(
 
     await db.commit()
     await db.refresh(obj)
-    await invalidate_pattern("*app.api.seasons*")
     return AdminStageResponse.model_validate(obj)
 
 
@@ -101,4 +98,3 @@ async def delete_stage(id: int, db: AsyncSession = Depends(get_db)):
 
     await db.delete(obj)
     await db.commit()
-    await invalidate_pattern("*app.api.seasons*")

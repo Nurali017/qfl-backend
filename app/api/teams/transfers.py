@@ -12,7 +12,6 @@ from app.services.season_visibility import (
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.positions import infer_position_code
 from app.utils.team_logo_fallback import resolve_team_logo_url
-from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
@@ -55,7 +54,6 @@ def _build_team_info(team: Team, lang: str) -> dict:
 
 
 @router.get("/{team_id}/transfers")
-@cache(expire=3600)
 async def get_team_transfers(
     team_id: int,
     season_id: int = Query(default=None),

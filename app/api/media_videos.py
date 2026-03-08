@@ -5,13 +5,11 @@ from sqlalchemy import select
 from app.api.deps import get_db
 from app.models.media_video import MediaVideo
 from app.schemas.media_video import MediaVideoResponse, MediaVideoListResponse
-from fastapi_cache.decorator import cache
 
 router = APIRouter(prefix="/media-videos", tags=["media-videos"])
 
 
 @router.get("", response_model=MediaVideoListResponse)
-@cache(expire=900)
 async def get_media_videos(
     limit: int = Query(default=10, le=50),
     db: AsyncSession = Depends(get_db),
