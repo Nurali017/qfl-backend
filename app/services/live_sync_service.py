@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import delete, select, and_, or_, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,7 +20,10 @@ from sqlalchemy.orm import selectinload
 from app.models import Game, GameEvent, GameEventType, GameLineup, GamePlayerStats, GameTeamStats, GameStatus, LineupType, Team, Player, PlayerTeam
 from app.services.sota_client import SotaClient
 from app.services.sync.lineup_sync import LineupSyncService
+from app.services.telegram import send_telegram_message
+from app.utils.live_flag import get_redis
 from app.utils.team_name_matcher import TeamNameMatcher
+from app.utils.timestamps import utcnow
 
 
 # Mapping SOTA action names to our event types
@@ -81,7 +84,7 @@ class LiveSyncService:
     async def get_games_to_end(self) -> list[Game]:
         """Get live games that should have ended (started > 2 hours ago)."""
         now = datetime.now(ZoneInfo("Asia/Almaty"))
-        cutoff = now - timedelta(hours=2, minutes=15)
+        cutoff = now - timedelta(hours=2, minutes=6)
 
         # Combine date + time into a timestamp for proper comparison.
         # COALESCE(time, '00:00:00') handles nullable time field.
@@ -169,6 +172,7 @@ class LiveSyncService:
 
         sota_uuid = str(game.sota_id)
         total_lineup = 0
+        synced_player_ids: dict[int, set[int]] = {}
 
         for side, team_id in (("home", game.home_team_id), ("away", game.away_team_id)):
             if not team_id:
@@ -194,15 +198,34 @@ class LiveSyncService:
             # Extract starters and substitutes using ОСНОВНЫЕ/ЗАПАСНЫЕ markers
             starters, substitutes = self._extract_players(live_data)
 
+            team_players: set[int] = set()
             for player_data in starters:
-                total_lineup += await self._save_player_lineup(
+                pid = await self._save_player_lineup(
                     game_id, team_id, player_data, LineupType.starter,
                     season_id=game.season_id,
                 )
+                if pid:
+                    team_players.add(pid)
+                    total_lineup += 1
             for player_data in substitutes:
-                total_lineup += await self._save_player_lineup(
+                pid = await self._save_player_lineup(
                     game_id, team_id, player_data, LineupType.substitute,
                     season_id=game.season_id,
+                )
+                if pid:
+                    team_players.add(pid)
+                    total_lineup += 1
+            synced_player_ids[team_id] = team_players
+
+        # Reconciliation: remove players no longer in SOTA lineup
+        for team_id, player_ids in synced_player_ids.items():
+            if player_ids:  # only if SOTA returned data for this team
+                await self.db.execute(
+                    delete(GameLineup).where(
+                        GameLineup.game_id == game_id,
+                        GameLineup.team_id == team_id,
+                        GameLineup.player_id.notin_(player_ids),
+                    )
                 )
 
         game.lineup_source = "sota_live"
@@ -222,8 +245,8 @@ class LiveSyncService:
         player_data: dict,
         lineup_type: LineupType,
         season_id: int | None = None,
-    ) -> int:
-        """Save a single player lineup entry."""
+    ) -> int | None:
+        """Save a single player lineup entry. Returns player_id or None."""
         player_internal_id = await self._get_or_create_player_by_sota(
             player_data.get("id"),
             player_data.get("first_name"),
@@ -232,7 +255,7 @@ class LiveSyncService:
             season_id=season_id,
         )
         if player_internal_id is None:
-            return 0
+            return None
 
         shirt_number = player_data.get("number")
         if isinstance(shirt_number, str):
@@ -269,7 +292,7 @@ class LiveSyncService:
             }
         )
         await self.db.execute(stmt)
-        return 1
+        return player_internal_id
 
     async def _get_or_create_player_by_sota(
         self,
@@ -314,14 +337,26 @@ class LiveSyncService:
                 logger.info("Linked sota_id to existing player %s (id=%s)", f"{first_name} {last_name}", existing.id)
                 return existing.id
 
-        player = Player(
-            sota_id=sota_id,
-            first_name=first_name or "",
-            last_name=last_name or "",
-        )
-        self.db.add(player)
-        await self.db.flush()
-        return player.id
+        # Unknown player — notify via Telegram (deduplicated by Redis)
+        try:
+            redis_client = await get_redis()
+            redis_key = "qfl:notified_unknown_players"
+            member = str(sota_id)
+            added = await redis_client.sadd(redis_key, member)
+            if added:
+                await redis_client.expire(redis_key, 7200)  # 2 hours
+                await send_telegram_message(
+                    f"⚠️ Неизвестный игрок в SOTA lineup\n\n"
+                    f"👤 {first_name} {last_name}\n"
+                    f"🆔 SOTA ID: {sota_id}\n"
+                    f"🏟 Team ID: {team_id}\n"
+                    f"📅 Season ID: {season_id}\n\n"
+                    f"Игрок не найден в БД. Добавьте вручную."
+                )
+        except Exception:
+            logger.exception("Failed to send unknown player notification")
+        logger.warning("Unknown player in SOTA: %s %s (sota_id=%s)", first_name, last_name, sota_id)
+        return None
 
     async def sync_live_stats(self, game_id: int) -> dict:
         """
@@ -890,7 +925,7 @@ class LiveSyncService:
             await self.sync_pregame_lineup(game_id)
 
         game.status = GameStatus.live
-        game.half1_started_at = datetime.utcnow()
+        game.half1_started_at = utcnow()
         await self.db.commit()
 
         await set_live_flag()
@@ -904,14 +939,24 @@ class LiveSyncService:
         }
 
     async def stop_live_tracking(self, game_id: int) -> dict:
-        """Stop live tracking for a game."""
+        """Stop live tracking for a game. Performs final sync before marking finished."""
         from app.utils.live_flag import clear_live_flag
 
         game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found"}
 
+        # Final sync before marking finished
+        if game.sota_id and not game.sync_disabled:
+            try:
+                await self.sync_live_events(game_id)
+                await self.sync_live_stats(game_id)
+                await self.sync_live_player_stats(game_id)
+            except Exception:
+                logger.exception("Final sync failed for game %s", game_id)
+
         game.status = GameStatus.finished
+        game.finished_at = utcnow()
         await self.db.commit()
 
         # Clear flag if no other live games remain

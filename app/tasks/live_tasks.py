@@ -5,14 +5,21 @@ Tasks:
 - auto_start_live_games: Auto-start live tracking for games whose scheduled time has passed
 - sync_live_game_events: Sync events, lineup, and stats for active games
 - auto_end_finished_games: Auto-end games that have been live for over 2h15m
+- sync_post_match_protocol: Re-sync events & stats for recently finished games
 """
 import logging
+from datetime import datetime, timedelta
+
+from sqlalchemy import select
 
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
+from app.models import Game, GameStatus
 from app.services.live_sync_service import LiveSyncService
 from app.services.sota_client import get_sota_client
+from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
+from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +156,65 @@ async def _auto_end_finished_games():
             raise
 
 
+async def _sync_post_match_protocol():
+    """Re-sync events & stats for recently finished games (within 6 hours)."""
+    cutoff = utcnow() - timedelta(hours=6)
+
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(Game).where(
+                    Game.status == GameStatus.finished,
+                    Game.finished_at.isnot(None),
+                    Game.finished_at >= cutoff,
+                    Game.sota_id.isnot(None),
+                    Game.sync_disabled == False,
+                )
+            )
+            games = list(result.scalars().all())
+            if not games:
+                return {"synced": 0}
+
+            client = get_sota_client()
+            service = LiveSyncService(db, client)
+            changes_summary = []
+
+            for game in games:
+                try:
+                    events = await service.sync_live_events(game.id)
+                    await service.sync_live_stats(game.id)
+                    await service.sync_live_player_stats(game.id)
+
+                    has_changes = (
+                        events.get("added", 0) > 0
+                        or events.get("updated", 0) > 0
+                        or events.get("deleted", 0) > 0
+                    )
+                    if has_changes:
+                        changes_summary.append({
+                            "game_id": game.id,
+                            "events": events,
+                        })
+                except Exception:
+                    logger.exception("Post-match sync failed for game %s", game.id)
+
+            if changes_summary:
+                lines = ["\U0001f4cb \u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u0440\u043e\u0442\u043e\u043a\u043e\u043b\u0430 \u043f\u043e\u0441\u043b\u0435 \u043c\u0430\u0442\u0447\u0430\n"]
+                for ch in changes_summary:
+                    ev = ch["events"]
+                    lines.append(
+                        f"\U0001f3df Game #{ch['game_id']}: "
+                        f"+{ev.get('added', 0)} / ~{ev.get('updated', 0)} / -{ev.get('deleted', 0)} \u0441\u043e\u0431\u044b\u0442\u0438\u0439"
+                    )
+                await send_telegram_message("\n".join(lines))
+
+            await db.commit()
+            return {"synced": len(games), "changes": len(changes_summary)}
+        except Exception:
+            await db.rollback()
+            raise
+
+
 # ==================== Celery Tasks ====================
 
 
@@ -168,3 +234,9 @@ def sync_live_game_events():
 def auto_end_finished_games():
     """Celery task: Auto-end games that have been live for over 2h15m. Runs every 5 minutes."""
     return run_async(_auto_end_finished_games())
+
+
+@celery_app.task(name="app.tasks.live_tasks.sync_post_match_protocol")
+def sync_post_match_protocol():
+    """Celery task: Re-sync protocol for recently finished games. Runs every 30 minutes."""
+    return run_async(_sync_post_match_protocol())

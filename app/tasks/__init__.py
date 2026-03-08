@@ -38,7 +38,15 @@ if settings.sota_enabled:
         },
         "auto-end-finished-games": {
             "task": "app.tasks.live_tasks.auto_end_finished_games",
-            "schedule": crontab(minute="*/5"),
+            "schedule": crontab(minute="*/3"),
+        },
+        "sync-post-match-protocol": {
+            "task": "app.tasks.live_tasks.sync_post_match_protocol",
+            "schedule": crontab(minute="*/30"),
+        },
+        "sync-extended-stats-every-6h": {
+            "task": "app.tasks.sync_tasks.sync_extended_stats",
+            "schedule": crontab(minute="15", hour="*/6"),
         },
     }
 else:

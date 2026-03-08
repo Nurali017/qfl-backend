@@ -7,8 +7,9 @@ from sqlalchemy import select
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
 from app.services.sync import SyncOrchestrator
-from app.models import Game
+from app.models import Game, GameStatus
 from app.config import get_settings
+from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,81 @@ async def _sync_best_players():
             raise
 
 
+async def _sync_extended_stats():
+    """
+    Sync extended stats for games finished 24-72h ago.
+
+    After ~24h, SOTA publishes extended data (xG, detailed passes, duels, etc.).
+    This task:
+    1. Re-syncs game stats with v2 enrichment for recent games
+    2. Syncs team season stats (92 metrics) for affected seasons
+    3. Syncs player season stats (50+ metrics) for affected seasons
+    """
+    async with AsyncSessionLocal() as db:
+        try:
+            now = datetime.now(ZoneInfo("Asia/Almaty"))
+            cutoff_start = now - timedelta(hours=72)
+            cutoff_end = now - timedelta(hours=24)
+
+            orchestrator = SyncOrchestrator(db)
+            seasons_to_sync = set()
+
+            # 1. Find games finished 24-72h ago with SOTA data
+            result = await db.execute(
+                select(Game).where(
+                    Game.status == GameStatus.finished,
+                    Game.finished_at.isnot(None),
+                    Game.finished_at >= cutoff_start,
+                    Game.finished_at <= cutoff_end,
+                    Game.sota_id.isnot(None),
+                    Game.sync_disabled == False,
+                )
+            )
+            games = list(result.scalars().all())
+
+            if not games:
+                return {"extended_stats": "no games in 24-72h window"}
+
+            # 2. Re-sync game stats (with v2 enrichment)
+            game_results = []
+            for game in games:
+                try:
+                    r = await orchestrator.sync_game_stats(game.id)
+                    game_results.append({"game_id": game.id, **r})
+                    seasons_to_sync.add(game.season_id)
+                except Exception as e:
+                    logger.warning("Extended game stats failed for game %s: %s", game.id, e)
+
+            # 3. Sync team + player season stats for affected seasons
+            season_results = {}
+            for season_id in seasons_to_sync:
+                if not await orchestrator.is_sync_enabled(season_id):
+                    continue
+                team_count = await orchestrator.sync_team_season_stats(season_id)
+                player_count = await orchestrator.sync_player_stats(season_id)
+                season_results[season_id] = {
+                    "teams": team_count,
+                    "players": player_count,
+                }
+
+            await db.commit()
+
+            # 4. Telegram notification
+            if season_results:
+                lines = ["📊 Extended stats synced (24h+ post-match)"]
+                for sid, counts in season_results.items():
+                    lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
+                await send_telegram_message("\n".join(lines))
+
+            return {
+                "games_resynced": len(game_results),
+                "seasons_synced": season_results,
+            }
+        except Exception:
+            await db.rollback()
+            raise
+
+
 @celery_app.task(name="app.tasks.sync_tasks.sync_games")
 def sync_games():
     """Celery task: Sync games for all configured seasons."""
@@ -115,3 +191,9 @@ def sync_live_stats():
 def sync_best_players():
     """Celery task: Sync goals + assists from best_players endpoint."""
     return run_async(_sync_best_players())
+
+
+@celery_app.task(name="app.tasks.sync_tasks.sync_extended_stats")
+def sync_extended_stats():
+    """Celery task: Sync extended stats 24h+ after match finish."""
+    return run_async(_sync_extended_stats())

@@ -90,6 +90,9 @@ class Game(Base):
     half1_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     half2_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # When match was marked as finished (for post-match protocol sync window)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
     # Broadcast fields (В-1)
     where_broadcast: Mapped[str | None] = mapped_column(String(500))  # Where to watch
     video_review_url: Mapped[str | None] = mapped_column(String(500))  # Video review URL
