@@ -8,6 +8,7 @@ Handles:
 """
 import logging
 from datetime import datetime, date, time as dt_time, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 from uuid import UUID
 
@@ -67,7 +68,7 @@ class LiveSyncService:
 
     async def get_games_to_start(self) -> list[Game]:
         """Get games whose scheduled start time is within 1 min ahead or up to 30 min ago."""
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("Asia/Almaty"))
         today = now.date()
         # Allow starting 1 minute before scheduled time
         latest_time = (now + timedelta(minutes=1)).time()
@@ -99,7 +100,7 @@ class LiveSyncService:
 
     async def get_games_to_end(self) -> list[Game]:
         """Get live games that should have ended (started > 2 hours ago)."""
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("Asia/Almaty"))
         cutoff = now - timedelta(hours=2, minutes=15)
 
         # Combine date + time into a timestamp for proper comparison.
