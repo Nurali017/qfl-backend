@@ -6,7 +6,7 @@ from datetime import date as date_type, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import desc, select, func, or_
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import get_db
 from app.models import (
@@ -316,16 +316,16 @@ async def get_game(
         select(Game)
         .where(Game.id == game_id)
         .options(
-            selectinload(Game.home_team),
-            selectinload(Game.away_team),
-            selectinload(Game.season),
-            selectinload(Game.stadium_rel),
-            selectinload(Game.stage),
+            joinedload(Game.home_team),
+            joinedload(Game.away_team),
+            joinedload(Game.season),
+            joinedload(Game.stadium_rel),
+            joinedload(Game.stage),
             selectinload(Game.referees).selectinload(GameReferee.referee),
             selectinload(Game.broadcasters).selectinload(GameBroadcaster.broadcaster),
         )
     )
-    game = result.scalar_one_or_none()
+    game = result.unique().scalar_one_or_none()
 
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
