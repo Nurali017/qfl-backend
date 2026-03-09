@@ -102,39 +102,38 @@ async def _sync_best_players():
 
 async def _sync_extended_stats():
     """
-    Sync extended stats for games finished 24-72h ago.
+    Sync extended stats for games finished 24h+ ago that haven't been synced yet.
 
     After ~24h, SOTA publishes extended data (xG, detailed passes, duels, etc.).
     This task:
-    1. Re-syncs game stats with v2 enrichment for recent games
-    2. Syncs team season stats (92 metrics) for affected seasons
-    3. Syncs player season stats (50+ metrics) for affected seasons
+    1. Finds finished games without extended_stats_synced_at (24h+ after finish)
+    2. Re-syncs game stats with v2 enrichment
+    3. Syncs team/player season stats ONLY if new games were processed
+    4. Marks games as synced to avoid redundant work
     """
     async with AsyncSessionLocal() as db:
         try:
             now = datetime.utcnow()
-            cutoff_start = now - timedelta(hours=72)
-            cutoff_end = now - timedelta(hours=24)
-            logger.info("Extended stats window: %s to %s", cutoff_start, cutoff_end)
+            cutoff = now - timedelta(hours=24)
 
             orchestrator = SyncOrchestrator(db)
             seasons_to_sync = set()
 
-            # 1. Find games finished 24-72h ago with SOTA data
+            # 1. Find games finished 24h+ ago, not yet synced for extended stats
             result = await db.execute(
                 select(Game).where(
                     Game.status == GameStatus.finished,
                     Game.finished_at.isnot(None),
-                    Game.finished_at >= cutoff_start,
-                    Game.finished_at <= cutoff_end,
+                    Game.finished_at <= cutoff,
                     Game.sota_id.isnot(None),
                     Game.sync_disabled == False,
+                    Game.extended_stats_synced_at.is_(None),
                 )
             )
             games = list(result.scalars().all())
 
             if not games:
-                return {"extended_stats": "no games in 24-72h window"}
+                return {"extended_stats": "no new games to sync"}
 
             # 2. Re-sync game stats (with v2 enrichment)
             game_results = []
@@ -143,6 +142,7 @@ async def _sync_extended_stats():
                 try:
                     r = await orchestrator.sync_game_stats(game.id)
                     game_results.append({"game_id": game.id, **r})
+                    game.extended_stats_synced_at = now
                     seasons_to_sync.add(game.season_id)
                 except Exception as e:
                     logger.warning("Extended game stats failed for game %s: %s", game.id, e)
@@ -165,6 +165,7 @@ async def _sync_extended_stats():
             # 4. Telegram notification
             if season_results or game_errors:
                 lines = ["📊 Extended stats synced (24h+ post-match)"]
+                lines.append(f"Games: {len(game_results)} synced")
                 for sid, counts in season_results.items():
                     lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
                 if game_errors:
