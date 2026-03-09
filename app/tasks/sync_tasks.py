@@ -112,7 +112,7 @@ async def _sync_extended_stats():
     """
     async with AsyncSessionLocal() as db:
         try:
-            now = datetime.utcnow()
+            now = datetime.now(ZoneInfo("UTC"))
             cutoff_start = now - timedelta(hours=72)
             cutoff_end = now - timedelta(hours=24)
 
