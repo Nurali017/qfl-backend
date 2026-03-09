@@ -575,6 +575,7 @@ class LineupSyncService(BaseSyncService):
         auto_commit: bool = True,
         touch_live_sync_timestamp: bool = True,
         allow_insert_override: bool | None = None,
+        sota_only: bool = False,
     ) -> dict:
         """
         Enrich lineup records with live SOTA positioning and kit colors.
@@ -606,6 +607,8 @@ class LineupSyncService(BaseSyncService):
             return result
         sota_uuid = str(game.sota_id) if game.sota_id else ""
         vsporte_id = game.vsporte_id
+        if sota_only:
+            vsporte_id = None
 
         sides_payload: dict[str, list[dict]] = {}
         side_errors: list[str] = []
@@ -833,7 +836,7 @@ class LineupSyncService(BaseSyncService):
                 player_ids.add(pid)
         return player_ids if len(player_ids) >= 11 else None
 
-    async def sync_pre_game_lineup(self, game_id: int) -> dict[str, int]:
+    async def sync_pre_game_lineup(self, game_id: int, *, sota_only: bool = False) -> dict[str, int]:
         """
         Sync pre-game lineup using /em/ live feed as the sole source.
 
@@ -865,6 +868,7 @@ class LineupSyncService(BaseSyncService):
             mode="finished_repair",
             auto_commit=False,
             touch_live_sync_timestamp=False,
+            sota_only=sota_only,
         )
         result["positions_updated"] += int(live_result.get("positions_updated", 0))
         result["players_added"] += int(live_result.get("players_added", 0))
@@ -891,7 +895,7 @@ class LineupSyncService(BaseSyncService):
             matchday_ids = await self._get_matchday_player_ids(
                 sota_uuid=sota_uuid,
                 side=side,
-                vsporte_id=game.vsporte_id,
+                vsporte_id=None if sota_only else game.vsporte_id,
             )
             if matchday_ids:
                 deleted = await self._delete_stale_lineup_players(

@@ -74,6 +74,30 @@ class LiveSyncService:
         )
         return list(result.scalars().all())
 
+    async def get_games_for_pregame_lineup(self) -> list[Game]:
+        """Get games starting within 30 minutes that don't have lineup yet."""
+        now = datetime.now(ZoneInfo("Asia/Almaty"))
+        today = now.date()
+        current_time = now.time()
+        latest_time = (now + timedelta(minutes=30)).time()
+
+        result = await self.db.execute(
+            select(Game).where(
+                and_(
+                    Game.date == today,
+                    Game.time.isnot(None),
+                    Game.time >= current_time,
+                    Game.time <= latest_time,
+                    Game.status == GameStatus.created,
+                    Game.sota_id.isnot(None),
+                    Game.sync_disabled == False,
+                    Game.is_schedule_tentative == False,
+                    Game.has_lineup == False,
+                )
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_active_games(self) -> list[Game]:
         """Get games that are currently live."""
         result = await self.db.execute(
@@ -143,9 +167,11 @@ class LiveSyncService:
         row = result.scalar_one_or_none()
         return row
 
-    async def sync_pregame_lineup(self, game_id: int) -> dict:
+    async def sync_pregame_lineup(self, game_id: int, *, sota_only: bool = False) -> dict:
         """Sync pre-game lineup data for a match."""
-        sync_result = await LineupSyncService(self.db, self.client).sync_pre_game_lineup(game_id)
+        sync_result = await LineupSyncService(self.db, self.client).sync_pre_game_lineup(
+            game_id, sota_only=sota_only,
+        )
         game = await self.db.get(Game, game_id)
         if not game:
             return {"error": f"Game {game_id} not found"}
