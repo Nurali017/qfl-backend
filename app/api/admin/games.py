@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -92,6 +93,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
 @router.get("", response_model=AdminGamesListResponse)
 async def list_games(
     season_id: int | None = Query(default=None),
+    tour: int | None = Query(default=None),
     status: str | None = Query(default=None, description="upcoming, live, finished, postponed, cancelled"),
     team_id: int | None = Query(default=None),
     date_from: date | None = Query(default=None),
@@ -111,6 +113,8 @@ async def list_games(
     filters = []
     if season_id is not None:
         filters.append(Game.season_id == season_id)
+    if tour is not None:
+        filters.append(Game.tour == tour)
     if team_id is not None:
         filters.append(
             (Game.home_team_id == team_id) | (Game.away_team_id == team_id)
@@ -225,6 +229,27 @@ async def update_game(
     }
     for field, value in update_data.items():
         setattr(game, field, value)
+
+    # Auto-extract attendance from protocol PDF
+    if "protocol_url" in update_data and update_data["protocol_url"] and "visitors" not in update_data:
+        try:
+            from app.minio_client import get_minio_client
+            from app.config import get_settings
+            from app.utils.file_urls import to_object_name
+            from app.utils.protocol_parser import extract_attendance_from_protocol
+
+            _settings = get_settings()
+            object_name = to_object_name(update_data["protocol_url"])
+            if object_name:
+                attendance = extract_attendance_from_protocol(
+                    get_minio_client(), _settings.minio_bucket, object_name
+                )
+                if attendance is not None:
+                    game.visitors = attendance
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to extract attendance from protocol for game %s", game_id, exc_info=True
+            )
 
     await db.commit()
     result = await db.execute(
