@@ -119,7 +119,7 @@ async def _sync_extended_stats():
             orchestrator = SyncOrchestrator(db)
             seasons_to_sync = set()
 
-            # 1. Find games finished 24h+ ago, not yet synced for extended stats
+            # 1. Find games finished 24h+ ago, not yet synced, in active seasons only
             result = await db.execute(
                 select(Game).where(
                     Game.status == GameStatus.finished,
@@ -128,6 +128,7 @@ async def _sync_extended_stats():
                     Game.sota_id.isnot(None),
                     Game.sync_disabled == False,
                     Game.extended_stats_synced_at.is_(None),
+                    Game.season_id.in_(settings.sync_season_ids),
                 )
             )
             games = list(result.scalars().all())
