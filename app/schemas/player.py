@@ -106,7 +106,6 @@ class PlayerStatsTableEntry(BaseModel):
     team_name: str | None = None
     team_logo: str | None = None
     player_type: str | None = None
-    top_role: str | None = None
     position_code: str | None = None
 
     # Stats
@@ -131,6 +130,7 @@ class PlayerStatsTableEntry(BaseModel):
     dribble: int | None = None
     dribble_success: int | None = None
     yellow_cards: int | None = None
+    second_yellow_cards: int | None = None
     red_cards: int | None = None
     # Goalkeeper stats
     save_shot: int | None = None

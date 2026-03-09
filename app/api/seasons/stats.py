@@ -16,7 +16,6 @@ from app.services.season_participants import resolve_season_participants
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_field
 from app.utils.numbers import to_finite_float
-from app.utils.positions import infer_position_code
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.season import (
     GoalPeriodItem, GoalsByPeriodMeta,
@@ -31,6 +30,9 @@ from app.api.seasons.router import GOAL_PERIOD_LABELS, _get_goal_period_index
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
+AMPLUA_TO_POSITION = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+POSITION_TO_AMPLUA = {v: k for k, v in AMPLUA_TO_POSITION.items()}
+
 _ensure_visible_season = ensure_visible_season_or_404
 
 
@@ -42,7 +44,7 @@ PLAYER_STATS_SORT_FIELDS = [
     "tackle", "interception", "recovery",
     "dribble", "dribble_success",
     "minutes_played", "games_played",
-    "yellow_cards", "red_cards",
+    "yellow_cards", "second_yellow_cards", "red_cards",
     "save_shot", "dry_match",
 ]
 
@@ -76,10 +78,16 @@ async def get_player_stats_table(
             detail=f"Invalid sort_by field. Available: {', '.join(PLAYER_STATS_SORT_FIELDS)}",
         )
 
-    # Get the sort column
-    sort_column = getattr(PlayerSeasonStats, sort_by, None)
-    if sort_column is None:
-        raise HTTPException(status_code=400, detail=f"Sort field '{sort_by}' not found")
+    # Get the sort column — red_cards sorts by the computed sum (direct + second yellow)
+    if sort_by == "red_cards":
+        sort_column = (
+            func.coalesce(PlayerSeasonStats.red_cards, 0)
+            + func.coalesce(PlayerSeasonStats.second_yellow_cards, 0)
+        )
+    else:
+        sort_column = getattr(PlayerSeasonStats, sort_by, None)
+        if sort_column is None:
+            raise HTTPException(status_code=400, detail=f"Sort field '{sort_by}' not found")
 
     # Resolve group filter
     if group:
@@ -110,8 +118,27 @@ async def get_player_stats_table(
         .scalar_subquery()
     )
 
+    contract_amplua_subq = (
+        select(PlayerTeam.amplua)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
+    if position_code:
+        filters.append(contract_amplua_subq == POSITION_TO_AMPLUA[position_code])
+
     base_query = (
-        select(PlayerSeasonStats, Player, Team, Country, contract_photo_subq.label("contract_photo"))
+        select(
+            PlayerSeasonStats, Player, Team, Country,
+            contract_photo_subq.label("contract_photo"),
+            contract_amplua_subq.label("contract_amplua"),
+        )
         .join(Player, PlayerSeasonStats.player_id == Player.id)
         .outerjoin(Team, PlayerSeasonStats.team_id == Team.id)
         .outerjoin(Country, Player.country_id == Country.id)
@@ -124,10 +151,8 @@ async def get_player_stats_table(
         team: Team | None,
         country: Country | None,
         contract_photo: str | None = None,
+        contract_amplua: int | None = None,
     ) -> PlayerStatsTableEntry:
-        localized_top_role = get_localized_field(player, "top_role", lang)
-        inferred_position_code = infer_position_code(player.player_type, localized_top_role)
-
         country_data = None
         if country:
             country_data = CountryInPlayer(
@@ -147,8 +172,7 @@ async def get_player_stats_table(
             team_name=get_localized_field(team, "name", lang) if team else None,
             team_logo=resolve_team_logo_url(team),
             player_type=player.player_type,
-            top_role=localized_top_role,
-            position_code=inferred_position_code,
+            position_code=AMPLUA_TO_POSITION.get(contract_amplua),
             games_played=stats.games_played,
             minutes_played=stats.minutes_played,
             goals=stats.goals,
@@ -170,64 +194,30 @@ async def get_player_stats_table(
             dribble=stats.dribble,
             dribble_success=stats.dribble_success,
             yellow_cards=stats.yellow_cards,
-            red_cards=stats.red_cards,
+            second_yellow_cards=stats.second_yellow_cards,
+            red_cards=(stats.red_cards or 0) + (stats.second_yellow_cards or 0),
             save_shot=stats.save_shot,
             dry_match=stats.dry_match,
         )
 
-    if position_code is None:
-        count_query = select(func.count()).select_from(base_query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
 
-        query = (
-            base_query.order_by(nulls_last(desc(sort_column))).offset(offset).limit(limit)
-        )
-        result = await db.execute(query)
-        rows = result.all()
-        items = [build_entry(stats, player, team, country, contract_photo) for stats, player, team, country, contract_photo in rows]
-
-        return PlayerStatsTableResponse(
-            season_id=season_id,
-            sort_by=sort_by,
-            items=items,
-            total=total,
-        )
-
-    # Position code filter (computed from players.player_type/top_role); apply in Python.
-    result = await db.execute(base_query)
+    query = (
+        base_query.order_by(nulls_last(desc(sort_column))).offset(offset).limit(limit)
+    )
+    result = await db.execute(query)
     rows = result.all()
-
-    items: list[PlayerStatsTableEntry] = []
-    for stats, player, team, country, contract_photo in rows:
-        entry = build_entry(stats, player, team, country, contract_photo)
-        if entry.position_code != position_code:
-            continue
-        items.append(entry)
-
-    def to_finite_number(value: object) -> float | None:
-        return to_finite_float(value)
-
-    def sort_key(item: PlayerStatsTableEntry) -> tuple:
-        primary_val = to_finite_number(getattr(item, sort_by, None))
-        is_none = 1 if primary_val is None else 0
-        primary_sort = 0.0 if primary_val is None else -primary_val
-        return (
-            is_none,
-            primary_sort,
-            item.last_name or "",
-            item.first_name or "",
-            str(item.player_id),
-        )
-
-    items_sorted = sorted(items, key=sort_key)
-    total = len(items_sorted)
-    paginated_items = items_sorted[offset : offset + limit]
+    items = [
+        build_entry(stats, player, team, country, contract_photo, contract_amplua)
+        for stats, player, team, country, contract_photo, contract_amplua in rows
+    ]
 
     return PlayerStatsTableResponse(
         season_id=season_id,
         sort_by=sort_by,
-        items=paginated_items,
+        items=items,
         total=total,
     )
 
@@ -620,6 +610,26 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
     penalty_result = await db.execute(penalty_scored_query)
     penalties_scored = penalty_result.scalar() or 0
 
+    # Count red cards from game_events (direct reds only)
+    red_card_count_query = select(func.count()).select_from(GameEvent).join(
+        Game, GameEvent.game_id == Game.id
+    ).where(
+        Game.season_id == season_id,
+        GameEvent.event_type == GameEventType.red_card,
+    )
+    red_card_result = await db.execute(red_card_count_query)
+    total_red_cards = red_card_result.scalar() or 0
+
+    # Count second yellow cards from game_events
+    second_yellow_count_query = select(func.count()).select_from(GameEvent).join(
+        Game, GameEvent.game_id == Game.id
+    ).where(
+        Game.season_id == season_id,
+        GameEvent.event_type == GameEventType.second_yellow,
+    )
+    second_yellow_result = await db.execute(second_yellow_count_query)
+    total_second_yellows = second_yellow_result.scalar() or 0
+
     return SeasonStatisticsResponse(
         season_id=season_id,
         season_name=season.name,
@@ -634,8 +644,8 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
         penalties_scored=penalties_scored,
         fouls_per_match=fouls_per_match,
         yellow_cards=team_row.yellow_cards or 0,
-        second_yellow_cards=0,
-        red_cards=team_row.red_cards or 0,
+        second_yellow_cards=total_second_yellows,
+        red_cards=total_red_cards + total_second_yellows,
     )
 
 
