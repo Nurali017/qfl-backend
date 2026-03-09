@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
 from app.models import AdminUser, Game
+from app.models.game import GameStatus
 from app.schemas.live import GameEventResponse, GameEventsListResponse, LineupSyncResponse, LiveSyncResponse
 from app.schemas.sync import SyncResponse, SyncStatus
 from app.services.live_sync_service import LiveSyncService
@@ -194,6 +195,80 @@ async def sync_all_game_events(
         return SyncResponse(status=SyncStatus.SUCCESS, message="All game events sync completed", details=details)
     except Exception as exc:
         return SyncResponse(status=SyncStatus.FAILED, message=f"All game events sync failed: {exc}")
+
+
+class ResyncExtendedStatsRequest(BaseModel):
+    game_ids: list[int] | None = None
+
+
+@router.post("/resync-extended-stats", response_model=SyncResponse)
+async def resync_extended_stats(
+    payload: ResyncExtendedStatsRequest | None = Body(default=None),
+    season_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Re-sync extended stats for specific games or all finished games in a season."""
+    game_ids = payload.game_ids if payload else None
+    if not game_ids and not season_id:
+        raise HTTPException(400, "Provide game_ids or season_id")
+
+    orchestrator = SyncOrchestrator(db)
+    now = datetime.utcnow()
+
+    # 1. Find games
+    if game_ids:
+        result = await db.execute(
+            select(Game).where(Game.id.in_(game_ids), Game.sync_disabled == False)
+        )
+    else:
+        result = await db.execute(
+            select(Game).where(
+                Game.season_id == season_id,
+                Game.status == GameStatus.finished,
+                Game.sota_id.isnot(None),
+                Game.sync_disabled == False,
+            )
+        )
+    games = list(result.scalars().all())
+
+    if not games:
+        return SyncResponse(status=SyncStatus.SUCCESS, message="No games found to resync")
+
+    # 2. Reset flag + resync each game
+    game_results = []
+    game_errors = []
+    seasons_to_sync = set()
+    for game in games:
+        game.extended_stats_synced_at = None
+        try:
+            r = await orchestrator.sync_game_stats(game.id)
+            game_results.append({"game_id": game.id, **r})
+            if r.get("v2_enriched", 0) > 0:
+                game.extended_stats_synced_at = now
+            seasons_to_sync.add(game.season_id)
+        except Exception as e:
+            game_errors.append(f"Game {game.id}: {e}")
+
+    # 3. Sync season stats for affected seasons
+    season_results = {}
+    for sid in seasons_to_sync:
+        team_count = await orchestrator.sync_team_season_stats(sid, force=True)
+        player_count = await orchestrator.sync_player_stats(sid, force=True)
+        season_results[sid] = {"teams": team_count, "players": player_count}
+
+    await db.commit()
+
+    details = {
+        "games_resynced": len(game_results),
+        "game_results": game_results,
+        "season_stats": season_results,
+        "errors": game_errors,
+    }
+    msg = f"Resynced {len(game_results)} games, {len(season_results)} seasons"
+    if game_errors:
+        msg += f", {len(game_errors)} errors"
+    return SyncResponse(status=SyncStatus.SUCCESS, message=msg, details=details)
 
 
 # ==================== Live Operations ====================
