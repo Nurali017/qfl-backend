@@ -112,9 +112,10 @@ async def _sync_extended_stats():
     """
     async with AsyncSessionLocal() as db:
         try:
-            now = datetime.now(ZoneInfo("UTC"))
+            now = datetime.utcnow()
             cutoff_start = now - timedelta(hours=72)
             cutoff_end = now - timedelta(hours=24)
+            logger.info("Extended stats window: %s to %s", cutoff_start, cutoff_end)
 
             orchestrator = SyncOrchestrator(db)
             seasons_to_sync = set()
