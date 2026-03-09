@@ -143,8 +143,12 @@ async def _sync_extended_stats():
                 try:
                     r = await orchestrator.sync_game_stats(game.id)
                     game_results.append({"game_id": game.id, **r})
-                    game.extended_stats_synced_at = now
-                    seasons_to_sync.add(game.season_id)
+                    # Only mark as synced if v2 data was actually received
+                    if r.get("v2_enriched", 0) > 0:
+                        game.extended_stats_synced_at = now
+                        seasons_to_sync.add(game.season_id)
+                    else:
+                        logger.info("Game %s: no v2 data yet, will retry", game.id)
                 except Exception as e:
                     logger.warning("Extended game stats failed for game %s: %s", game.id, e)
                     game_errors.append(f"Game {game.id}: {e}")
@@ -187,6 +191,71 @@ async def _sync_extended_stats():
             except Exception:
                 pass
             raise
+
+
+async def _resync_extended_stats(game_ids: list[int]):
+    """Resync extended stats for specific games (admin-triggered)."""
+    async with AsyncSessionLocal() as db:
+        try:
+            now = datetime.utcnow()
+            orchestrator = SyncOrchestrator(db)
+            seasons_to_sync = set()
+
+            result = await db.execute(
+                select(Game).where(Game.id.in_(game_ids), Game.sync_disabled == False)
+            )
+            games = list(result.scalars().all())
+            if not games:
+                return {"message": "No games found"}
+
+            game_results = []
+            game_errors = []
+            for game in games:
+                try:
+                    r = await orchestrator.sync_game_stats(game.id)
+                    game_results.append({"game_id": game.id, **r})
+                    if r.get("v2_enriched", 0) > 0:
+                        game.extended_stats_synced_at = now
+                        seasons_to_sync.add(game.season_id)
+                    else:
+                        logger.info("Game %s: no v2 data yet", game.id)
+                except Exception as e:
+                    logger.warning("Resync failed for game %s: %s", game.id, e)
+                    game_errors.append(f"Game {game.id}: {e}")
+
+            # Sync team + player season stats (force=True for admin override)
+            season_results = {}
+            for sid in seasons_to_sync:
+                team_count = await orchestrator.sync_team_season_stats(sid, force=True)
+                player_count = await orchestrator.sync_player_stats(sid, force=True)
+                season_results[sid] = {"teams": team_count, "players": player_count}
+
+            await db.commit()
+
+            # Telegram notification
+            lines = ["🔄 Admin resync extended stats"]
+            lines.append(f"Games: {len(game_results)} synced, {len(game_errors)} errors")
+            for sid, counts in season_results.items():
+                lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
+            if game_errors:
+                for err in game_errors[:5]:
+                    lines.append(f"  ⚠️ {err}")
+            await send_telegram_message("\n".join(lines))
+
+            return {"games_resynced": len(game_results), "errors": game_errors}
+        except Exception as e:
+            await db.rollback()
+            try:
+                await send_telegram_message(f"❌ Admin resync failed:\n{e}")
+            except Exception:
+                pass
+            raise
+
+
+@celery_app.task(name="app.tasks.sync_tasks.resync_extended_stats")
+def resync_extended_stats_task(game_ids: list[int]):
+    """Celery task: Admin-triggered resync of extended stats."""
+    return run_async(_resync_extended_stats(game_ids))
 
 
 @celery_app.task(name="app.tasks.sync_tasks.sync_games")

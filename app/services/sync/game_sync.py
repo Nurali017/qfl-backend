@@ -265,13 +265,14 @@ class GameSyncService(BaseSyncService):
             logger.warning(f"/em/ player stats enrichment failed for game {game_id}: {e}")
 
         # Enrich with v2 stats (after v1 commit — v1 data is never lost)
+        v2_count = 0
         try:
             v2_count = await self._enrich_with_v2_stats(game_id, sota_uuid)
             logger.info(f"v2 enrichment: {v2_count} players for game {game_id}")
         except Exception as e:
             logger.error(f"v2 enrichment failed for game {game_id}: {e}")
 
-        return {"teams": team_count, "players": player_count}
+        return {"teams": team_count, "players": player_count, "v2_enriched": v2_count}
 
     async def _enrich_team_stats_from_live(self, game_id: int, sota_game_uuid: str) -> bool:
         """Enrich team stats with data from /em/{id}-stat.json (shots_on_bar, saves, etc.)."""
