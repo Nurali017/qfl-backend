@@ -215,6 +215,47 @@ async def _sync_post_match_protocol():
             raise
 
 
+async def _fetch_pregame_lineups():
+    """Fetch lineups from /em/ for games starting within 30 minutes."""
+    async with AsyncSessionLocal() as db:
+        try:
+            client = get_sota_client()
+            service = LiveSyncService(db, client)
+
+            games = await service.get_games_for_pregame_lineup()
+            if not games:
+                await db.commit()
+                return {"fetched": 0, "results": []}
+
+            results = []
+            for game in games:
+                try:
+                    result = await service.sync_pregame_lineup(game.id, sota_only=True)
+                    results.append(result)
+                    lineup_count = result.get("lineup_count", 0)
+                    if lineup_count > 0:
+                        logger.info(
+                            "Pre-fetched lineup for game %s: %d players",
+                            game.id, lineup_count,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to pre-fetch lineup for game %s: %s",
+                        game.id, e,
+                    )
+                    results.append({"game_id": game.id, "error": str(e)})
+
+            await db.commit()
+            return {
+                "fetched": len([r for r in results if r.get("lineup_count", 0) > 0]),
+                "attempted": len(games),
+                "results": results,
+            }
+        except Exception:
+            await db.rollback()
+            raise
+
+
 # ==================== Celery Tasks ====================
 
 
@@ -240,3 +281,9 @@ def auto_end_finished_games():
 def sync_post_match_protocol():
     """Celery task: Re-sync protocol for recently finished games. Runs every 30 minutes."""
     return run_async(_sync_post_match_protocol())
+
+
+@celery_app.task(name="app.tasks.live_tasks.fetch_pregame_lineups")
+def fetch_pregame_lineups():
+    """Celery task: Pre-fetch lineups from /em/ for upcoming games. Runs every 3 minutes."""
+    return run_async(_fetch_pregame_lineups())
