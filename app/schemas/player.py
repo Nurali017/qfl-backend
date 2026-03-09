@@ -132,9 +132,41 @@ class PlayerStatsTableEntry(BaseModel):
     yellow_cards: int | None = None
     second_yellow_cards: int | None = None
     red_cards: int | None = None
+    # Goals extra
+    owngoal: int | None = None
+    penalty_success: int | None = None
+    goal_out_box: int | None = None
+    xg_per_90: float | None = None
+    # Shots extra
+    shots_blocked_opponent: int | None = None
+    # Passes extra
+    pass_acc: int | None = None
+    pass_forward: int | None = None
+    pass_progressive: int | None = None
+    pass_cross: int | None = None
+    pass_cross_acc: int | None = None
+    pass_to_box: int | None = None
+    pass_to_3rd: int | None = None
+    # Attacking extra
+    dribble_per_90: float | None = None
+    corner: int | None = None
+    offside: int | None = None
+    # Defending extra
+    tackle_per_90: float | None = None
+    aerial_duel_success: int | None = None
+    ground_duel_success: int | None = None
+    # Discipline
+    foul: int | None = None
+    foul_taken: int | None = None
     # Goalkeeper stats
     save_shot: int | None = None
     dry_match: int | None = None
+    goals_conceded: int | None = None
+    goals_conceded_penalty: int | None = None
+    save_shot_ratio: float | None = None
+    save_shot_penalty: int | None = None
+    exit: int | None = None
+    exit_success: int | None = None
 
 
 class PlayerStatsTableResponse(BaseModel):
