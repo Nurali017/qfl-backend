@@ -353,6 +353,7 @@ class GameSyncService(BaseSyncService):
                     ts.possession_percent = pct
 
             # Build per-half extra_stats from captured _1/_2 metrics
+            merged_extra = dict(ts.extra_stats or {})
             side_by_half = {}
             for half_num in ("1", "2"):
                 half_data = {}
@@ -367,7 +368,17 @@ class GameSyncService(BaseSyncService):
                 if half_data:
                     side_by_half[half_num] = half_data
             if side_by_half:
-                ts.extra_stats = {**(ts.extra_stats or {}), "by_half": side_by_half}
+                merged_extra["by_half"] = side_by_half
+
+            # Store new aggregate metrics from SOTA stat.json
+            for extra_key in ("inside_pbox", "outside_pbox", "missed_penalty"):
+                if extra_key in em_stats:
+                    val = _parse_int(em_stats[extra_key].get(side))
+                    if val is not None:
+                        merged_extra[extra_key] = val
+
+            if merged_extra:
+                ts.extra_stats = merged_extra
 
         await self.db.commit()
         return True
@@ -551,6 +562,7 @@ class GameSyncService(BaseSyncService):
             "АВТОГОЛ": GameEventType.own_goal,
             "ПЕНАЛЬТИ": GameEventType.penalty,
             "НЕЗАБИТЫЙ ПЕНАЛЬТИ": GameEventType.missed_penalty,
+            "НЕ ЗАБИТЫЙ ПЕНАЛЬТИ": GameEventType.missed_penalty,
             "ГОЛЕВОЙ ПАС": GameEventType.assist,
             "ЖК": GameEventType.yellow_card,
             "2ЖК": GameEventType.second_yellow,
