@@ -212,6 +212,46 @@ class TeamStatsTableEntry(BaseModel):
     xg: float | None = None
     xg_per_match: float | None = None
 
+    # Shots extra
+    shots_off_goal: int | None = None
+    # Passes extra
+    pass_per_match: float | None = None
+    pass_forward: int | None = None
+    pass_long: int | None = None
+    pass_progressive: int | None = None
+    pass_to_box: int | None = None
+    pass_to_3rd: int | None = None
+    goal_pass: int | None = None
+    # Duels
+    duel: int | None = None
+    duel_ratio: float | None = None
+    aerial_duel_offence: int | None = None
+    aerial_duel_offence_ratio: float | None = None
+    aerial_duel_defence: int | None = None
+    aerial_duel_defence_ratio: float | None = None
+    ground_duel_offence: int | None = None
+    ground_duel_offence_ratio: float | None = None
+    ground_duel_defence: int | None = None
+    ground_duel_defence_ratio: float | None = None
+    # Defense extra
+    tackle_per_match: float | None = None
+    tackle1_1: int | None = None
+    tackle1_1_ratio: float | None = None
+    interception_per_match: float | None = None
+    recovery_per_match: float | None = None
+    # Discipline extra
+    foul_taken: int | None = None
+    # Penalties
+    penalty: int | None = None
+    penalty_ratio: float | None = None
+    # xG extra
+    opponent_xg: float | None = None
+    # Attendance
+    visitor_total: int | None = None
+    average_visitors: float | None = None
+    # Free kicks
+    freekick_shot: int | None = None
+
     class Config:
         from_attributes = True
 

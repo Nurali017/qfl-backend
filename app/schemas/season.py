@@ -78,7 +78,7 @@ class SeasonStatisticsResponse(BaseModel):
     total_goals: int = 0
     goals_per_match: float = 0.0
 
-    # Penalties
+    # Penalties (kept for backward compat)
     penalties: int = 0
     penalties_scored: int = 0
 
@@ -89,6 +89,16 @@ class SeasonStatisticsResponse(BaseModel):
     yellow_cards: int = 0
     second_yellow_cards: int = 0
     red_cards: int = 0
+
+    # New metrics
+    avg_xg_per_match: float = 0.0
+    pass_accuracy: float = 0.0
+    shots_on_target_pct: float = 0.0
+    clean_sheets: int = 0
+    total_players: int = 0
+    total_minutes: int = 0
+    kazakh_minutes_pct: float = 0.0
+    average_age: float = 0.0
 
     class Config:
         from_attributes = True
