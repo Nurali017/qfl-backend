@@ -323,11 +323,10 @@ async def live_sync_events(
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
     await _require_sync_enabled(game_id, db)
-    new_events = await service.sync_live_events(game_id)
+    result = await service.sync_live_events(game_id)
     return {
         "game_id": game_id,
-        "new_events_count": len(new_events),
-        "events": [GameEventResponse.model_validate(e) for e in new_events],
+        **result,
     }
 
 

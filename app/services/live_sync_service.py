@@ -32,6 +32,7 @@ ACTION_TYPE_MAP = {
     "АВТОГОЛ": GameEventType.own_goal,
     "ПЕНАЛЬТИ": GameEventType.penalty,
     "НЕЗАБИТЫЙ ПЕНАЛЬТИ": GameEventType.missed_penalty,
+    "НЕ ЗАБИТЫЙ ПЕНАЛЬТИ": GameEventType.missed_penalty,
     "ГОЛЕВОЙ ПАС": GameEventType.assist,
     "ЖК": GameEventType.yellow_card,
     "2ЖК": GameEventType.second_yellow,
@@ -494,6 +495,7 @@ class LiveSyncService:
             }
 
             # Build per-half extra_stats from captured _1/_2 metrics
+            extra = {}
             side_by_half = {}
             for half_num in ("1", "2"):
                 half_data = {}
@@ -508,7 +510,16 @@ class LiveSyncService:
                 if half_data:
                     side_by_half[half_num] = half_data
             if side_by_half:
-                values["extra_stats"] = {"by_half": side_by_half}
+                extra["by_half"] = side_by_half
+
+            # Store new aggregate metrics from SOTA stat.json
+            for extra_key in ("inside_pbox", "outside_pbox", "missed_penalty"):
+                val = _parse_int(metrics.get(extra_key, {}).get(side))
+                if val is not None:
+                    extra[extra_key] = val
+
+            if extra:
+                values["extra_stats"] = extra
 
             stmt = insert(GameTeamStats).values(**values)
             stmt = stmt.on_conflict_do_update(
