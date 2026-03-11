@@ -765,18 +765,16 @@ async def get_season_statistics(season_id: int, db: AsyncSession = Depends(get_d
     total_shots_on_goal = int(shots_row.total_shots_on_goal or 0)
     shots_on_target_pct = round(total_shots_on_goal / total_shots * 100, 1) if total_shots > 0 else 0.0
 
-    # Query 5: Clean sheets — count of 0-score sides in finished games
+    # Query 5: Clean sheets — count of 0-0 draws
     clean_sheets_query = select(
-        func.sum(case((Game.home_score == 0, 1), else_=0)).label("away_clean"),
-        func.sum(case((Game.away_score == 0, 1), else_=0)).label("home_clean"),
+        func.count().label("clean_sheets"),
     ).where(
         Game.season_id == season_id,
-        Game.home_score.isnot(None),
-        Game.away_score.isnot(None),
+        Game.home_score == 0,
+        Game.away_score == 0,
     )
     clean_sheets_result = await db.execute(clean_sheets_query)
-    clean_row = clean_sheets_result.one()
-    clean_sheets = int(clean_row.away_clean or 0) + int(clean_row.home_clean or 0)
+    clean_sheets = int(clean_sheets_result.scalar() or 0)
 
     # Query 6: Player demographics — total players, minutes, Kazakh minutes %, average age
     # Minutes from PlayerSeasonStats (already aggregated per player-team-season)
