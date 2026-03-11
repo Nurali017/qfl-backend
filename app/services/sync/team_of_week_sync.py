@@ -11,10 +11,13 @@ from typing import Any
 
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import selectinload
 
 from app.models.game import Game
 from app.models.player import Player
 from app.models.player_season_stats import PlayerSeasonStats
+from app.models.player_team import PlayerTeam
+from app.models.team import Team
 from app.models.team_of_week import TeamOfWeek
 from app.services.sync.base import BaseSyncService
 from app.utils.file_urls import resolve_file_url
@@ -163,12 +166,28 @@ class TeamOfWeekSyncService(BaseSyncService):
             for s in result.scalars().all():
                 stats_by_player[s.player_id] = s
 
-        # 3. Build cache
+        # 3. Fetch team names via PlayerTeam → Team
+        team_by_player: dict[int, Team] = {}
+        if player_ids:
+            result = await self.db.execute(
+                select(PlayerTeam)
+                .options(selectinload(PlayerTeam.team))
+                .where(
+                    PlayerTeam.player_id.in_(player_ids),
+                    PlayerTeam.season_id == season_id,
+                    PlayerTeam.is_active == True,
+                )
+            )
+            for pt in result.scalars().all():
+                team_by_player[pt.player_id] = pt.team
+
+        # 4. Build cache
         cache: dict[str, dict[str, Any]] = {}
         for sota_id, player in players.items():
             pss = stats_by_player.get(player.id)
             # photo_url is stored as object name, resolve to full URL
             photo = resolve_file_url(player.photo_url) if player.photo_url else None
+            team = team_by_player.get(player.id)
 
             cache[sota_id] = {
                 "person_id": player.id,
@@ -179,6 +198,8 @@ class TeamOfWeekSyncService(BaseSyncService):
                 "first_name_kz": player.first_name_kz,
                 "last_name": player.last_name,
                 "last_name_kz": player.last_name_kz,
+                "team_name": team.name if team else None,
+                "team_name_kz": team.name_kz if team else None,
             }
         return cache
 
@@ -201,7 +222,23 @@ class TeamOfWeekSyncService(BaseSyncService):
         if not players:
             return {}
 
-        # 2. Call SOTA v2 for each player using tour param (no DB lookups needed)
+        # 2. Fetch team names via PlayerTeam → Team
+        player_ids = [p.id for p in players.values()]
+        team_by_player: dict[int, Team] = {}
+        if player_ids:
+            result = await self.db.execute(
+                select(PlayerTeam)
+                .options(selectinload(PlayerTeam.team))
+                .where(
+                    PlayerTeam.player_id.in_(player_ids),
+                    PlayerTeam.season_id == season_id,
+                    PlayerTeam.is_active == True,
+                )
+            )
+            for pt in result.scalars().all():
+                team_by_player[pt.player_id] = pt.team
+
+        # 3. Call SOTA v2 for each player using tour param (no DB lookups needed)
         v2_stats_by_player: dict[int, dict] = {}
         for player in players.values():
             if not player.sota_id:
@@ -215,11 +252,12 @@ class TeamOfWeekSyncService(BaseSyncService):
                 logger.warning(f"v2 stats failed for player {player.id}: {e}")
             await asyncio.sleep(0.15)
 
-        # 3. Build cache using v2 data
+        # 4. Build cache using v2 data
         cache: dict[str, dict[str, Any]] = {}
         for sota_id, player in players.items():
             photo = resolve_file_url(player.photo_url) if player.photo_url else None
             v2_data = v2_stats_by_player.get(player.id, {})
+            team = team_by_player.get(player.id)
 
             cache[sota_id] = {
                 "person_id": player.id,
@@ -229,6 +267,8 @@ class TeamOfWeekSyncService(BaseSyncService):
                 "first_name_kz": player.first_name_kz,
                 "last_name": player.last_name,
                 "last_name_kz": player.last_name_kz,
+                "team_name": team.name if team else None,
+                "team_name_kz": team.name_kz if team else None,
             }
         return cache
 
@@ -281,7 +321,7 @@ class TeamOfWeekSyncService(BaseSyncService):
 
         payload = []
         for p in players:
-            team = p.get("team") or {}
+            team = dict(p.get("team") or {})
             sota_id = p.get("id")
             raw_amplua = p.get("amplua")
             normalized_amplua = AMPLUA_TO_GROUP.get(raw_amplua, raw_amplua)
@@ -304,6 +344,13 @@ class TeamOfWeekSyncService(BaseSyncService):
                     last_name = local_last
                 if local_first or local_last:
                     full_name = f"{first_name} {last_name}".strip()
+
+            # Enrich team name with localized version from local DB
+            if enrich:
+                suffix = f"_{locale}" if locale != "ru" else ""
+                local_team_name = enrich.get(f"team_name{suffix}") or enrich.get("team_name")
+                if local_team_name:
+                    team["name"] = local_team_name
 
             payload.append({
                 "id": sota_id,
@@ -415,7 +462,9 @@ class TeamOfWeekSyncService(BaseSyncService):
         for (tour_key, locale), sota_data in fetched.items():
             enrichment = enrichment_by_tour.get(tour_key, {})
             ru_names = ru_names_by_tour.get(tour_key) if locale != "ru" else None
-            scheme, payload = self._map_sota_response(sota_data, enrichment, locale=locale, ru_names=ru_names)
+            scheme, payload = self._map_sota_response(
+                sota_data, enrichment, locale=locale, ru_names=ru_names,
+            )
 
             if not payload:
                 tours_empty += 1
