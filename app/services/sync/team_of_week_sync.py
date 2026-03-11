@@ -3,7 +3,9 @@ Team of the Week sync service.
 
 Fetches team-of-week data from SOTA API and upserts into the local database.
 Enriches players with local DB data (person_id, photo, per-tour stats).
+Stats are fetched directly from SOTA v2 /players/{id}/game_stats/ endpoint.
 """
+import asyncio
 import logging
 from typing import Any
 
@@ -11,8 +13,6 @@ from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.game import Game
-from app.models.game_event import GameEvent, GameEventType
-from app.models.game_player_stats import GamePlayerStats
 from app.models.player import Player
 from app.models.player_season_stats import PlayerSeasonStats
 from app.models.team_of_week import TeamOfWeek
@@ -75,38 +75,33 @@ GK_STATS_MAP: dict[str, str] = {
     "red_cards": "red_cards",
 }
 
-# ── Per-game stat mappings (tour-level enrichment) ──
+# ── SOTA v2 /players/{id}/game_stats/ key → frontend stat key ──
 
-# GamePlayerStats column → frontend stat key (field players)
-GAME_FIELD_STATS_MAP: dict[str, str] = {
-    "minutes_played": "minutes_played",
-    "shots": "shots",
+V2_TO_FRONTEND: dict[str, str] = {
+    # Field player stats
+    "goal": "goals",
+    "assist": "assists",
+    "shot": "shots",
     "shots_on_goal": "shots_on_goal",
-    "passes": "passes",
-    "pass_accuracy": "pass_accuracy",
-    "tackle": "tackles",
-    "foul": "fouls",
-    "offside": "offsides",
-    "yellow_cards": "yellow_cards",
-    "red_cards": "red_cards",
-}
-
-# extra_stats v2 keys → frontend stat key (field players, supplement)
-GAME_FIELD_V2_MAP: dict[str, str] = {
+    "pass": "passes",
     "key_pass": "key_passes",
     "pass_cross": "crosses",
     "pass_cross_acc": "cross_accuracy",
     "dribble": "dribbles",
     "dribble_success": "dribble_success",
+    "tackle": "tackles",
     "interception": "interceptions",
     "duel_success": "duels_won",
     "aerial_duel_success": "aerial_won",
+    "foul": "fouls",
     "foul_taken": "fouls_drawn",
+    "offside": "offsides",
+    "yellow_card": "yellow_cards",
+    "red_card": "red_cards",
     "xg": "xg",
-}
-
-# extra_stats v2 keys → frontend stat key (goalkeepers)
-GAME_GK_V2_MAP: dict[str, str] = {
+    "time_on_field_total": "minutes_played",
+    "pass_ratio": "pass_accuracy",
+    # Goalkeeper stats
     "save_shot": "saves",
     "goals_conceded": "goals_conceded",
     "dry_match": "clean_sheets",
@@ -188,11 +183,11 @@ class TeamOfWeekSyncService(BaseSyncService):
         return cache
 
     async def _build_tour_enrichment_cache(
-        self, season_id: int, tour_number: int, sota_ids: list[str],
+        self, season_id: int, sota_season_id: int, tour_number: int, sota_ids: list[str],
     ) -> dict[str, dict[str, Any]]:
-        """Build enrichment cache using per-game stats for a specific tour.
+        """Build enrichment cache by fetching stats directly from SOTA v2.
 
-        Fetches GamePlayerStats + GameEvent data for games in the given tour.
+        Uses SOTA v2 /players/{id}/game_stats/?season_id=&tour= for each player.
         Returns {sota_id: {"person_id": int, "photo": str, "stats": dict}}.
         """
         if not sota_ids:
@@ -206,70 +201,30 @@ class TeamOfWeekSyncService(BaseSyncService):
         if not players:
             return {}
 
-        player_ids = [p.id for p in players.values()]
+        # 2. Call SOTA v2 for each player using tour param (no DB lookups needed)
+        v2_stats_by_player: dict[int, dict] = {}
+        for player in players.values():
+            if not player.sota_id:
+                continue
+            try:
+                v2_data = await self.client.get_player_game_stats_v2_by_tour(
+                    str(player.sota_id), sota_season_id, tour_number
+                )
+                v2_stats_by_player[player.id] = v2_data
+            except Exception as e:
+                logger.warning(f"v2 stats failed for player {player.id}: {e}")
+            await asyncio.sleep(0.15)
 
-        # 2. Find game IDs for this tour
-        result = await self.db.execute(
-            select(Game.id).where(
-                Game.season_id == season_id,
-                Game.tour == tour_number,
-            )
-        )
-        game_ids = [row[0] for row in result.all()]
-        if not game_ids:
-            logger.debug(f"No games found for season={season_id}, tour={tour_number}")
-            return await self._build_enrichment_cache(season_id, sota_ids)
-
-        # 3. Fetch GamePlayerStats for those games + players
-        result = await self.db.execute(
-            select(GamePlayerStats).where(
-                GamePlayerStats.game_id.in_(game_ids),
-                GamePlayerStats.player_id.in_(player_ids),
-            )
-        )
-        # player_id → GamePlayerStats (one game per tour per player typically)
-        gps_by_player: dict[int, GamePlayerStats] = {}
-        for gps in result.scalars().all():
-            gps_by_player[gps.player_id] = gps
-
-        # 4. Count goals from GameEvent (goal + penalty events)
-        result = await self.db.execute(
-            select(
-                GameEvent.player_id,
-                func.count(GameEvent.id),
-            ).where(
-                GameEvent.game_id.in_(game_ids),
-                GameEvent.player_id.in_(player_ids),
-                GameEvent.event_type.in_([GameEventType.goal, GameEventType.penalty]),
-            ).group_by(GameEvent.player_id)
-        )
-        goals_by_player: dict[int, int] = {row[0]: row[1] for row in result.all()}
-
-        # 5. Count assists from GameEvent
-        result = await self.db.execute(
-            select(
-                GameEvent.assist_player_id,
-                func.count(GameEvent.id),
-            ).where(
-                GameEvent.game_id.in_(game_ids),
-                GameEvent.assist_player_id.in_(player_ids),
-                GameEvent.event_type.in_([GameEventType.goal, GameEventType.penalty]),
-            ).group_by(GameEvent.assist_player_id)
-        )
-        assists_by_player: dict[int, int] = {row[0]: row[1] for row in result.all()}
-
-        # 6. Build cache
+        # 3. Build cache using v2 data
         cache: dict[str, dict[str, Any]] = {}
         for sota_id, player in players.items():
             photo = resolve_file_url(player.photo_url) if player.photo_url else None
-            gps = gps_by_player.get(player.id)
-            goals = goals_by_player.get(player.id, 0)
-            assists = assists_by_player.get(player.id, 0)
+            v2_data = v2_stats_by_player.get(player.id, {})
 
             cache[sota_id] = {
                 "person_id": player.id,
                 "photo": photo,
-                "stats": self._extract_game_stats(gps, player, goals, assists),
+                "stats": self._map_v2_stats(v2_data),
                 "first_name": player.first_name,
                 "first_name_kz": player.first_name_kz,
                 "last_name": player.last_name,
@@ -286,56 +241,26 @@ class TeamOfWeekSyncService(BaseSyncService):
         if pss is None:
             return {}
 
-        # Choose mapping based on player role
-        is_gk = (player.top_role or "").lower() in ("gk", "goalkeeper", "вратарь", "қақпашы")
-        mapping = GK_STATS_MAP if is_gk else FIELD_STATS_MAP
-
+        # Extract both field and GK stats for all players
         stats: dict[str, Any] = {}
-        for db_col, fe_key in mapping.items():
+        for db_col, fe_key in FIELD_STATS_MAP.items():
+            val = getattr(pss, db_col, None)
+            if val is not None:
+                stats[fe_key] = val
+        for db_col, fe_key in GK_STATS_MAP.items():
             val = getattr(pss, db_col, None)
             if val is not None:
                 stats[fe_key] = val
         return stats
 
     @staticmethod
-    def _extract_game_stats(
-        gps: "GamePlayerStats | None",
-        player: "Player",
-        goals: int,
-        assists: int,
-    ) -> dict[str, Any]:
-        """Extract stats from per-game data (GamePlayerStats + event counts)."""
+    def _map_v2_stats(v2_data: dict) -> dict[str, Any]:
+        """Map SOTA v2 game_stats response keys to frontend stat keys."""
         stats: dict[str, Any] = {}
-
-        # Always add goals/assists from events
-        if goals:
-            stats["goals"] = goals
-        if assists:
-            stats["assists"] = assists
-
-        if gps is None:
-            return stats
-
-        is_gk = (player.top_role or "").lower() in ("gk", "goalkeeper", "вратарь", "қақпашы")
-
-        # Common columns from GamePlayerStats
-        for db_col, fe_key in GAME_FIELD_STATS_MAP.items():
-            val = getattr(gps, db_col, None)
+        for v2_key, fe_key in V2_TO_FRONTEND.items():
+            val = v2_data.get(v2_key)
             if val is not None:
                 stats[fe_key] = val
-
-        # V2 extra_stats
-        extra = gps.extra_stats or {}
-        if is_gk:
-            v2_map = GAME_GK_V2_MAP
-        else:
-            v2_map = GAME_FIELD_V2_MAP
-
-        for v2_key, fe_key in v2_map.items():
-            val = extra.get(v2_key)
-            if val is not None:
-                stats[fe_key] = val
-
         return stats
 
     def _map_sota_response(
@@ -352,6 +277,7 @@ class TeamOfWeekSyncService(BaseSyncService):
         data = sota_data.get("data", {})
         scheme = data.get("placement_schema_name")
         players = data.get("players", [])
+
 
         payload = []
         for p in players:
@@ -462,7 +388,7 @@ class TeamOfWeekSyncService(BaseSyncService):
             tour_num = self._parse_tour_number(tour_key)
             if tour_num is not None:
                 enrichment_by_tour[tour_key] = await self._build_tour_enrichment_cache(
-                    season_id, tour_num, list(ids),
+                    season_id, sota_season_id, tour_num, list(ids),
                 )
             else:
                 enrichment_by_tour[tour_key] = await self._build_enrichment_cache(

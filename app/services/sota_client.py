@@ -249,6 +249,21 @@ class SotaClient:
         stats_list = data.get("data", {}).get("stats", [])
         return {s["key"]: s["value"] for s in stats_list if "key" in s}
 
+    async def get_player_game_stats_v2_by_tour(
+        self, player_id: str, season_id: int, tour: int, language: str = "ru"
+    ) -> dict[str, Any]:
+        """GET /v2/players/{player_id}/game_stats/?season_id={season_id}&tour={tour}."""
+        await self.ensure_authenticated()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v2/players/{player_id}/game_stats/",
+            headers=self.get_headers(language),
+            params={"season_id": season_id, "tour": tour},
+        )
+        data = response.json()
+        stats_list = data.get("data", {}).get("stats", [])
+        return {s["key"]: s["value"] for s in stats_list if "key" in s}
+
     async def get_player_season_stats(
         self, player_id: str, season_id: int, language: str = "ru"
     ) -> dict[str, Any]:
