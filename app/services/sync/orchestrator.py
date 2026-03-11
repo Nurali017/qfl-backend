@@ -16,6 +16,7 @@ from app.services.sync.player_sync import PlayerSyncService
 from app.services.sync.game_sync import GameSyncService
 from app.services.sync.lineup_sync import LineupSyncService
 from app.services.sync.stats_sync import StatsSyncService
+from app.services.sync.team_of_week_sync import TeamOfWeekSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class SyncOrchestrator:
         self.game = GameSyncService(db, self.client)
         self.lineup = LineupSyncService(db, self.client)
         self.stats = StatsSyncService(db, self.client)
+        self.team_of_week = TeamOfWeekSyncService(db, self.client)
 
     async def is_sync_enabled(self, season_id: int) -> bool:
         """
@@ -133,6 +135,20 @@ class SyncOrchestrator:
         logger.info(f"Syncing team season stats for season {season_id}")
         return await self.stats.sync_team_season_stats(season_id)
 
+    # ==================== Team of the Week sync ====================
+
+    async def sync_team_of_week(
+        self,
+        season_id: int,
+        force: bool = False,
+        tour_keys: list[str] | None = None,
+    ) -> dict:
+        if not force and not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping team-of-week sync")
+            return {"skipped": True, "reason": "sync disabled for season"}
+        logger.info(f"Syncing team-of-week for season {season_id}")
+        return await self.team_of_week.sync_team_of_week(season_id, tour_keys=tour_keys)
+
     # ==================== Full sync ====================
 
     async def full_sync(self, season_id: int, force: bool = False) -> dict[str, Any]:
@@ -160,6 +176,9 @@ class SyncOrchestrator:
 
         # 4. Best players
         results["best_players"] = await self.sync_best_players(season_id, force=force)
+
+        # 5. Team of the week
+        results["team_of_week"] = await self.sync_team_of_week(season_id, force=force)
 
         logger.info(f"Full sync complete for season {season_id}: {results}")
         return results

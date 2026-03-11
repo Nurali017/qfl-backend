@@ -273,6 +273,19 @@ class SotaClient:
 
         return stats_dict
 
+    async def get_team_of_week(
+        self, season_id: int, tour: str, language: str = "ru"
+    ) -> dict[str, Any]:
+        """Get team of the week for a season and tour."""
+        await self.ensure_authenticated()
+        response = await self._make_request(
+            "get",
+            f"{self.BASE_URL}/public/v1/seasons/{season_id}/team_of_week",
+            headers=self.get_headers(language),
+            params={"tour": tour},
+        )
+        return response.json()
+
     # ==================== Game stats endpoints ====================
 
     async def get_game_player_stats(self, game_id: str, language: str = "ru") -> list[dict[str, Any]]:

@@ -116,6 +116,28 @@ async def sync_player_season_stats(
         return SyncResponse(status=SyncStatus.FAILED, message=f"Player season stats sync failed: {exc}")
 
 
+@router.post("/sync/team-of-week", response_model=SyncResponse)
+async def sync_team_of_week(
+    season_id: int = Query(default=None),
+    force: bool = Query(default=False),
+    tour_keys: list[str] | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    season_id = season_id or await get_current_season_id(db)
+    try:
+        details = await SyncOrchestrator(db).sync_team_of_week(
+            season_id, force=force, tour_keys=tour_keys
+        )
+        return SyncResponse(
+            status=SyncStatus.SUCCESS,
+            message="Team of week sync completed",
+            details=details,
+        )
+    except Exception as exc:
+        return SyncResponse(status=SyncStatus.FAILED, message=f"Team of week sync failed: {exc}")
+
+
 @router.post("/sync/game-stats/{game_id}", response_model=SyncResponse)
 async def sync_game_stats(
     game_id: int,
