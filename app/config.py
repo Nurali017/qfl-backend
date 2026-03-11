@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     openai_max_retries: int = 3
     openai_timeout: int = 10
 
+    # Anthropic API Configuration
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-20250514"
+
     # Telegram notifications
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
