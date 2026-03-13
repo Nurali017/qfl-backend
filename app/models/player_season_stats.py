@@ -20,9 +20,9 @@ class PlayerSeasonStats(Base):
     __tablename__ = "player_season_stats"
     __table_args__ = (
         UniqueConstraint("player_id", "season_id", name="uq_player_season_stats"),
-        Index("ix_player_season_stats_goals", "goals"),
-        Index("ix_player_season_stats_assists", "assists"),
-        Index("ix_player_season_stats_minutes", "minutes_played"),
+        Index("ix_player_season_stats_goal", "goal"),
+        Index("ix_player_season_stats_goal_pass", "goal_pass"),
+        Index("ix_player_season_stats_time_on_field_total", "time_on_field_total"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -36,11 +36,11 @@ class PlayerSeasonStats(Base):
     games_as_subst: Mapped[int | None] = mapped_column(Integer)  # games as substitute
     games_be_subst: Mapped[int | None] = mapped_column(Integer)  # games being substituted
     games_unused: Mapped[int | None] = mapped_column(Integer)  # games on bench unused
-    minutes_played: Mapped[int | None] = mapped_column(Integer)
+    time_on_field_total: Mapped[int | None] = mapped_column(Integer)
 
     # Goals & Assists
-    goals: Mapped[int | None] = mapped_column(Integer)
-    assists: Mapped[int | None] = mapped_column(Integer)
+    goal: Mapped[int | None] = mapped_column(Integer)
+    goal_pass: Mapped[int | None] = mapped_column(Integer)
     goal_and_assist: Mapped[int | None] = mapped_column(Integer)  # goals + assists
     goal_out_box: Mapped[int | None] = mapped_column(Integer)  # goals from outside box
     owngoal: Mapped[int | None] = mapped_column(Integer)
@@ -49,15 +49,15 @@ class PlayerSeasonStats(Base):
     xg_per_90: Mapped[float | None] = mapped_column(Numeric(4, 2))
 
     # Shots
-    shots: Mapped[int | None] = mapped_column(Integer)
+    shot: Mapped[int | None] = mapped_column(Integer)
     shots_on_goal: Mapped[int | None] = mapped_column(Integer)
     shots_blocked_opponent: Mapped[int | None] = mapped_column(Integer)
 
     # Passes
     passes: Mapped[int | None] = mapped_column(Integer)
-    pass_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))  # pass_ratio from API
+    pass_ratio: Mapped[float | None] = mapped_column(Numeric(5, 2))
     pass_acc: Mapped[int | None] = mapped_column(Integer)  # accurate passes count
-    key_passes: Mapped[int | None] = mapped_column(Integer)
+    key_pass: Mapped[int | None] = mapped_column(Integer)
     pass_forward: Mapped[int | None] = mapped_column(Integer)
     pass_forward_ratio: Mapped[float | None] = mapped_column(Numeric(5, 2))
     pass_progressive: Mapped[int | None] = mapped_column(Integer)
@@ -71,8 +71,8 @@ class PlayerSeasonStats(Base):
     pass_to_3rd_ratio: Mapped[float | None] = mapped_column(Numeric(5, 2))
 
     # Duels
-    duels: Mapped[int | None] = mapped_column(Integer)
-    duels_won: Mapped[int | None] = mapped_column(Integer)  # duel_success from API
+    duel: Mapped[int | None] = mapped_column(Integer)
+    duel_success: Mapped[int | None] = mapped_column(Integer)
     aerial_duel: Mapped[int | None] = mapped_column(Integer)
     aerial_duel_success: Mapped[int | None] = mapped_column(Integer)
     ground_duel: Mapped[int | None] = mapped_column(Integer)

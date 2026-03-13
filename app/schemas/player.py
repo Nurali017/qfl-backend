@@ -61,26 +61,26 @@ class PlayerSeasonStatsResponse(BaseModel):
     # Basic stats
     games_played: int | None = None
     games_starting: int | None = None
-    minutes_played: int | None = None
+    time_on_field_total: int | None = None
 
     # Goals & Assists
-    goals: int | None = None
-    assists: int | None = None
+    goal: int | None = None
+    goal_pass: int | None = None
     xg: float | None = None
     xg_per_90: float | None = None
 
     # Shots
-    shots: int | None = None
+    shot: int | None = None
     shots_on_goal: int | None = None
 
     # Passes
     passes: int | None = None
-    pass_accuracy: float | None = None
-    key_passes: int | None = None
+    pass_ratio: float | None = None
+    key_pass: int | None = None
 
     # Duels
-    duels: int | None = None
-    duels_won: int | None = None
+    duel: int | None = None
+    duel_success: int | None = None
 
     # Discipline
     yellow_cards: int | None = None
@@ -110,18 +110,18 @@ class PlayerStatsTableEntry(BaseModel):
 
     # Stats
     games_played: int | None = None
-    minutes_played: int | None = None
-    goals: int | None = None
-    assists: int | None = None
+    time_on_field_total: int | None = None
+    goal: int | None = None
+    goal_pass: int | None = None
     goal_and_assist: int | None = None
     xg: float | None = None
-    shots: int | None = None
+    shot: int | None = None
     shots_on_goal: int | None = None
     passes: int | None = None
-    key_passes: int | None = None
-    pass_accuracy: float | None = None
-    duels: int | None = None
-    duels_won: int | None = None
+    key_pass: int | None = None
+    pass_ratio: float | None = None
+    duel: int | None = None
+    duel_success: int | None = None
     aerial_duel: int | None = None
     ground_duel: int | None = None
     tackle: int | None = None
@@ -210,9 +210,9 @@ class PlayerTournamentHistoryEntry(BaseModel):
     team_name: str | None = None
     position: str | None = None
     games_played: int | None = None
-    minutes_played: int | None = None
-    goals: int | None = None
-    assists: int | None = None
+    time_on_field_total: int | None = None
+    goal: int | None = None
+    goal_pass: int | None = None
     yellow_cards: int | None = None
     red_cards: int | None = None
 

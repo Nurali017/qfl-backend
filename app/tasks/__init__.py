@@ -10,7 +10,7 @@ celery_app = Celery(
     "qfl_tasks",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.sync_tasks", "app.tasks.live_tasks"],
+    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks"],
 )
 
 celery_app.conf.update(
@@ -56,6 +56,15 @@ if settings.sota_enabled:
 else:
     celery_app.conf.beat_schedule = {}
 
+celery_app.conf.beat_schedule["fetch-weather-every-3h"] = {
+    "task": "app.tasks.weather_tasks.fetch_weather",
+    "schedule": crontab(minute="30", hour="*/3"),
+}
+
+celery_app.conf.beat_schedule["search-tickets-every-3h"] = {
+    "task": "app.tasks.ticket_tasks.search_tickets",
+    "schedule": crontab(minute="0", hour="*/3"),
+}
 
 @worker_shutdown.connect
 def on_worker_shutdown(**kwargs):

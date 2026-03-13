@@ -1,5 +1,7 @@
 """Game lineup endpoint."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -164,8 +166,9 @@ async def get_game_lineup(
             ))
         return coaches_list
 
-    home_coaches = await get_team_coaches(game.home_team_id) if game.home_team_id else []
-    away_coaches = await get_team_coaches(game.away_team_id) if game.away_team_id else []
+    home_coaches_coro = get_team_coaches(game.home_team_id) if game.home_team_id else asyncio.sleep(0, result=[])
+    away_coaches_coro = get_team_coaches(game.away_team_id) if game.away_team_id else asyncio.sleep(0, result=[])
+    home_coaches, away_coaches = await asyncio.gather(home_coaches_coro, away_coaches_coro)
 
     # Get lineups for home and away teams
     async def get_team_lineup(
@@ -249,27 +252,28 @@ async def get_game_lineup(
             substitutes=substitutes,
         )
 
-    # Use formations from game (synced from SOTA)
-    home_lineup = (
-        await get_team_lineup(
+    # Use formations from game (synced from SOTA) — fetch both in parallel
+    home_lineup_coro = (
+        get_team_lineup(
             game.home_team_id,
             game.home_team.name if game.home_team else None,
             game.home_formation,
             game.home_kit_color,
         )
         if game.home_team_id
-        else empty_lineup
+        else asyncio.sleep(0, result=empty_lineup)
     )
-    away_lineup = (
-        await get_team_lineup(
+    away_lineup_coro = (
+        get_team_lineup(
             game.away_team_id,
             game.away_team.name if game.away_team else None,
             game.away_formation,
             game.away_kit_color,
         )
         if game.away_team_id
-        else empty_lineup
+        else asyncio.sleep(0, result=empty_lineup)
     )
+    home_lineup, away_lineup = await asyncio.gather(home_lineup_coro, away_lineup_coro)
 
     # Convert to dicts for lineup utility checks
     home_lineup_dict = home_lineup.model_dump()

@@ -17,6 +17,7 @@ from app.services.sync.game_sync import GameSyncService
 from app.services.sync.lineup_sync import LineupSyncService
 from app.services.sync.stats_sync import StatsSyncService
 from app.services.sync.team_of_week_sync import TeamOfWeekSyncService
+from app.services.sync.player_tour_stats_sync import PlayerTourStatsSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class SyncOrchestrator:
         self.lineup = LineupSyncService(db, self.client)
         self.stats = StatsSyncService(db, self.client)
         self.team_of_week = TeamOfWeekSyncService(db, self.client)
+        self.player_tour = PlayerTourStatsSyncService(db, self.client)
 
     async def is_sync_enabled(self, season_id: int) -> bool:
         """
@@ -125,6 +127,22 @@ class SyncOrchestrator:
             game_ids=game_ids,
             timeout_seconds=timeout_seconds,
         )
+
+    # ==================== Player tour stats sync ====================
+
+    async def sync_player_tour_stats(self, season_id: int, tour: int, force: bool = False) -> int:
+        if not force and not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping player tour stats sync")
+            return 0
+        logger.info(f"Syncing player tour stats for season {season_id}, tour {tour}")
+        return await self.player_tour.sync_tour(season_id, tour)
+
+    async def backfill_player_tour_stats(self, season_id: int, max_tour: int, force: bool = False) -> dict:
+        if not force and not await self.is_sync_enabled(season_id):
+            logger.info(f"Season {season_id}: sync disabled, skipping player tour stats backfill")
+            return {"skipped": True, "reason": "sync disabled for season"}
+        logger.info(f"Backfilling player tour stats for season {season_id}, tours 1..{max_tour}")
+        return await self.player_tour.backfill_season(season_id, max_tour)
 
     # ==================== Stats sync methods ====================
 

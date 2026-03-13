@@ -102,7 +102,7 @@ async def get_team_overview(
     stats = stats_result.scalar_one_or_none()
 
     if stats:
-        goals_scored = _safe_int(stats.goals_scored)
+        goals_scored = _safe_int(stats.goal)
         goals_conceded = _safe_int(stats.goals_conceded)
         goal_difference = (
             _safe_int(stats.goals_difference)
@@ -111,10 +111,10 @@ async def get_team_overview(
         )
         summary = TeamOverviewSummary(
             games_played=_safe_int(stats.games_played),
-            wins=_safe_int(stats.wins),
-            draws=_safe_int(stats.draws),
-            losses=_safe_int(stats.losses),
-            goals_scored=goals_scored,
+            win=_safe_int(stats.win),
+            draw=_safe_int(stats.draw),
+            match_loss=_safe_int(stats.match_loss),
+            goal=goals_scored,
             goals_conceded=goals_conceded,
             goal_difference=goal_difference,
             points=_safe_int(stats.points),
@@ -291,8 +291,26 @@ async def get_team_overview(
         .scalar_subquery()
     )
 
+    contract_amplua_subq = (
+        select(PlayerTeam.amplua)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
     players_result = await db.execute(
-        select(PlayerSeasonStats, Player, Team, contract_photo_subq.label("contract_photo"))
+        select(
+            PlayerSeasonStats,
+            Player,
+            Team,
+            contract_photo_subq.label("contract_photo"),
+            contract_amplua_subq.label("contract_amplua"),
+        )
         .join(Player, PlayerSeasonStats.player_id == Player.id)
         .outerjoin(Team, PlayerSeasonStats.team_id == Team.id)
         .where(
@@ -303,26 +321,53 @@ async def get_team_overview(
     player_rows = players_result.all()
 
     players: list[TeamOverviewLeaderPlayer] = []
-    for row_stats, row_player, row_team, contract_photo in player_rows:
-        players.append(
-            TeamOverviewLeaderPlayer(
-                player_id=row_player.id,
-                first_name=get_localized_field(row_player, "first_name", lang),
-                last_name=get_localized_field(row_player, "last_name", lang),
-                photo_url=contract_photo or row_player.photo_url,
-                team_id=row_team.id if row_team else row_stats.team_id,
-                team_name=get_localized_name(row_team, lang) if row_team else None,
-                team_logo=resolve_team_logo_url(row_team),
-                position=get_localized_field(row_player, "top_role", lang),
-                games_played=_safe_int(row_stats.games_played),
-                goals=_safe_int(row_stats.goals),
-                assists=_safe_int(row_stats.assists),
-                passes=_safe_int(row_stats.passes),
-                save_shot=_safe_int(row_stats.save_shot),
-                dry_match=_safe_int(row_stats.dry_match),
-                red_cards=_safe_int(row_stats.red_cards),
-            )
+    gk_entries: list[tuple[int, TeamOverviewLeaderPlayer]] = []
+    def_entries: list[tuple[int, TeamOverviewLeaderPlayer]] = []
+    mid_entries: list[tuple[int, TeamOverviewLeaderPlayer]] = []
+    fwd_entries: list[tuple[int, TeamOverviewLeaderPlayer]] = []
+    for row_stats, row_player, row_team, contract_photo, contract_amplua in player_rows:
+        player_entry = TeamOverviewLeaderPlayer(
+            player_id=row_player.id,
+            first_name=get_localized_field(row_player, "first_name", lang),
+            last_name=get_localized_field(row_player, "last_name", lang),
+            photo_url=contract_photo or row_player.photo_url,
+            team_id=row_team.id if row_team else row_stats.team_id,
+            team_name=get_localized_name(row_team, lang) if row_team else None,
+            team_logo=resolve_team_logo_url(row_team),
+            position=get_localized_field(row_player, "top_role", lang),
+            games_played=_safe_int(row_stats.games_played),
+            goal=_safe_int(row_stats.goal),
+            goal_pass=_safe_int(row_stats.goal_pass),
+            passes=_safe_int(row_stats.passes),
+            save_shot=_safe_int(row_stats.save_shot),
+            dry_match=_safe_int(row_stats.dry_match),
+            red_cards=_safe_int(row_stats.red_cards),
+            tackle=_safe_int(row_stats.tackle),
+            interception=_safe_int(row_stats.interception),
+            shot=_safe_int(row_stats.shot),
+            dribble_success=_safe_int(row_stats.dribble_success),
+            key_pass=_safe_int(row_stats.key_pass),
+            recovery=_safe_int(row_stats.recovery),
+            goals_conceded=_safe_int(row_stats.goals_conceded),
         )
+        players.append(player_entry)
+        if contract_amplua == 1:  # GK
+            gk_entries.append((_safe_int(row_stats.games_starting), player_entry))
+        if contract_amplua == 2:  # DEF
+            def_entries.append((_safe_int(row_stats.games_starting), player_entry))
+        if contract_amplua == 3:  # MID
+            mid_entries.append((_safe_int(row_stats.games_starting), player_entry))
+        if contract_amplua == 4:  # FWD
+            fwd_entries.append((_safe_int(row_stats.games_starting), player_entry))
+
+    gk_entries.sort(key=lambda x: x[0] or 0, reverse=True)
+    gk_players = [entry for _, entry in gk_entries]
+    def_entries.sort(key=lambda x: x[0] or 0, reverse=True)
+    def_players = [entry for _, entry in def_entries]
+    mid_entries.sort(key=lambda x: x[0] or 0, reverse=True)
+    mid_players = [entry for _, entry in mid_entries]
+    fwd_entries.sort(key=lambda x: x[0] or 0, reverse=True)
+    fwd_players = [entry for _, entry in fwd_entries]
 
     def sort_players(items: list[TeamOverviewLeaderPlayer], field: str) -> list[TeamOverviewLeaderPlayer]:
         return sorted(
@@ -336,8 +381,8 @@ async def get_team_overview(
             reverse=True,
         )
 
-    goals_table = sort_players(players, "goals")[:leaders_limit]
-    assists_table = sort_players(players, "assists")[:leaders_limit]
+    goals_table = sort_players(players, "goal")[:leaders_limit]
+    assists_table = sort_players(players, "goal_pass")[:leaders_limit]
     leaders = TeamOverviewLeaders(
         top_scorer=goals_table[0] if goals_table else None,
         top_assister=assists_table[0] if assists_table else None,
@@ -346,9 +391,12 @@ async def get_team_overview(
         mini_leaders=TeamOverviewMiniLeaders(
             passes=sort_players(players, "passes")[0] if players else None,
             appearances=sort_players(players, "games_played")[0] if players else None,
-            saves=sort_players(players, "save_shot")[0] if players else None,
-            clean_sheets=sort_players(players, "dry_match")[0] if players else None,
+            saves=gk_players[0] if gk_players else None,
+            clean_sheets=gk_players[0] if gk_players else None,
             red_cards=sort_players(players, "red_cards")[0] if players else None,
+            top_defender=sort_players(def_players, "passes")[0] if def_players else None,
+            top_midfielder=sort_players(mid_players, "passes")[0] if mid_players else None,
+            top_forward=sort_players(fwd_players, "shot")[0] if fwd_players else None,
         ),
     )
 

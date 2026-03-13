@@ -1,6 +1,7 @@
 """Position/formation normalization helpers for game lineups."""
 
 import re
+from collections import Counter
 from datetime import date as date_type
 
 
@@ -13,7 +14,8 @@ VALID_AMPLUA_VALUES = {"Gk", "D", "DM", "M", "AM", "F"}
 VALID_FIELD_POSITION_VALUES = {"L", "LC", "C", "RC", "R"}
 LINEUP_FIELD_ALLOWED_CHAMPIONSHIPS = {1, 2, 3, 5}
 LINEUP_FIELD_CUTOFF_DATE = date_type(2025, 6, 1)
-VALID_LINEUP_SOURCES = {"team_squad", "sota_api", "vsporte_api", "matches_players", "none"}
+VALID_LINEUP_SOURCES = {"team_squad", "sota_api", "vsporte_api", "matches_players", "prematch_report", "none"}
+MAX_PLAYERS_PER_SLOT = 2
 
 POSITION_CODE_TO_AMPLUA = {
     # Goalkeepers
@@ -312,6 +314,7 @@ def team_has_valid_field_data(team_lineup: dict) -> bool:
     starters = team_lineup.get("starters") or []
     if len(starters) < 11:
         return False
+    slot_counts: Counter[tuple[str, str]] = Counter()
     for player in starters[:11]:
         amplua = player.get("amplua")
         field_position = player.get("field_position")
@@ -319,6 +322,9 @@ def team_has_valid_field_data(team_lineup: dict) -> bool:
             return False
         if field_position not in VALID_FIELD_POSITION_VALUES:
             return False
+        slot_counts[(amplua, field_position)] += 1
+    if any(count > MAX_PLAYERS_PER_SLOT for count in slot_counts.values()):
+        return False
     return True
 
 

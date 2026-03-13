@@ -16,8 +16,8 @@ from app.schemas.sync import SyncResponse, SyncStatus
 from app.services.live_sync_service import LiveSyncService
 from app.services.season_visibility import get_current_season_id
 from app.services.sota_client import SotaClient, get_sota_client
-from app.services.sync import SyncOrchestrator
-from app.tasks.sync_tasks import resync_extended_stats_task
+from app.services.sync import GameSyncService, SyncOrchestrator
+from app.tasks.sync_tasks import resync_extended_stats_task, backfill_player_tour_stats_task
 router = APIRouter(prefix="/ops", tags=["admin-ops"])
 
 
@@ -273,6 +273,68 @@ async def resync_extended_stats(
     )
 
 
+@router.post("/sync/player-tour-stats", response_model=SyncResponse)
+async def sync_player_tour_stats(
+    season_id: int = Query(default=None),
+    tour: int = Query(...),
+    force: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Sync player tour stats for a single tour."""
+    season_id = season_id or await get_current_season_id(db)
+    try:
+        count = await SyncOrchestrator(db).sync_player_tour_stats(
+            season_id, tour, force=force
+        )
+        return SyncResponse(
+            status=SyncStatus.SUCCESS,
+            message="Player tour stats sync completed",
+            details={"season_id": season_id, "tour": tour, "players_synced": count},
+        )
+    except Exception as exc:
+        return SyncResponse(
+            status=SyncStatus.FAILED,
+            message=f"Player tour stats sync failed: {exc}",
+        )
+
+
+@router.post("/sync/backfill-player-tour-stats", response_model=SyncResponse)
+async def backfill_player_tour_stats(
+    season_id: int = Query(...),
+    max_tour: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Queue backfill of player tour stats via Celery."""
+    backfill_player_tour_stats_task.delay(season_id, max_tour)
+    return SyncResponse(
+        status=SyncStatus.SUCCESS,
+        message=f"Queued backfill for season {season_id}, tours 1..{max_tour}",
+        details={"season_id": season_id, "max_tour": max_tour},
+    )
+
+
+@router.post("/backfill-player-stats/{season_id}", response_model=SyncResponse)
+async def backfill_player_stats(
+    season_id: int,
+    db: AsyncSession = Depends(get_db),
+    client: SotaClient = Depends(get_sota_client),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Fill minutes_played and pass_accuracy from extra_stats JSONB for a season."""
+    try:
+        service = GameSyncService(db, client)
+        updated = await service.backfill_player_stats_from_extra(season_id)
+        return SyncResponse(
+            status=SyncStatus.SUCCESS,
+            message=f"Backfilled {updated} player stats rows",
+            details={"season_id": season_id, "updated": updated},
+        )
+    except Exception as exc:
+        return SyncResponse(status=SyncStatus.FAILED, message=f"Backfill failed: {exc}")
+
+
 # ==================== Live Operations ====================
 
 
@@ -400,6 +462,48 @@ async def live_active_games(
             for g in games
         ],
     }
+
+
+# ==================== AI Preview ====================
+
+
+@router.post("/generate-preview/{game_id}", response_model=SyncResponse)
+async def generate_preview(
+    game_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Generate AI preview for a single game."""
+    from app.services.match_preview import MatchPreviewGenerator
+
+    generator = MatchPreviewGenerator()
+    if not generator.enabled:
+        return SyncResponse(status=SyncStatus.FAILED, message="Anthropic API not configured")
+
+    game = await db.get(Game, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    try:
+        preview_ru = await generator.generate(game_id, "ru", db)
+        preview_kz = await generator.generate(game_id, "kz", db)
+
+        if preview_ru or preview_kz:
+            game.preview_ru = preview_ru
+            game.preview_kz = preview_kz
+            game.preview_generated_at = datetime.utcnow()
+            await db.commit()
+
+        return SyncResponse(
+            status=SyncStatus.SUCCESS,
+            message="Preview generated",
+            details={
+                "preview_ru": (preview_ru[:100] + "...") if preview_ru else None,
+                "preview_kz": (preview_kz[:100] + "...") if preview_kz else None,
+            },
+        )
+    except Exception as exc:
+        return SyncResponse(status=SyncStatus.FAILED, message=f"Preview generation failed: {exc}")
 
 
 # ==================== Poster Parser ====================

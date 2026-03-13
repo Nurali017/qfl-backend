@@ -371,9 +371,9 @@ async def get_player_tournament_history(
                 team_name=team_name,
                 position=None,
                 games_played=stat.games_played,
-                minutes_played=stat.minutes_played,
-                goals=stat.goals,
-                assists=stat.assists,
+                time_on_field_total=stat.time_on_field_total,
+                goal=stat.goal,
+                goal_pass=stat.goal_pass,
                 yellow_cards=stat.yellow_cards,
                 red_cards=stat.red_cards,
             )

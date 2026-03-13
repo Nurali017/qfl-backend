@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, date, time
 from uuid import UUID
-from sqlalchemy import Integer, String, Date, Time, Boolean, DateTime, ForeignKey, Index, Enum
+from sqlalchemy import Integer, String, Date, Time, Boolean, DateTime, ForeignKey, Index, Enum, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -79,6 +79,7 @@ class Game(Base):
 
     visitors: Mapped[int | None] = mapped_column(Integer)
     ticket_url: Mapped[str | None] = mapped_column(String(500))  # URL for ticket purchase
+    ticket_url_fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
     is_free_entry: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
@@ -96,9 +97,20 @@ class Game(Base):
     # When extended stats (xG, season stats) were synced post-match
     extended_stats_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
+    # AI-generated match preview
+    preview_ru: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview_kz: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview_generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Broadcast fields (В-1)
     where_broadcast: Mapped[str | None] = mapped_column(String(500))  # Where to watch
     video_review_url: Mapped[str | None] = mapped_column(String(500))  # Video review URL
+
+    # Weather data (fetched from OpenWeatherMap)
+    weather_temp: Mapped[int | None] = mapped_column(Integer)
+    weather_condition: Mapped[str | None] = mapped_column(String(50))
+    weather_fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow
     )

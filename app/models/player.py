@@ -75,3 +75,6 @@ class Player(Base):
     game_lineups: Mapped[list["GameLineup"]] = relationship(
         "GameLineup", back_populates="player"
     )
+    tour_stats: Mapped[list["PlayerTourStats"]] = relationship(
+        "PlayerTourStats", back_populates="player"
+    )

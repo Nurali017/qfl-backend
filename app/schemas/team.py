@@ -70,10 +70,10 @@ class TeamSeasonStatsResponse(BaseModel):
 
     # Basic stats
     games_played: int | None = None
-    wins: int | None = None
-    draws: int | None = None
-    losses: int | None = None
-    goals_scored: int | None = None
+    win: int | None = None
+    draw: int | None = None
+    match_loss: int | None = None
+    goal: int | None = None
     goals_conceded: int | None = None
     goal_difference: int | None = None
     points: int | None = None
@@ -84,18 +84,18 @@ class TeamSeasonStatsResponse(BaseModel):
     opponent_xg: float | None = None
 
     # Shots
-    shots: int | None = None
+    shot: int | None = None
     shots_on_goal: int | None = None
     shots_off_goal: int | None = None
     shot_per_match: float | None = None
     goal_to_shot_ratio: float | None = None
 
     # Possession
-    possession_avg: float | None = None
+    possession_percent_average: float | None = None
 
     # Passes
     passes: int | None = None
-    pass_accuracy_avg: float | None = None
+    pass_ratio: float | None = None
     pass_per_match: float | None = None
     pass_forward: int | None = None
     pass_long: int | None = None
@@ -131,16 +131,16 @@ class TeamSeasonStatsResponse(BaseModel):
     dribble_ratio: float | None = None
 
     # Discipline
-    fouls: int | None = None
+    foul: int | None = None
     foul_taken: int | None = None
     yellow_cards: int | None = None
     second_yellow_cards: int | None = None
     red_cards: int | None = None
 
     # Set pieces
-    corners: int | None = None
+    corner: int | None = None
     corner_per_match: float | None = None
-    offsides: int | None = None
+    offside: int | None = None
 
     # Penalty
     penalty: int | None = None
@@ -163,10 +163,10 @@ class TeamStatsTableEntry(BaseModel):
 
     # Basic stats
     games_played: int | None = None
-    wins: int | None = None
-    draws: int | None = None
-    losses: int | None = None
-    goals_scored: int | None = None
+    win: int | None = None
+    draw: int | None = None
+    match_loss: int | None = None
+    goal: int | None = None
     goals_conceded: int | None = None
     goal_difference: int | None = None
     points: int | None = None
@@ -176,37 +176,37 @@ class TeamStatsTableEntry(BaseModel):
     goals_conceded_per_match: float | None = None
 
     # Shots
-    shots: int | None = None
+    shot: int | None = None
     shots_on_goal: int | None = None
     shot_accuracy: float | None = None
-    shots_per_match: float | None = None
+    shot_per_match: float | None = None
 
     # Passes
     passes: int | None = None
-    pass_accuracy: float | None = None
-    key_passes: int | None = None
-    crosses: int | None = None
+    pass_ratio: float | None = None
+    key_pass: int | None = None
+    pass_cross: int | None = None
 
     # Possession & Attacking
-    possession: float | None = None
-    dribbles: int | None = None
-    dribble_success: float | None = None
+    possession_percent_average: float | None = None
+    dribble: int | None = None
+    dribble_ratio: float | None = None
 
     # Defense
-    tackles: int | None = None
-    interceptions: int | None = None
-    recoveries: int | None = None
+    tackle: int | None = None
+    interception: int | None = None
+    recovery: int | None = None
 
     # Discipline
-    fouls: int | None = None
-    fouls_per_match: float | None = None
+    foul: int | None = None
+    foul_per_match: float | None = None
     yellow_cards: int | None = None
     second_yellow_cards: int | None = None
     red_cards: int | None = None
 
     # Set pieces
-    corners: int | None = None
-    offsides: int | None = None
+    corner: int | None = None
+    offside: int | None = None
 
     # xG
     xg: float | None = None
@@ -289,10 +289,10 @@ class TeamOverviewSeason(BaseModel):
 
 class TeamOverviewSummary(BaseModel):
     games_played: int = 0
-    wins: int = 0
-    draws: int = 0
-    losses: int = 0
-    goals_scored: int = 0
+    win: int = 0
+    draw: int = 0
+    match_loss: int = 0
+    goal: int = 0
     goals_conceded: int = 0
     goal_difference: int = 0
     points: int = 0
@@ -351,12 +351,19 @@ class TeamOverviewLeaderPlayer(BaseModel):
     team_logo: str | None = None
     position: str | None = None
     games_played: int = 0
-    goals: int = 0
-    assists: int = 0
+    goal: int = 0
+    goal_pass: int = 0
     passes: int = 0
     save_shot: int = 0
     dry_match: int = 0
     red_cards: int = 0
+    tackle: int = 0
+    interception: int = 0
+    shot: int = 0
+    dribble_success: int = 0
+    key_pass: int = 0
+    recovery: int = 0
+    goals_conceded: int = 0
 
 
 class TeamOverviewMiniLeaders(BaseModel):
@@ -365,6 +372,9 @@ class TeamOverviewMiniLeaders(BaseModel):
     saves: TeamOverviewLeaderPlayer | None = None
     clean_sheets: TeamOverviewLeaderPlayer | None = None
     red_cards: TeamOverviewLeaderPlayer | None = None
+    top_defender: TeamOverviewLeaderPlayer | None = None
+    top_midfielder: TeamOverviewLeaderPlayer | None = None
+    top_forward: TeamOverviewLeaderPlayer | None = None
 
 
 class TeamOverviewLeaders(BaseModel):

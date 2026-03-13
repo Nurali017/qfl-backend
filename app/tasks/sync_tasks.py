@@ -154,15 +154,30 @@ async def _sync_extended_stats():
                     game_errors.append(f"Game {game.id}: {e}")
 
             # 3. Sync team + player season stats for affected seasons
+            # Also collect (season_id, tour) pairs for player tour stats
+            season_tours: dict[int, set[int]] = {}
+            for game in games:
+                if game.season_id in seasons_to_sync and game.tour is not None:
+                    season_tours.setdefault(game.season_id, set()).add(game.tour)
+
             season_results = {}
             for season_id in seasons_to_sync:
                 if not await orchestrator.is_sync_enabled(season_id):
                     continue
                 team_count = await orchestrator.sync_team_season_stats(season_id)
                 player_count = await orchestrator.sync_player_stats(season_id)
+                # Sync player tour stats for each tour with finished games
+                tour_counts = {}
+                for tour in sorted(season_tours.get(season_id, [])):
+                    try:
+                        tc = await orchestrator.sync_player_tour_stats(season_id, tour)
+                        tour_counts[tour] = tc
+                    except Exception as e:
+                        logger.warning("Player tour stats failed for season %d tour %d: %s", season_id, tour, e)
                 season_results[season_id] = {
                     "teams": team_count,
                     "players": player_count,
+                    "tour_stats": tour_counts,
                 }
 
             await db.commit()
@@ -280,3 +295,24 @@ def sync_best_players():
 def sync_extended_stats():
     """Celery task: Sync extended stats 24h+ after match finish."""
     return run_async(_sync_extended_stats())
+
+
+async def _backfill_player_tour_stats(season_id: int, max_tour: int):
+    """Backfill player tour stats for a season (all tours 1..max_tour)."""
+    async with AsyncSessionLocal() as db:
+        try:
+            orchestrator = SyncOrchestrator(db)
+            results = await orchestrator.backfill_player_tour_stats(
+                season_id, max_tour, force=True
+            )
+            await db.commit()
+            return {"season_id": season_id, "max_tour": max_tour, "results": results}
+        except Exception:
+            await db.rollback()
+            raise
+
+
+@celery_app.task(name="app.tasks.sync_tasks.backfill_player_tour_stats")
+def backfill_player_tour_stats_task(season_id: int, max_tour: int):
+    """Celery task: Backfill player tour stats for a season."""
+    return run_async(_backfill_player_tour_stats(season_id, max_tour))

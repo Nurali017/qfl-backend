@@ -142,7 +142,7 @@ class GameSyncService(BaseSyncService):
                 shots_on_goal=stats.get("shots_on_goal"),
                 shots_off_goal=stats.get("shots_off_goal"),
                 passes=stats.get("pass"),
-                pass_accuracy=stats.get("pass_accuracy"),
+                pass_accuracy=stats.get("pass_accuracy") or stats.get("pass_ratio"),
                 fouls=stats.get("foul"),
                 yellow_cards=stats.get("yellow_cards"),
                 red_cards=stats.get("red_cards"),
@@ -203,14 +203,14 @@ class GameSyncService(BaseSyncService):
                 game_id=game_id,
                 player_id=player_id,
                 team_id=team_id,
-                minutes_played=ps.get("minutes_played"),
+                minutes_played=ps.get("minutes_played") or stats.get("time_on_field_total"),
                 started=ps.get("started", False),
                 position=ps.get("position"),
                 shots=stats.get("shot", 0),
                 shots_on_goal=stats.get("shots_on_goal", 0),
                 shots_off_goal=stats.get("shots_off_goal", 0),
                 passes=stats.get("pass", 0),
-                pass_accuracy=stats.get("pass_accuracy"),
+                pass_accuracy=stats.get("pass_accuracy") or stats.get("pass_ratio"),
                 duel=stats.get("duel", 0),
                 tackle=stats.get("tackle", 0),
                 corner=stats.get("corner", 0),
@@ -450,6 +450,17 @@ class GameSyncService(BaseSyncService):
                 )
                 if v2_data:
                     ps.extra_stats = {**(ps.extra_stats or {}), **v2_data}
+                    # Populate main columns from v2 data
+                    if ps.minutes_played is None and v2_data.get("time_on_field_total"):
+                        try:
+                            ps.minutes_played = int(v2_data["time_on_field_total"])
+                        except (ValueError, TypeError):
+                            pass
+                    if ps.pass_accuracy is None and v2_data.get("pass_ratio"):
+                        try:
+                            ps.pass_accuracy = float(v2_data["pass_ratio"])
+                        except (ValueError, TypeError):
+                            pass
                     enriched += 1
             except Exception as e:
                 logger.warning(f"v2 stats failed for player {ps.player_id}: {e}")
@@ -932,3 +943,35 @@ class GameSyncService(BaseSyncService):
             "formations_updated": updated,
             "errors_count": len(errors),
         }
+
+    async def backfill_player_stats_from_extra(self, season_id: int) -> int:
+        """Fill minutes_played and pass_accuracy from extra_stats JSONB."""
+        result = await self.db.execute(
+            select(GamePlayerStats)
+            .join(Game, GamePlayerStats.game_id == Game.id)
+            .where(
+                Game.season_id == season_id,
+                GamePlayerStats.extra_stats.isnot(None),
+            )
+        )
+        rows = result.scalars().all()
+        updated = 0
+        for ps in rows:
+            changed = False
+            ex = ps.extra_stats or {}
+            if ps.minutes_played is None and ex.get("time_on_field_total"):
+                try:
+                    ps.minutes_played = int(ex["time_on_field_total"])
+                    changed = True
+                except (ValueError, TypeError):
+                    pass
+            if ps.pass_accuracy is None and ex.get("pass_ratio"):
+                try:
+                    ps.pass_accuracy = float(ex["pass_ratio"])
+                    changed = True
+                except (ValueError, TypeError):
+                    pass
+            if changed:
+                updated += 1
+        await self.db.commit()
+        return updated

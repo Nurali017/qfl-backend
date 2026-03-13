@@ -38,12 +38,12 @@ _ensure_visible_season = ensure_visible_season_or_404
 
 # Available sort fields for player stats
 PLAYER_STATS_SORT_FIELDS = [
-    "goals", "assists", "goal_and_assist", "xg", "shots", "shots_on_goal",
-    "passes", "key_passes", "pass_accuracy",
-    "duels", "duels_won", "aerial_duel", "ground_duel",
+    "goal", "goal_pass", "goal_and_assist", "xg", "shot", "shots_on_goal",
+    "passes", "key_pass", "pass_ratio",
+    "duel", "duel_success", "aerial_duel", "ground_duel",
     "tackle", "interception", "recovery",
     "dribble", "dribble_success",
-    "minutes_played", "games_played",
+    "time_on_field_total", "games_played",
     "yellow_cards", "second_yellow_cards", "red_cards",
     "save_shot", "dry_match",
     "owngoal", "penalty_success", "goal_out_box", "xg_per_90",
@@ -59,7 +59,7 @@ PLAYER_STATS_SORT_FIELDS = [
 @router.get("/{season_id}/player-stats", response_model=PlayerStatsTableResponse)
 async def get_player_stats_table(
     season_id: int,
-    sort_by: str = Query(default="goals"),
+    sort_by: str = Query(default="goal"),
     team_id: int | None = Query(default=None),
     group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B')"),
     position_code: str | None = Query(default=None, pattern="^(GK|DEF|MID|FWD)$"),
@@ -72,8 +72,8 @@ async def get_player_stats_table(
     """
     Get player stats table for a season.
 
-    Sort by: goals, assists, xg, shots, passes, key_passes, duels, tackle,
-    interception, dribble, minutes_played, games_played, yellow_cards,
+    Sort by: goal, goal_pass, xg, shot, passes, key_pass, duel, tackle,
+    interception, dribble, time_on_field_total, games_played, yellow_cards,
     red_cards, save_shot, dry_match, etc.
     """
     await _ensure_visible_season(db, season_id)
@@ -181,18 +181,18 @@ async def get_player_stats_table(
             player_type=player.player_type,
             position_code=AMPLUA_TO_POSITION.get(contract_amplua),
             games_played=stats.games_played,
-            minutes_played=stats.minutes_played,
-            goals=stats.goals,
-            assists=stats.assists,
+            time_on_field_total=stats.time_on_field_total,
+            goal=stats.goal,
+            goal_pass=stats.goal_pass,
             goal_and_assist=stats.goal_and_assist,
             xg=to_finite_float(stats.xg),
-            shots=stats.shots,
+            shot=stats.shot,
             shots_on_goal=stats.shots_on_goal,
             passes=stats.passes,
-            key_passes=stats.key_passes,
-            pass_accuracy=to_finite_float(stats.pass_accuracy),
-            duels=stats.duels,
-            duels_won=stats.duels_won,
+            key_pass=stats.key_pass,
+            pass_ratio=to_finite_float(stats.pass_ratio),
+            duel=stats.duel,
+            duel_success=stats.duel_success,
             aerial_duel=stats.aerial_duel,
             ground_duel=stats.ground_duel,
             tackle=stats.tackle,
@@ -258,15 +258,6 @@ async def get_player_stats_table(
 # Map response field names (sent by frontend) to DB column names.
 # Fields that match the DB column name map to themselves.
 TEAM_STATS_SORT_ALIAS: dict[str, str] = {
-    "possession": "possession_avg",
-    "tackles": "tackle",
-    "interceptions": "interception",
-    "recoveries": "recovery",
-    "dribbles": "dribble",
-    "dribble_success": "dribble_ratio",
-    "pass_accuracy": "pass_accuracy_avg",
-    "key_passes": "key_pass",
-    "crosses": "pass_cross",
     "goal_difference": "goals_difference",
 }
 
@@ -274,25 +265,25 @@ TEAM_STATS_SORT_ALIAS: dict[str, str] = {
 # These are sorted in Python via sort_items() and must bypass the DB column check.
 TEAM_STATS_RESPONSE_ONLY_FIELDS = {
     "goals_per_match", "goals_conceded_per_match",
-    "shot_accuracy", "shots_per_match",
-    "fouls_per_match",
+    "shot_accuracy", "shot_per_match",
+    "foul_per_match",
 }
 
 # Available sort fields for team stats (accept both response names and DB names)
 TEAM_STATS_SORT_FIELDS = [
-    "points", "goals_scored", "goals_conceded", "goal_difference",
-    "wins", "draws", "losses", "games_played",
-    "shots", "shots_on_goal", "possession_avg", "possession",
-    "passes", "pass_accuracy_avg", "pass_accuracy", "key_pass", "key_passes",
-    "tackle", "tackles", "interception", "interceptions", "recovery", "recoveries",
-    "dribble", "dribbles", "dribble_success", "crosses",
-    "fouls", "yellow_cards", "second_yellow_cards", "red_cards",
-    "xg", "corners", "offsides",
+    "points", "goal", "goals_conceded", "goal_difference",
+    "win", "draw", "match_loss", "games_played",
+    "shot", "shots_on_goal", "possession_percent_average",
+    "passes", "pass_ratio", "key_pass",
+    "tackle", "interception", "recovery",
+    "dribble", "dribble_ratio", "pass_cross",
+    "foul", "yellow_cards", "second_yellow_cards", "red_cards",
+    "xg", "corner", "offside",
     # Computed response-only fields (sorted in Python, not DB)
     "goals_per_match", "goals_conceded_per_match",
-    "shot_accuracy", "shots_per_match",
-    "fouls_per_match",
-    # New fields
+    "shot_accuracy", "shot_per_match",
+    "foul_per_match",
+    # Extra fields
     "shots_off_goal",
     "pass_per_match", "pass_forward", "pass_long", "pass_progressive", "pass_to_box", "pass_to_3rd", "goal_pass",
     "duel", "duel_ratio",
@@ -362,7 +353,7 @@ async def get_team_stats_table(
             primary_val = to_finite_number(getattr(item, primary, None))
             points_val = to_finite_number(getattr(item, "points", None))
             gd_val = to_finite_number(getattr(item, "goal_difference", None))
-            gs_val = to_finite_number(getattr(item, "goals_scored", None))
+            gs_val = to_finite_number(getattr(item, "goal", None))
 
             # None values last; numbers sorted descending
             def sortable(v: float | None) -> tuple[int, float]:
@@ -438,10 +429,10 @@ async def get_team_stats_table(
                         team_name=get_localized_field(team, "name", lang),
                         team_logo=resolve_team_logo_url(team),
                         games_played=st.games_played,
-                        wins=st.wins,
-                        draws=st.draws,
-                        losses=st.losses,
-                        goals_scored=st.goals_scored,
+                        win=st.wins,
+                        draw=st.draws,
+                        match_loss=st.losses,
+                        goal=st.goals_scored,
                         goals_conceded=st.goals_conceded,
                         goal_difference=goal_difference,
                         points=st.points,
@@ -525,10 +516,10 @@ async def get_team_stats_table(
                             team_name=get_localized_field(team, "name", lang) if team else str(t_id),
                             team_logo=resolve_team_logo_url(team),
                             games_played=stats["games_played"],
-                            wins=stats["wins"],
-                            draws=stats["draws"],
-                            losses=stats["losses"],
-                            goals_scored=goals_scored,
+                            win=stats["wins"],
+                            draw=stats["draws"],
+                            match_loss=stats["losses"],
+                            goal=goals_scored,
                             goals_conceded=goals_conceded,
                             goal_difference=goals_scored - goals_conceded,
                             points=stats["points"],
@@ -551,15 +542,15 @@ async def get_team_stats_table(
     for stats, team in rows:
         # Calculate derived metrics
         games = stats.games_played or 1
-        goals_per_match = round((stats.goals_scored or 0) / games, 2) if games > 0 else None
+        goals_per_match = round((stats.goal or 0) / games, 2) if games > 0 else None
         goals_conceded_per_match = round((stats.goals_conceded or 0) / games, 2) if games > 0 else None
-        shots_per_match = round((stats.shots or 0) / games, 2) if games > 0 else None
-        fouls_per_match = round((stats.fouls or 0) / games, 2) if games > 0 else None
+        shot_per_match_val = round((stats.shot or 0) / games, 2) if games > 0 else None
+        foul_per_match = round((stats.foul or 0) / games, 2) if games > 0 else None
 
         # Shot accuracy
         shot_accuracy = None
-        if stats.shots and stats.shots > 0:
-            shot_accuracy = round((stats.shots_on_goal or 0) / stats.shots * 100, 1)
+        if stats.shot and stats.shot > 0:
+            shot_accuracy = round((stats.shots_on_goal or 0) / stats.shot * 100, 1)
 
         items.append(
             TeamStatsTableEntry(
@@ -567,36 +558,36 @@ async def get_team_stats_table(
                 team_name=get_localized_field(team, "name", lang),
                 team_logo=resolve_team_logo_url(team),
                 games_played=stats.games_played,
-                wins=stats.wins,
-                draws=stats.draws,
-                losses=stats.losses,
-                goals_scored=stats.goals_scored,
+                win=stats.win,
+                draw=stats.draw,
+                match_loss=stats.match_loss,
+                goal=stats.goal,
                 goals_conceded=stats.goals_conceded,
                 goal_difference=stats.goals_difference,
                 points=stats.points,
                 goals_per_match=goals_per_match,
                 goals_conceded_per_match=goals_conceded_per_match,
-                shots=stats.shots,
+                shot=stats.shot,
                 shots_on_goal=stats.shots_on_goal,
                 shot_accuracy=shot_accuracy,
-                shots_per_match=shots_per_match,
+                shot_per_match=shot_per_match_val,
                 passes=stats.passes,
-                pass_accuracy=to_finite_float(stats.pass_accuracy_avg),
-                key_passes=stats.key_pass,
-                crosses=stats.pass_cross,
-                possession=to_finite_float(stats.possession_avg),
-                dribbles=stats.dribble,
-                dribble_success=to_finite_float(stats.dribble_ratio),
-                tackles=stats.tackle,
-                interceptions=stats.interception,
-                recoveries=stats.recovery,
-                fouls=stats.fouls,
-                fouls_per_match=fouls_per_match,
+                pass_ratio=to_finite_float(stats.pass_ratio),
+                key_pass=stats.key_pass,
+                pass_cross=stats.pass_cross,
+                possession_percent_average=to_finite_float(stats.possession_percent_average),
+                dribble=stats.dribble,
+                dribble_ratio=to_finite_float(stats.dribble_ratio),
+                tackle=stats.tackle,
+                interception=stats.interception,
+                recovery=stats.recovery,
+                foul=stats.foul,
+                foul_per_match=foul_per_match,
                 yellow_cards=stats.yellow_cards,
                 second_yellow_cards=stats.second_yellow_cards,
                 red_cards=stats.red_cards,
-                corners=stats.corners,
-                offsides=stats.offsides,
+                corner=stats.corner,
+                offside=stats.offside,
                 xg=to_finite_float(stats.xg),
                 xg_per_match=to_finite_float(stats.xg_per_match),
                 shots_off_goal=stats.shots_off_goal,
@@ -749,26 +740,30 @@ async def get_season_statistics(
     total_second_yellows = second_yellow_result.scalar() or 0
 
     # Query 3: xG + pass accuracy
+    # xG always from TeamSeasonStats (no per-game xG)
+    season_agg_query = select(
+        func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
+        func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
+        func.avg(TeamSeasonStats.pass_ratio).label("avg_pass_accuracy"),
+    ).where(TeamSeasonStats.season_id == season_id)
+    season_agg_result = await db.execute(season_agg_query)
+    season_agg_row = season_agg_result.one()
+    total_team_games = int(season_agg_row.total_team_games or 0)
+    total_xg = float(season_agg_row.total_xg or 0)
+    avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
+
     if max_round is not None:
-        # Per-game computation: pass_accuracy from GameTeamStats, xG unavailable per-game
-        pass_acc_query = select(
+        # Per-game pass_accuracy from GameTeamStats (now backfilled)
+        pa_query = select(
             func.avg(GameTeamStats.pass_accuracy).label("avg_pass_accuracy"),
-        ).join(Game, GameTeamStats.game_id == Game.id).where(*game_base_filters)
-        pass_acc_result = await db.execute(pass_acc_query)
-        pass_accuracy = round(float(pass_acc_result.scalar() or 0), 1)
-        avg_xg_per_match = 0.0
+        ).join(Game, GameTeamStats.game_id == Game.id).where(
+            *game_base_filters,
+            GameTeamStats.pass_accuracy.isnot(None),
+        )
+        pa_result = await db.execute(pa_query)
+        pa_row = pa_result.one()
+        pass_accuracy = round(float(pa_row.avg_pass_accuracy or 0), 1)
     else:
-        # Season-level from TeamSeasonStats (pre-aggregated per team)
-        season_agg_query = select(
-            func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
-            func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
-            func.avg(TeamSeasonStats.pass_accuracy_avg).label("avg_pass_accuracy"),
-        ).where(TeamSeasonStats.season_id == season_id)
-        season_agg_result = await db.execute(season_agg_query)
-        season_agg_row = season_agg_result.one()
-        total_team_games = int(season_agg_row.total_team_games or 0)
-        total_xg = float(season_agg_row.total_xg or 0)
-        avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
         pass_accuracy = round(float(season_agg_row.avg_pass_accuracy or 0), 1)
 
     # Query 4: Shots on target % from GameTeamStats
@@ -798,7 +793,7 @@ async def get_season_statistics(
 
     # Query 6: Player demographics — total players, minutes, Kazakh minutes %, average age
     if max_round is not None:
-        # Per-game: compute from GamePlayerStats joined to Game
+        # Per-game minutes from GamePlayerStats (now backfilled)
         minutes_query = select(
             func.count(distinct(GamePlayerStats.player_id)).label("total_players"),
             func.coalesce(func.sum(GamePlayerStats.minutes_played), 0).label("total_minutes"),
@@ -816,13 +811,12 @@ async def get_season_statistics(
             Country, Player.country_id == Country.id
         ).where(*game_base_filters)
     else:
-        # Season-level from PlayerSeasonStats
         minutes_query = select(
             func.count(distinct(PlayerSeasonStats.player_id)).label("total_players"),
-            func.coalesce(func.sum(PlayerSeasonStats.minutes_played), 0).label("total_minutes"),
+            func.coalesce(func.sum(PlayerSeasonStats.time_on_field_total), 0).label("total_minutes"),
             func.coalesce(func.sum(
                 case(
-                    (func.upper(Country.code) == "KZ", PlayerSeasonStats.minutes_played),
+                    (func.upper(Country.code) == "KZ", PlayerSeasonStats.time_on_field_total),
                     else_=0,
                 )
             ), 0).label("kazakh_minutes"),
