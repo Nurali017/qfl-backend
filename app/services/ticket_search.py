@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Game, GameStatus, Team
+from app.services.telegram import send_telegram_message
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +329,11 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                         "Detected free entry for game %s (%s vs %s)",
                         game.id, home_team.name, away_team.name,
                     )
+                    await send_telegram_message(
+                        "\U0001f3df Свободный вход\n\n"
+                        f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
+                        f"\U0001f4c5 Дата: {game.date}"
+                    )
                 else:
                     ticket_url = _extract_ticket_url(organic, home_team.name, away_team.name)
                     if ticket_url:
@@ -336,6 +342,12 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                         logger.info(
                             "Found ticket URL for game %s (%s vs %s): %s",
                             game.id, home_team.name, away_team.name, ticket_url,
+                        )
+                        await send_telegram_message(
+                            "\U0001f3df Билеты найдены\n\n"
+                            f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
+                            f"\U0001f4c5 Дата: {game.date}\n"
+                            f'\U0001f517 Ссылка: <a href="{ticket_url}">Купить билеты</a>'
                         )
 
                 game.ticket_url_fetched_at = datetime.utcnow()
