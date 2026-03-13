@@ -19,7 +19,7 @@ class TeamSeasonStats(Base):
     __table_args__ = (
         UniqueConstraint("team_id", "season_id", name="uq_team_season_stats"),
         Index("ix_team_season_stats_points", "points"),
-        Index("ix_team_season_stats_goals_scored", "goals_scored"),
+        Index("ix_team_season_stats_goal", "goal"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -29,10 +29,10 @@ class TeamSeasonStats(Base):
     # Basic stats
     games_played: Mapped[int | None] = mapped_column(Integer)
     games_total: Mapped[int | None] = mapped_column(Integer)
-    wins: Mapped[int | None] = mapped_column(Integer)
-    draws: Mapped[int | None] = mapped_column(Integer)
-    losses: Mapped[int | None] = mapped_column(Integer)
-    goals_scored: Mapped[int | None] = mapped_column(Integer)  # goal from API
+    win: Mapped[int | None] = mapped_column(Integer)
+    draw: Mapped[int | None] = mapped_column(Integer)
+    match_loss: Mapped[int | None] = mapped_column(Integer)
+    goal: Mapped[int | None] = mapped_column(Integer)
     goals_conceded: Mapped[int | None] = mapped_column(Integer)
     goals_difference: Mapped[int | None] = mapped_column(Integer)
     points: Mapped[int | None] = mapped_column(Integer)
@@ -43,7 +43,7 @@ class TeamSeasonStats(Base):
     opponent_xg: Mapped[float | None] = mapped_column(Numeric(6, 2))
 
     # Shots
-    shots: Mapped[int | None] = mapped_column(Integer)  # shot from API
+    shot: Mapped[int | None] = mapped_column(Integer)
     shots_on_goal: Mapped[int | None] = mapped_column(Integer)
     shots_on_goal_per_match: Mapped[float | None] = mapped_column(Numeric(4, 2))
     shots_off_goal: Mapped[int | None] = mapped_column(Integer)
@@ -54,12 +54,12 @@ class TeamSeasonStats(Base):
     shots_against_penalty: Mapped[int | None] = mapped_column(Integer)
 
     # Possession
-    possession_avg: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    possession_percent_average: Mapped[float | None] = mapped_column(Numeric(5, 2))
 
     # Passes
-    passes: Mapped[int | None] = mapped_column(Integer)  # pass from API
+    passes: Mapped[int | None] = mapped_column(Integer)
     pass_per_match: Mapped[float | None] = mapped_column(Numeric(6, 2))
-    pass_accuracy_avg: Mapped[float | None] = mapped_column(Numeric(5, 2))  # pass_ratio from API
+    pass_ratio: Mapped[float | None] = mapped_column(Numeric(5, 2))
     pass_forward: Mapped[int | None] = mapped_column(Integer)
     pass_forward_per_match: Mapped[float | None] = mapped_column(Numeric(5, 2))
     pass_forward_ratio: Mapped[float | None] = mapped_column(Numeric(5, 2))
@@ -128,16 +128,16 @@ class TeamSeasonStats(Base):
     save_penalty_ratio: Mapped[float | None] = mapped_column(Numeric(5, 2))
 
     # Discipline
-    fouls: Mapped[int | None] = mapped_column(Integer)  # foul from API
+    foul: Mapped[int | None] = mapped_column(Integer)
     foul_taken: Mapped[int | None] = mapped_column(Integer)
     yellow_cards: Mapped[int | None] = mapped_column(Integer)
     second_yellow_cards: Mapped[int | None] = mapped_column(Integer)
     red_cards: Mapped[int | None] = mapped_column(Integer)
 
     # Set pieces
-    corners: Mapped[int | None] = mapped_column(Integer)  # corner from API
+    corner: Mapped[int | None] = mapped_column(Integer)
     corner_per_match: Mapped[float | None] = mapped_column(Numeric(4, 2))
-    offsides: Mapped[int | None] = mapped_column(Integer)  # offside from API
+    offside: Mapped[int | None] = mapped_column(Integer)
     out: Mapped[int | None] = mapped_column(Integer)
 
     # Visitors

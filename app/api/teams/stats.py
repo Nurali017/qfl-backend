@@ -38,8 +38,8 @@ async def get_team_stats(
 
     # Calculate goal_difference for response
     goal_diff = None
-    if stats.goals_scored is not None and stats.goals_conceded is not None:
-        goal_diff = stats.goals_scored - stats.goals_conceded
+    if stats.goal is not None and stats.goals_conceded is not None:
+        goal_diff = stats.goal - stats.goals_conceded
 
     # Calculate clean sheets from games (matches where opponent scored 0)
     clean_sheets = 0
@@ -67,10 +67,10 @@ async def get_team_stats(
         team_id=stats.team_id,
         season_id=stats.season_id,
         games_played=stats.games_played,
-        wins=stats.wins,
-        draws=stats.draws,
-        losses=stats.losses,
-        goals_scored=stats.goals_scored,
+        win=stats.win,
+        draw=stats.draw,
+        match_loss=stats.match_loss,
+        goal=stats.goal,
         goals_conceded=stats.goals_conceded,
         goal_difference=goal_diff,
         points=stats.points,
@@ -79,15 +79,15 @@ async def get_team_stats(
         xg_per_match=_f(stats.xg_per_match),
         opponent_xg=_f(stats.opponent_xg),
         # Shots
-        shots=stats.shots,
+        shot=stats.shot,
         shots_on_goal=stats.shots_on_goal,
         shots_off_goal=stats.shots_off_goal,
         shot_per_match=_f(stats.shot_per_match),
         goal_to_shot_ratio=_f(stats.goal_to_shot_ratio),
         # Possession & Passes
-        possession_avg=_f(stats.possession_avg),
+        possession_percent_average=_f(stats.possession_percent_average),
         passes=stats.passes,
-        pass_accuracy_avg=_f(stats.pass_accuracy_avg),
+        pass_ratio=_f(stats.pass_ratio),
         pass_per_match=_f(stats.pass_per_match),
         pass_forward=stats.pass_forward,
         pass_long=stats.pass_long,
@@ -119,15 +119,15 @@ async def get_team_stats(
         dribble_per_match=_f(stats.dribble_per_match),
         dribble_ratio=_f(stats.dribble_ratio),
         # Discipline
-        fouls=stats.fouls,
+        foul=stats.foul,
         foul_taken=stats.foul_taken,
         yellow_cards=stats.yellow_cards,
         second_yellow_cards=stats.second_yellow_cards,
         red_cards=stats.red_cards,
         # Set pieces
-        corners=stats.corners,
+        corner=stats.corner,
         corner_per_match=_f(stats.corner_per_match),
-        offsides=stats.offsides,
+        offside=stats.offside,
         # Penalty
         penalty=stats.penalty,
         penalty_ratio=_f(stats.penalty_ratio),

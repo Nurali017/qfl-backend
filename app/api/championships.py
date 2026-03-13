@@ -168,6 +168,27 @@ async def get_front_map(
             if season_id is not None and max_tour is not None
         }
 
+    played_round_by_season: dict[int, int] = {}
+    if selected_season_ids:
+        played_round_result = await db.execute(
+            select(
+                Game.season_id,
+                func.max(Game.tour).label("max_played_tour"),
+            )
+            .where(
+                Game.season_id.in_(selected_season_ids),
+                Game.tour.isnot(None),
+                Game.home_score.isnot(None),
+                Game.away_score.isnot(None),
+            )
+            .group_by(Game.season_id)
+        )
+        played_round_by_season = {
+            sid: int(mt)
+            for sid, mt in played_round_result.all()
+            if sid is not None and mt is not None
+        }
+
     front_map_items: dict[str, FrontMapEntry] = {}
     for code, selected in selected_by_code.items():
         seasons = by_code[code]
@@ -198,7 +219,7 @@ async def get_front_map(
             logo=selected.logo,
             colors=selected.colors,
             final_stage_ids=selected.final_stage_ids,
-            current_round=selected.current_round,
+            current_round=played_round_by_season.get(selected.id),
             total_rounds=total_rounds,
             sort_order=selected.sort_order,
             seasons=season_options,

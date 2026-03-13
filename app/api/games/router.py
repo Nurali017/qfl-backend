@@ -24,6 +24,7 @@ from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.game_status import compute_game_status
 from app.utils.game_grouping import group_games_by_date
+from app.services.weather import format_weather
 from app.config import get_settings
 from app.services.season_visibility import ensure_visible_season_or_404, get_current_season_id
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids
@@ -57,6 +58,7 @@ def _build_stadium_info(stadium: Stadium | None, lang: str) -> StadiumInfo | Non
         name=get_localized_field(stadium, "name", lang),
         city=get_localized_field(stadium, "city", lang),
         capacity=stadium.capacity,
+        field_type=stadium.field_type.value if stadium.field_type else None,
         address=get_localized_field(stadium, "address", lang),
         photo_url=stadium.photo_url,
     )
@@ -418,6 +420,8 @@ async def get_game(
         protocol_url=game.protocol_url,
         where_broadcast=game.where_broadcast,
         video_review_url=game.video_review_url,
+        preview_ru=game.preview_ru,
+        preview_kz=game.preview_kz,
         status=game_status,
         has_score=game.home_score is not None and game.away_score is not None,
         home_team=home_team,
@@ -434,6 +438,7 @@ async def get_game(
             for gb in sorted(game.broadcasters, key=lambda x: x.sort_order)
             if gb.broadcaster and gb.broadcaster.is_active
         ],
+        weather=format_weather(game.weather_temp, game.weather_condition, lang),
     )
 
 

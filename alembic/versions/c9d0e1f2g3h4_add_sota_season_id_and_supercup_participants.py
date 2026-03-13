@@ -27,9 +27,24 @@ SUPERCUP_TEAM_IDS = (13, 90)  # Кайрат, Тобыл
 def upgrade() -> None:
     conn = op.get_bind()
 
-    # 1. Add sota_season_id column
-    op.add_column("seasons", sa.Column("sota_season_id", sa.Integer(), nullable=True))
-    op.create_index("ix_seasons_sota_season_id", "seasons", ["sota_season_id"])
+    # 1. Add sota_season_id column (idempotent)
+    existing = {
+        row[0]
+        for row in conn.execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'seasons'"
+            )
+        )
+    }
+    if "sota_season_id" not in existing:
+        op.add_column("seasons", sa.Column("sota_season_id", sa.Integer(), nullable=True))
+    # Create index if it doesn't exist
+    idx_exists = conn.execute(
+        sa.text("SELECT 1 FROM pg_indexes WHERE indexname = 'ix_seasons_sota_season_id'")
+    ).fetchone()
+    if not idx_exists:
+        op.create_index("ix_seasons_sota_season_id", "seasons", ["sota_season_id"])
 
     # 2. For SOTA-synced seasons: sota_season_id = id (backwards compatible)
     conn.execute(

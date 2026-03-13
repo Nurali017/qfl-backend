@@ -59,6 +59,9 @@ class Team(Base):
     player_season_stats: Mapped[list["PlayerSeasonStats"]] = relationship(
         "PlayerSeasonStats", back_populates="team"
     )
+    player_tour_stats: Mapped[list["PlayerTourStats"]] = relationship(
+        "PlayerTourStats", back_populates="team"
+    )
     coaches: Mapped[list["TeamCoach"]] = relationship(
         "TeamCoach", back_populates="team"
     )

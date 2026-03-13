@@ -84,10 +84,10 @@ def _compute_summary_from_games(team_id: int, finished_games: list[Game]) -> Tea
 
     return TeamOverviewSummary(
         games_played=len(finished_games),
-        wins=wins,
-        draws=draws,
-        losses=losses,
-        goals_scored=goals_scored,
+        win=wins,
+        draw=draws,
+        match_loss=losses,
+        goal=goals_scored,
         goals_conceded=goals_conceded,
         goal_difference=goals_scored - goals_conceded,
         points=points,

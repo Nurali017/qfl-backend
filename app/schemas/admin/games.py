@@ -44,6 +44,11 @@ class AdminGameResponse(BaseModel):
     home_formation: Optional[str] = None
     away_formation: Optional[str] = None
     updated_at: Optional[dt.datetime] = None
+    weather_temp: Optional[int] = None
+    weather_condition: Optional[str] = None
+    weather_fetched_at: Optional[dt.datetime] = None
+    preview_ru: Optional[str] = None
+    preview_kz: Optional[str] = None
     broadcasters: list[AdminGameBroadcasterItem] = []
 
 
@@ -68,6 +73,8 @@ class AdminGameUpdateRequest(BaseModel):
     is_free_entry: Optional[bool] = None
     sync_disabled: Optional[bool] = None
     status: Optional[GameStatus] = None
+    preview_ru: Optional[str] = None
+    preview_kz: Optional[str] = None
 
 
 class AdminGamesListResponse(BaseModel):

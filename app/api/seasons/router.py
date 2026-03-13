@@ -4,7 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/seasons", tags=["seasons"])
 _ensure_visible_season = ensure_visible_season_or_404
 
 
-def _build_season_response(s: Season) -> SeasonResponse:
+def _build_season_response(s: Season, *, current_round: int | None = None) -> SeasonResponse:
     """Build a SeasonResponse from a Season ORM object (with championship loaded)."""
     return SeasonResponse(
         id=s.id,
@@ -46,7 +46,7 @@ def _build_season_response(s: Season) -> SeasonResponse:
         sponsor_name=s.sponsor_name,
         sponsor_name_kz=s.sponsor_name_kz,
         logo=s.logo,
-        current_round=s.current_round,
+        current_round=current_round,
         total_rounds=s.total_rounds,
         sort_order=s.sort_order,
         colors=s.colors,
@@ -106,9 +106,32 @@ async def get_seasons(db: AsyncSession = Depends(get_db)):
     )
     seasons = result.scalars().all()
 
+    # Batch-compute current_round for all seasons
+    played_round_by_season: dict[int, int] = {}
+    season_ids = [s.id for s in seasons]
+    if season_ids:
+        played_round_result = await db.execute(
+            select(
+                Game.season_id,
+                func.max(Game.tour).label("max_played_tour"),
+            )
+            .where(
+                Game.season_id.in_(season_ids),
+                Game.tour.isnot(None),
+                Game.home_score.isnot(None),
+                Game.away_score.isnot(None),
+            )
+            .group_by(Game.season_id)
+        )
+        played_round_by_season = {
+            sid: int(mt)
+            for sid, mt in played_round_result.all()
+            if sid is not None and mt is not None
+        }
+
     items = []
     for s in seasons:
-        items.append(_build_season_response(s))
+        items.append(_build_season_response(s, current_round=played_round_by_season.get(s.id)))
 
     return SeasonListResponse(items=items, total=len(items))
 
@@ -136,7 +159,16 @@ async def update_season_sync(
     await db.commit()
     await db.refresh(season)
 
-    return _build_season_response(season)
+    played_round = (await db.execute(
+        select(func.max(Game.tour)).where(
+            Game.season_id == season_id,
+            Game.tour.isnot(None),
+            Game.home_score.isnot(None),
+            Game.away_score.isnot(None),
+        )
+    )).scalar()
+
+    return _build_season_response(season, current_round=int(played_round) if played_round is not None else None)
 
 
 @router.get("/{season_id}", response_model=SeasonResponse)
@@ -155,7 +187,16 @@ async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
-    return _build_season_response(season)
+    played_round = (await db.execute(
+        select(func.max(Game.tour)).where(
+            Game.season_id == season_id,
+            Game.tour.isnot(None),
+            Game.home_score.isnot(None),
+            Game.away_score.isnot(None),
+        )
+    )).scalar()
+
+    return _build_season_response(season, current_round=int(played_round) if played_round is not None else None)
 
 
 # ──────────────────────────────────────────

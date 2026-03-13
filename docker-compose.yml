@@ -79,6 +79,8 @@ services:
       - MINIO_BUCKET=qfl-files
       - MINIO_SECURE=false
       - DATABASE_POOL_CLASS=null
+      - SERPER_API_KEY=${SERPER_API_KEY:-}
+      - TICKET_SEARCH_ENABLED=${TICKET_SEARCH_ENABLED:-false}
     depends_on:
       - db
       - redis
@@ -100,6 +102,8 @@ services:
       - MINIO_BUCKET=qfl-files
       - MINIO_SECURE=false
       - DATABASE_POOL_CLASS=null
+      - SERPER_API_KEY=${SERPER_API_KEY:-}
+      - TICKET_SEARCH_ENABLED=${TICKET_SEARCH_ENABLED:-false}
     depends_on:
       - db
       - redis

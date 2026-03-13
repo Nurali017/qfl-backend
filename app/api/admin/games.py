@@ -1,15 +1,17 @@
+import asyncio
 import logging
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, and_, or_
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from sqlalchemy import select, delete, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
 from app.models import Game, GameStatus, Team, GameLineup, GameEvent, LineupType, GameEventType, Referee, GameReferee, RefereeRole, Broadcaster, GameBroadcaster, GameTeamStats, GamePlayerStats, Player
+from app.models.player_team import PlayerTeam
 from app.schemas.admin.games import (
     AdminGameResponse,
     AdminGameUpdateRequest,
@@ -27,6 +29,7 @@ from app.schemas.admin.games import (
     AdminPlayerStatsItem,
     AdminPlayerStatsUpsertRequest,
 )
+from app.schemas.admin.prematch import PrematchImportResponse, PrematchPlayerMatch, PrematchTeamResult
 from app.schemas.admin.broadcasters import (
     AdminGameBroadcasterItem,
     AdminGameBroadcasterAddRequest,
@@ -86,6 +89,11 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         home_formation=game.home_formation,
         away_formation=game.away_formation,
         updated_at=game.updated_at,
+        weather_temp=game.weather_temp,
+        weather_condition=game.weather_condition,
+        weather_fetched_at=game.weather_fetched_at,
+        preview_ru=game.preview_ru,
+        preview_kz=game.preview_kz,
         broadcasters=broadcaster_items,
     )
 
@@ -300,6 +308,18 @@ async def list_lineup(game_id: int, db: AsyncSession = Depends(get_db)):
     ]
 
 
+@router.delete("/{game_id}/lineup")
+async def clear_lineup(game_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Game).where(Game.id == game_id))
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    await db.execute(delete(GameLineup).where(GameLineup.game_id == game_id))
+    game.has_lineup = False
+    await db.commit()
+    return {"ok": True}
+
+
 @router.post("/{game_id}/lineup", response_model=AdminLineupItem, status_code=201)
 async def add_lineup(game_id: int, body: AdminLineupAddRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Game).where(Game.id == game_id))
@@ -395,6 +415,261 @@ async def delete_lineup(game_id: int, lineup_id: int, db: AsyncSession = Depends
     await db.delete(entry)
     await db.commit()
     return {"ok": True}
+
+
+# --- Pre-match PDF import ---
+
+_NAME_TRANSLATION = str.maketrans({
+    "ё": "е", "ә": "а", "ғ": "г", "қ": "к", "ң": "н",
+    "ө": "о", "ұ": "у", "ү": "у", "һ": "х", "і": "и",
+})
+
+
+def _norm(s: str | None) -> str:
+    if not s:
+        return ""
+    return s.casefold().translate(_NAME_TRANSLATION).strip()
+
+
+def _match_player(
+    pdf_first: str,
+    pdf_last: str,
+    pdf_number: int,
+    name_index: dict[str, list[PlayerTeam]],
+    number_index: dict[int, PlayerTeam],
+) -> tuple[int | None, str | None, str | None]:
+    """Match a parsed player against team roster. Returns (player_id, db_name, method)."""
+    full_key = _norm(f"{pdf_first} {pdf_last}")
+    # Also try reversed name order (last first)
+    reversed_key = _norm(f"{pdf_last} {pdf_first}")
+
+    # Step 1: name + number
+    for key in (full_key, reversed_key):
+        entries = name_index.get(key, [])
+        for pt in entries:
+            if pt.number == pdf_number:
+                p = pt.player
+                name = " ".join(filter(None, [p.last_name, p.first_name]))
+                return p.id, name, "name+number"
+
+    # Step 2: name only (accept if single match)
+    for key in (full_key, reversed_key):
+        entries = name_index.get(key, [])
+        if len(entries) == 1:
+            p = entries[0].player
+            name = " ".join(filter(None, [p.last_name, p.first_name]))
+            return p.id, name, "name"
+
+    # Step 3: shirt number fallback
+    pt = number_index.get(pdf_number)
+    if pt and pt.player:
+        p = pt.player
+        name = " ".join(filter(None, [p.last_name, p.first_name]))
+        return p.id, name, "shirt_number"
+
+    # Step 4: last name only fallback
+    last_key = _norm(pdf_last)
+    entries = name_index.get(f"__last__{last_key}", [])
+    if len(entries) == 1:
+        p = entries[0].player
+        name = " ".join(filter(None, [p.last_name, p.first_name]))
+        return p.id, name, "last_name"
+    # Also try with reversed (pdf_first as last name)
+    first_as_last = _norm(pdf_first)
+    entries = name_index.get(f"__last__{first_as_last}", [])
+    if len(entries) == 1:
+        p = entries[0].player
+        name = " ".join(filter(None, [p.last_name, p.first_name]))
+        return p.id, name, "last_name"
+
+    return None, None, None
+
+
+def _build_roster_indexes(
+    roster_entries: list[PlayerTeam], team_id: int,
+) -> tuple[dict[str, list[PlayerTeam]], dict[int, PlayerTeam]]:
+    name_index: dict[str, list[PlayerTeam]] = {}
+    number_index: dict[int, PlayerTeam] = {}
+
+    for pt in roster_entries:
+        if pt.team_id != team_id or not pt.player:
+            continue
+        p = pt.player
+
+        # Full name: "first last"
+        full = _norm(f"{p.first_name} {p.last_name}")
+        if full:
+            name_index.setdefault(full, []).append(pt)
+
+        # Also index as "last first" for reversed matching
+        rev = _norm(f"{p.last_name} {p.first_name}")
+        if rev and rev != full:
+            name_index.setdefault(rev, []).append(pt)
+
+        # Kazakh name variants
+        full_kz = _norm(f"{p.first_name_kz} {p.last_name_kz}")
+        if full_kz and full_kz != full:
+            name_index.setdefault(full_kz, []).append(pt)
+
+        # Last name only index (for fallback)
+        for ln in (p.last_name, p.last_name_kz):
+            key = _norm(ln)
+            if key:
+                name_index.setdefault(f"__last__{key}", []).append(pt)
+
+        if pt.number is not None:
+            number_index[pt.number] = pt
+
+    return name_index, number_index
+
+
+@router.post("/{game_id}/import-prematch", response_model=PrematchImportResponse)
+async def import_prematch_lineup(
+    game_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import lineup from a pre-match report PDF."""
+    # Validate game
+    result = await db.execute(
+        select(Game)
+        .options(selectinload(Game.home_team), selectinload(Game.away_team))
+        .where(Game.id == game_id)
+    )
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if not game.home_team_id or not game.away_team_id:
+        raise HTTPException(status_code=400, detail="Game must have both home and away teams assigned")
+    if not game.season_id:
+        raise HTTPException(status_code=400, detail="Game must have a season assigned")
+
+    # Read and parse PDF
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    from app.utils.prematch_parser import parse_prematch_pdf
+    try:
+        parse_result = await asyncio.to_thread(parse_prematch_pdf, pdf_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {e}")
+
+    if not parse_result.home.starters and not parse_result.away.starters:
+        raise HTTPException(status_code=422, detail="No players found in PDF. Check format.")
+
+    # Load team rosters
+    roster_result = await db.execute(
+        select(PlayerTeam)
+        .options(selectinload(PlayerTeam.player))
+        .where(
+            PlayerTeam.season_id == game.season_id,
+            PlayerTeam.team_id.in_([game.home_team_id, game.away_team_id]),
+        )
+    )
+    roster_entries = roster_result.scalars().all()
+
+    warnings: list[str] = []
+
+    # Build indexes per team
+    home_name_idx, home_num_idx = _build_roster_indexes(roster_entries, game.home_team_id)
+    away_name_idx, away_num_idx = _build_roster_indexes(roster_entries, game.away_team_id)
+
+    # Warn if team names don't match
+    if parse_result.home.team_name and game.home_team:
+        pdf_name = parse_result.home.team_name.upper()
+        db_name = game.home_team.name.upper()
+        if pdf_name not in db_name and db_name not in pdf_name:
+            warnings.append(f"Home team in PDF '{parse_result.home.team_name}' may not match DB '{game.home_team.name}'")
+    if parse_result.away.team_name and game.away_team:
+        pdf_name = parse_result.away.team_name.upper()
+        db_name = game.away_team.name.upper()
+        if pdf_name not in db_name and db_name not in pdf_name:
+            warnings.append(f"Away team in PDF '{parse_result.away.team_name}' may not match DB '{game.away_team.name}'")
+
+    # Match players
+    def _process_team(parsed_team, team_id, name_idx, num_idx):
+        results = []
+        for lineup_type, players in [("starter", parsed_team.starters), ("substitute", parsed_team.substitutes)]:
+            for pp in players:
+                pid, db_name, method = _match_player(
+                    pp.first_name, pp.last_name, pp.shirt_number, name_idx, num_idx,
+                )
+                results.append(PrematchPlayerMatch(
+                    pdf_name=f"{pp.first_name} {pp.last_name}",
+                    pdf_shirt_number=pp.shirt_number,
+                    lineup_type=lineup_type,
+                    is_goalkeeper=pp.is_goalkeeper,
+                    is_captain=pp.is_captain,
+                    matched=pid is not None,
+                    player_id=pid,
+                    player_name=db_name,
+                    match_method=method,
+                ))
+        return results
+
+    home_matches = _process_team(parse_result.home, game.home_team_id, home_name_idx, home_num_idx)
+    away_matches = _process_team(parse_result.away, game.away_team_id, away_name_idx, away_num_idx)
+
+    # Delete existing lineup
+    await db.execute(delete(GameLineup).where(GameLineup.game_id == game_id))
+
+    # Create new lineup entries
+    created = 0
+    seen_player_ids: set[int] = set()
+    for team_id, matches in [(game.home_team_id, home_matches), (game.away_team_id, away_matches)]:
+        for pm in matches:
+            if pm.player_id and pm.player_id not in seen_player_ids:
+                seen_player_ids.add(pm.player_id)
+                entry = GameLineup(
+                    game_id=game_id,
+                    team_id=team_id,
+                    player_id=pm.player_id,
+                    lineup_type=LineupType(pm.lineup_type),
+                    shirt_number=pm.pdf_shirt_number,
+                    is_captain=pm.is_captain,
+                    amplua="Gk" if pm.is_goalkeeper else None,
+                    field_position=None,
+                )
+                db.add(entry)
+                created += 1
+
+    # Update game metadata
+    if created > 0:
+        game.has_lineup = True
+        game.lineup_source = "prematch_report"
+
+    await db.commit()
+
+    # Add warnings for unmatched
+    for pm in home_matches + away_matches:
+        if not pm.matched:
+            warnings.append(f"Unmatched: #{pm.pdf_shirt_number} {pm.pdf_name}")
+
+    home_matched = sum(1 for m in home_matches if m.matched)
+    away_matched = sum(1 for m in away_matches if m.matched)
+
+    return PrematchImportResponse(
+        game_id=game_id,
+        home=PrematchTeamResult(
+            team_id=game.home_team_id,
+            team_name=game.home_team.name if game.home_team else None,
+            players=home_matches,
+            matched_count=home_matched,
+            unmatched_count=len(home_matches) - home_matched,
+        ),
+        away=PrematchTeamResult(
+            team_id=game.away_team_id,
+            team_name=game.away_team.name if game.away_team else None,
+            players=away_matches,
+            matched_count=away_matched,
+            unmatched_count=len(away_matches) - away_matched,
+        ),
+        total_matched=home_matched + away_matched,
+        total_unmatched=(len(home_matches) - home_matched) + (len(away_matches) - away_matched),
+        lineup_created=created > 0,
+        warnings=warnings,
+    )
 
 
 # --- Events endpoints ---

@@ -9,13 +9,14 @@ from app.models.game_player_stats import GamePlayerStats
 from app.models.score_table import ScoreTable
 from app.models.team_season_stats import TeamSeasonStats
 from app.models.player_season_stats import PlayerSeasonStats
+from app.models.player_tour_stats import PlayerTourStats
 from app.models.page import Page, Language
 from app.models.news import News, NewsLike
 from app.models.admin_user import AdminUser
 from app.models.admin_session import AdminSession
 
 # New models
-from app.models.stadium import Stadium
+from app.models.stadium import Stadium, FieldType
 from app.models.referee import Referee
 from app.models.coach import Coach, TeamCoach, CoachRole
 from app.models.game_referee import GameReferee, RefereeRole
@@ -48,6 +49,7 @@ __all__ = [
     "ScoreTable",
     "TeamSeasonStats",
     "PlayerSeasonStats",
+    "PlayerTourStats",
     "Page",
     "News",
     "NewsLike",
@@ -56,6 +58,7 @@ __all__ = [
     "Language",
     # New models
     "Stadium",
+    "FieldType",
     "Referee",
     "Coach",
     "TeamCoach",

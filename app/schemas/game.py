@@ -86,6 +86,7 @@ class StadiumInfo(BaseModel):
     name: str | None = None
     city: str | None = None
     capacity: int | None = None
+    field_type: str | None = None
     address: str | None = None
     photo_url: str | None = None
 
@@ -246,12 +247,15 @@ class GameDetailItem(BaseModel):
     protocol_url: str | None = None
     where_broadcast: str | None = None
     video_review_url: str | None = None
+    preview_ru: str | None = None
+    preview_kz: str | None = None
     status: str
     has_score: bool = False
     home_team: TeamInGame | None = None
     away_team: TeamInGame | None = None
     season_name: str | None = None
     broadcasters: list[BroadcasterInfo] = []
+    weather: str | None = None
 
 
 class SeasonGameItem(BaseModel):

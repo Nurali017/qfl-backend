@@ -79,14 +79,14 @@ class PlayerSyncService(BaseSyncService):
             sid = p.get("id")
             if sid:
                 try:
-                    combined.setdefault(str(sid), {})["goals"] = int(p.get("value", 0))
+                    combined.setdefault(str(sid), {})["goal"] = int(p.get("value", 0))
                 except (ValueError, TypeError):
                     pass
         for p in assisters:
             sid = p.get("id")
             if sid:
                 try:
-                    combined.setdefault(str(sid), {})["assists"] = int(p.get("value", 0))
+                    combined.setdefault(str(sid), {})["goal_pass"] = int(p.get("value", 0))
                 except (ValueError, TypeError):
                     pass
         count = 0
@@ -105,12 +105,12 @@ class PlayerSyncService(BaseSyncService):
             }
             update_set: dict = {"updated_at": now}
 
-            if "goals" in metrics:
-                values["goals"] = metrics["goals"]
-                update_set["goals"] = metrics["goals"]
-            if "assists" in metrics:
-                values["assists"] = metrics["assists"]
-                update_set["assists"] = metrics["assists"]
+            if "goal" in metrics:
+                values["goal"] = metrics["goal"]
+                update_set["goal"] = metrics["goal"]
+            if "goal_pass" in metrics:
+                values["goal_pass"] = metrics["goal_pass"]
+                update_set["goal_pass"] = metrics["goal_pass"]
 
             stmt = insert(PlayerSeasonStats).values(**values)
             stmt = stmt.on_conflict_do_update(
@@ -176,10 +176,10 @@ class PlayerSyncService(BaseSyncService):
                     games_as_subst=stats.get("games_as_subst"),
                     games_be_subst=stats.get("games_be_subst"),
                     games_unused=stats.get("games_unused"),
-                    minutes_played=stats.get("time_on_field_total"),
+                    time_on_field_total=stats.get("time_on_field_total"),
                     # Goals & Assists
-                    goals=stats.get("goal"),
-                    assists=stats.get("goal_pass"),
+                    goal=stats.get("goal"),
+                    goal_pass=stats.get("goal_pass"),
                     goal_and_assist=stats.get("goal_and_assist"),
                     goal_out_box=stats.get("goal_out_box"),
                     owngoal=stats.get("owngoal"),
@@ -187,14 +187,14 @@ class PlayerSyncService(BaseSyncService):
                     xg=stats.get("xg"),
                     xg_per_90=stats.get("xg_per_90"),
                     # Shots
-                    shots=stats.get("shot"),
+                    shot=stats.get("shot"),
                     shots_on_goal=stats.get("shots_on_goal"),
                     shots_blocked_opponent=stats.get("shots_blocked_opponent"),
                     # Passes
                     passes=stats.get("pass"),
-                    pass_accuracy=stats.get("pass_ratio"),
+                    pass_ratio=stats.get("pass_ratio"),
                     pass_acc=stats.get("pass_acc"),
-                    key_passes=stats.get("key_pass"),
+                    key_pass=stats.get("key_pass"),
                     pass_forward=stats.get("pass_forward"),
                     pass_forward_ratio=stats.get("pass_forward_ratio"),
                     pass_progressive=stats.get("pass_progressive"),
@@ -207,8 +207,8 @@ class PlayerSyncService(BaseSyncService):
                     pass_to_3rd=stats.get("pass_to_3rd"),
                     pass_to_3rd_ratio=stats.get("pass_to_3rd_ratio"),
                     # Duels
-                    duels=stats.get("duel"),
-                    duels_won=stats.get("duel_success"),
+                    duel=stats.get("duel"),
+                    duel_success=stats.get("duel_success"),
                     aerial_duel=stats.get("aerial_duel"),
                     aerial_duel_success=stats.get("aerial_duel_success"),
                     ground_duel=stats.get("ground_duel"),
@@ -256,22 +256,22 @@ class PlayerSyncService(BaseSyncService):
                         "games_as_subst": stmt.excluded.games_as_subst,
                         "games_be_subst": stmt.excluded.games_be_subst,
                         "games_unused": stmt.excluded.games_unused,
-                        "minutes_played": stmt.excluded.minutes_played,
-                        "goals": stmt.excluded.goals,
-                        "assists": stmt.excluded.assists,
+                        "time_on_field_total": stmt.excluded.time_on_field_total,
+                        "goal": stmt.excluded.goal,
+                        "goal_pass": stmt.excluded.goal_pass,
                         "goal_and_assist": stmt.excluded.goal_and_assist,
                         "goal_out_box": stmt.excluded.goal_out_box,
                         "owngoal": stmt.excluded.owngoal,
                         "penalty_success": stmt.excluded.penalty_success,
                         "xg": stmt.excluded.xg,
                         "xg_per_90": stmt.excluded.xg_per_90,
-                        "shots": stmt.excluded.shots,
+                        "shot": stmt.excluded.shot,
                         "shots_on_goal": stmt.excluded.shots_on_goal,
                         "shots_blocked_opponent": stmt.excluded.shots_blocked_opponent,
                         "passes": stmt.excluded.passes,
-                        "pass_accuracy": stmt.excluded.pass_accuracy,
+                        "pass_ratio": stmt.excluded.pass_ratio,
                         "pass_acc": stmt.excluded.pass_acc,
-                        "key_passes": stmt.excluded.key_passes,
+                        "key_pass": stmt.excluded.key_pass,
                         "pass_forward": stmt.excluded.pass_forward,
                         "pass_forward_ratio": stmt.excluded.pass_forward_ratio,
                         "pass_progressive": stmt.excluded.pass_progressive,
@@ -283,8 +283,8 @@ class PlayerSyncService(BaseSyncService):
                         "pass_to_box_ratio": stmt.excluded.pass_to_box_ratio,
                         "pass_to_3rd": stmt.excluded.pass_to_3rd,
                         "pass_to_3rd_ratio": stmt.excluded.pass_to_3rd_ratio,
-                        "duels": stmt.excluded.duels,
-                        "duels_won": stmt.excluded.duels_won,
+                        "duel": stmt.excluded.duel,
+                        "duel_success": stmt.excluded.duel_success,
                         "aerial_duel": stmt.excluded.aerial_duel,
                         "aerial_duel_success": stmt.excluded.aerial_duel_success,
                         "ground_duel": stmt.excluded.ground_duel,

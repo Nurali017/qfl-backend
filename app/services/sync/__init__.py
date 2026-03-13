@@ -26,6 +26,7 @@ from app.services.sync.game_sync import GameSyncService
 from app.services.sync.lineup_sync import LineupSyncService
 from app.services.sync.stats_sync import StatsSyncService
 from app.services.sync.team_of_week_sync import TeamOfWeekSyncService
+from app.services.sync.player_tour_stats_sync import PlayerTourStatsSyncService
 from app.services.sync.orchestrator import SyncOrchestrator
 
 __all__ = [
@@ -45,5 +46,6 @@ __all__ = [
     "LineupSyncService",
     "StatsSyncService",
     "TeamOfWeekSyncService",
+    "PlayerTourStatsSyncService",
     "SyncOrchestrator",
 ]

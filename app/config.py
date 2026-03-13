@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     telegram_notifications_enabled: bool = False
 
+    # Weather (Open-Meteo, no API key needed)
+    weather_enabled: bool = False
+
+    # Serper (Google Search) API for ticket search
+    serper_api_key: str = ""
+    ticket_search_enabled: bool = False
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

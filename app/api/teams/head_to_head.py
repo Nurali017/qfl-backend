@@ -506,13 +506,13 @@ async def get_head_to_head(
     if all_pss:
         # Top scorers by goals
         scorers = sorted(
-            [p for p in all_pss if (p.goals or 0) > 0],
-            key=lambda p: p.goals or 0, reverse=True
+            [p for p in all_pss if (p.goal or 0) > 0],
+            key=lambda p: p.goal or 0, reverse=True
         )[:5]
-        # Top assisters by assists
+        # Top assisters by goal_pass
         assisters = sorted(
-            [p for p in all_pss if (p.assists or 0) > 0],
-            key=lambda p: p.assists or 0, reverse=True
+            [p for p in all_pss if (p.goal_pass or 0) > 0],
+            key=lambda p: p.goal_pass or 0, reverse=True
         )[:5]
 
         def _player_full_name(player: Player | None) -> str:
@@ -527,7 +527,7 @@ async def get_head_to_head(
                 player_name=_player_full_name(p.player),
                 team_id=p.team_id,
                 photo_url=(next((pt.photo_url for pt in p.player.player_teams if pt.team_id == p.team_id and pt.season_id == season_id and pt.photo_url), None) or p.player.photo_url) if p.player else None,
-                count=p.goals or 0,
+                count=p.goal or 0,
             )
             for p in scorers
         ]
@@ -537,7 +537,7 @@ async def get_head_to_head(
                 player_name=_player_full_name(p.player),
                 team_id=p.team_id,
                 photo_url=(next((pt.photo_url for pt in p.player.player_teams if pt.team_id == p.team_id and pt.season_id == season_id and pt.photo_url), None) or p.player.photo_url) if p.player else None,
-                count=p.assists or 0,
+                count=p.goal_pass or 0,
             )
             for p in assisters
         ]
@@ -571,8 +571,8 @@ async def get_head_to_head(
             return H2HEnhancedSeasonTeamStats(
                 xg=float(tss.xg) if tss.xg is not None else None,
                 xg_per_match=float(tss.xg_per_match) if tss.xg_per_match is not None else None,
-                possession_avg=float(tss.possession_avg) if tss.possession_avg is not None else None,
-                pass_accuracy_avg=float(tss.pass_accuracy_avg) if tss.pass_accuracy_avg is not None else None,
+                possession_avg=float(tss.possession_percent_average) if tss.possession_percent_average is not None else None,
+                pass_accuracy_avg=float(tss.pass_ratio) if tss.pass_ratio is not None else None,
                 duel_ratio=float(tss.duel_ratio) if tss.duel_ratio is not None else None,
                 shots_per_match=float(tss.shot_per_match) if tss.shot_per_match is not None else None,
             )

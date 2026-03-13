@@ -15,10 +15,21 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("game_team_stats", sa.Column("shots_on_bar", sa.Integer(), nullable=True))
-    op.add_column("game_team_stats", sa.Column("shots_blocked", sa.Integer(), nullable=True))
-    op.add_column("game_team_stats", sa.Column("penalties", sa.Integer(), nullable=True))
-    op.add_column("game_team_stats", sa.Column("saves", sa.Integer(), nullable=True))
+    conn = op.get_bind()
+    existing = {
+        row[0]
+        for row in conn.execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'game_team_stats'"
+            )
+        )
+    }
+    for col_name in ("shots_on_bar", "shots_blocked", "penalties", "saves"):
+        if col_name not in existing:
+            op.add_column(
+                "game_team_stats", sa.Column(col_name, sa.Integer(), nullable=True)
+            )
 
 
 def downgrade() -> None:

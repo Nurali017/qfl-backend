@@ -75,6 +75,7 @@ def _build_stadium(stadium, lang: str) -> StadiumInfo | None:
         name=get_localized_field(stadium, "name", lang),
         city=get_localized_field(stadium, "city", lang),
         capacity=stadium.capacity,
+        field_type=stadium.field_type.value if stadium.field_type else None,
         address=get_localized_field(stadium, "address", lang),
         photo_url=stadium.photo_url,
     )
