@@ -177,6 +177,9 @@ def _extract_ticket_url(
         link = result.get("link", "")
         if not link:
             continue
+        # Normalize: add scheme if missing
+        if not link.startswith(("http://", "https://")):
+            link = "https://" + link
         try:
             parsed = urlparse(link)
             hostname = parsed.hostname
