@@ -204,6 +204,7 @@ async def get_latest_news(
 async def get_slider_news(
     lang: str = Query("kz", pattern="^(kz|ru|en)$"),
     championship_code: str | None = Query(None, description="Filter by championship code (pl, 1l, cup, 2l, el)"),
+    limit: int = Query(10, ge=1, le=20, description="Max slider items to return"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get news for slider."""
@@ -215,7 +216,7 @@ async def get_slider_news(
     if championship_code:
         query = query.where(News.championship_code == championship_code)
 
-    query = query.order_by(asc(News.slider_order), desc(News.publish_date))
+    query = query.order_by(asc(News.slider_order), desc(News.publish_date)).limit(limit)
 
     result = await db.execute(query)
     return result.scalars().all()
