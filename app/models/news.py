@@ -70,6 +70,7 @@ class News(Base):
     __table_args__ = (
         UniqueConstraint("translation_group_id", "language", name="uq_news_translation_group_language"),
         Index("ix_news_language_publish_date", "language", "publish_date"),
+        Index("ix_news_slider_query", "language", "is_slider", "slider_order", "publish_date"),
         {"comment": "News articles in multiple languages"},
     )
 

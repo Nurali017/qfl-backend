@@ -33,6 +33,8 @@ from app.services.news_translator import NewsTranslatorService
 
 router = APIRouter(prefix="/news", tags=["admin-news"])
 
+MAX_SLIDER_ITEMS = 10
+
 
 def _lang_from_str(lang: str) -> Language:
     if lang == "ru":
@@ -96,9 +98,23 @@ async def _apply_payload(
         item.is_slider = payload.is_slider
 
         if payload.is_slider and not was_slider:
+            # Check slider cap
+            lang = item.language
+            count_result = await db.execute(
+                select(func.count()).select_from(News).where(
+                    News.is_slider == True,
+                    News.language == lang,
+                )
+            )
+            current_count = count_result.scalar_one()
+            if current_count >= MAX_SLIDER_ITEMS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Maximum {MAX_SLIDER_ITEMS} slider items per language",
+                )
+
             # Transitioning to slider: auto-assign order if not explicitly provided
             if not should_update("slider_order") or payload.slider_order is None:
-                lang = item.language
                 max_order_result = await db.execute(
                     select(func.max(News.slider_order)).where(
                         News.is_slider == True,
@@ -107,6 +123,18 @@ async def _apply_payload(
                 )
                 max_order = max_order_result.scalar_one_or_none() or 0
                 item.slider_order = max_order + 1
+            else:
+                # Explicit order: shift existing items to make room
+                await db.execute(
+                    update(News)
+                    .where(
+                        News.is_slider == True,
+                        News.language == lang,
+                        News.slider_order >= payload.slider_order,
+                    )
+                    .values(slider_order=News.slider_order + 1)
+                )
+                item.slider_order = payload.slider_order
         elif not payload.is_slider and was_slider:
             # Removing from slider: compact remaining orders
             old_order = item.slider_order
@@ -146,6 +174,37 @@ async def _apply_payload(
     if should_update("slider_order"):
         # Only set explicit slider_order if is_slider transition didn't already handle it
         if not should_update("is_slider") or payload.is_slider == item.is_slider:
+            new_order = payload.slider_order
+            old_order = item.slider_order
+            if (
+                item.is_slider
+                and old_order is not None
+                and new_order is not None
+                and old_order != new_order
+            ):
+                lang = item.language
+                # Remove from old position
+                await db.execute(
+                    update(News)
+                    .where(
+                        News.is_slider == True,
+                        News.language == lang,
+                        News.slider_order > old_order,
+                        News.id != item.id,
+                    )
+                    .values(slider_order=News.slider_order - 1)
+                )
+                # Insert at new position
+                await db.execute(
+                    update(News)
+                    .where(
+                        News.is_slider == True,
+                        News.language == lang,
+                        News.slider_order >= new_order,
+                        News.id != item.id,
+                    )
+                    .values(slider_order=News.slider_order + 1)
+                )
             item.slider_order = payload.slider_order
     if should_update("publish_date"):
         item.publish_date = payload.publish_date
@@ -510,8 +569,27 @@ async def delete_material(
     if not rows:
         raise HTTPException(status_code=404, detail="Material not found")
 
+    # Collect slider info before deletion for order compaction
+    slider_info = [
+        (row.language, row.slider_order)
+        for row in rows
+        if row.is_slider and row.slider_order is not None
+    ]
+
     for row in rows:
         await db.delete(row)
+
+    # Compact slider orders for affected languages
+    for lang, old_order in slider_info:
+        await db.execute(
+            update(News)
+            .where(
+                News.is_slider == True,
+                News.language == lang,
+                News.slider_order > old_order,
+            )
+            .values(slider_order=News.slider_order - 1)
+        )
 
     await db.commit()
     return {"message": "Material deleted"}
