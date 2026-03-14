@@ -8,9 +8,10 @@ from sqlalchemy.orm import joinedload
 
 from app.api.admin.deps import require_roles
 from app.api.deps import get_db
-from app.models import AdminUser, Broadcaster, Game, Stadium
+from app.models import AdminUser, Broadcaster, Game, GameReferee, Referee, RefereeRole, Stadium
 from app.models.game import GameStatus
 from app.services.poster_parser import PosterParserService
+from app.services.referee_parser import RefereeParserService
 from app.schemas.live import GameEventResponse, GameEventsListResponse, LineupSyncResponse, LiveSyncResponse
 from app.schemas.sync import SyncResponse, SyncStatus
 from app.services.live_sync_service import LiveSyncService
@@ -584,3 +585,146 @@ async def parse_poster(
         })
 
     return {"matches": results}
+
+
+# ==================== Referee Parser ====================
+
+
+class RefereeAssignmentItem(BaseModel):
+    referee_id: int
+    role: RefereeRole
+
+
+class GameRefereeAssignmentItem(BaseModel):
+    game_id: int
+    referees: list[RefereeAssignmentItem]
+
+
+class ApplyRefereesRequest(BaseModel):
+    matches: list[GameRefereeAssignmentItem]
+
+
+@router.post("/parse-referees")
+async def parse_referees(
+    text: str = Body(..., embed=True),
+    season_id: int = Query(...),
+    tour: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Parse a referee assignment text to match referees to games."""
+    service = RefereeParserService()
+    if not service.enabled:
+        raise HTTPException(status_code=400, detail="No AI API configured")
+
+    # Load games for season+tour with team names
+    result = await db.execute(
+        select(Game)
+        .options(joinedload(Game.home_team), joinedload(Game.away_team))
+        .where(Game.season_id == season_id, Game.tour == tour)
+    )
+    games = list(result.unique().scalars().all())
+    if not games:
+        raise HTTPException(status_code=404, detail="No games found for this season/tour")
+
+    # Load all referees
+    ref_result = await db.execute(select(Referee).order_by(Referee.last_name))
+    referees = list(ref_result.scalars().all())
+
+    # Build context dicts for AI
+    def _team_names(team) -> list[str]:
+        if not team:
+            return []
+        return [n for n in [team.name, team.name_kz, getattr(team, "name_en", None)] if n]
+
+    games_ctx = [
+        {
+            "game_id": g.id,
+            "home_team": _team_names(g.home_team),
+            "away_team": _team_names(g.away_team),
+        }
+        for g in games
+    ]
+
+    referees_ctx = [
+        {
+            "referee_id": r.id,
+            "names": [
+                n
+                for n in [
+                    f"{r.last_name} {r.first_name}",
+                    f"{r.last_name_kz} {r.first_name_kz}" if r.last_name_kz and r.first_name_kz else None,
+                    f"{r.last_name_ru} {r.first_name_ru}" if r.last_name_ru and r.first_name_ru else None,
+                    f"{r.last_name_en} {r.first_name_en}" if r.last_name_en and r.first_name_en else None,
+                ]
+                if n
+            ],
+        }
+        for r in referees
+    ]
+
+    game_map = {g.id: g for g in games}
+    referee_map = {r.id: r for r in referees}
+
+    parsed = await service.parse_referees(text, games_ctx, referees_ctx)
+
+    # Enrich response with DB names for verification
+    results = []
+    for m in parsed.get("matches", []):
+        game_id = m.get("game_id")
+        game = game_map.get(game_id) if game_id else None
+
+        enriched_referees = []
+        for ref in m.get("referees", []):
+            ref_id = ref.get("referee_id")
+            db_ref = referee_map.get(ref_id) if ref_id else None
+            enriched_referees.append({
+                "role": ref.get("role"),
+                "parsed_name": ref.get("parsed_name", ""),
+                "parsed_city": ref.get("parsed_city", ""),
+                "referee_id": ref_id,
+                "matched_name": f"{db_ref.last_name} {db_ref.first_name}" if db_ref else None,
+                "matched": ref_id is not None and db_ref is not None,
+            })
+
+        results.append({
+            "game_id": game_id,
+            "home_team_parsed": m.get("home_team_parsed", ""),
+            "away_team_parsed": m.get("away_team_parsed", ""),
+            "home_team_name": game.home_team.name if game and game.home_team else m.get("home_team_parsed", "?"),
+            "away_team_name": game.away_team.name if game and game.away_team else m.get("away_team_parsed", "?"),
+            "matched": game_id is not None and game is not None,
+            "referees": enriched_referees,
+        })
+
+    return {"matches": results}
+
+
+@router.post("/apply-referees")
+async def apply_referees(
+    payload: ApplyRefereesRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Batch apply referee assignments. Replaces all existing referees for each game."""
+    total = 0
+
+    for match in payload.matches:
+        # Delete existing referee assignments for this game
+        existing = await db.execute(
+            select(GameReferee).where(GameReferee.game_id == match.game_id)
+        )
+        for row in existing.scalars().all():
+            await db.delete(row)
+
+        # Insert new assignments
+        for ref in match.referees:
+            db.add(GameReferee(
+                game_id=match.game_id,
+                referee_id=ref.referee_id,
+                role=ref.role,
+            ))
+            total += 1
+
+    await db.commit()
+    return {"total_assignments": total, "matches_updated": len(payload.matches)}
