@@ -64,6 +64,7 @@ class SeasonStatisticsResponse(BaseModel):
     """Aggregated statistics for a season (tournament-level)."""
     season_id: int
     season_name: str | None = None
+    max_completed_round: int | None = None
 
     # Match results
     matches_played: int = 0

@@ -412,6 +412,14 @@ class LiveSyncService:
         else:
             minute = None
 
+        # SOTA resets timer to 0 each half — offset for 2nd half
+        if minute is not None and half is not None:
+            try:
+                if int(half) == 2:
+                    minute += 45
+            except (ValueError, TypeError):
+                pass
+
         if minute is not None:
             game.live_minute = minute
         if half is not None:

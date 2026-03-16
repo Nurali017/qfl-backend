@@ -2,7 +2,8 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+import redis
+from sqlalchemy import select, func, case
 
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
@@ -295,6 +296,126 @@ def sync_best_players():
 def sync_extended_stats():
     """Celery task: Sync extended stats 24h+ after match finish."""
     return run_async(_sync_extended_stats())
+
+
+async def _check_tour_completion():
+    """
+    Check if any tour just completed all games, schedule revalidation in 24h.
+
+    A tour is "just completed" if all its games are finished and the last
+    game finished within the last hour.
+    """
+    r = redis.from_url(settings.redis_url)
+    now = datetime.utcnow()
+    one_hour_ago = now - timedelta(hours=1)
+
+    async with AsyncSessionLocal() as db:
+        # Find (season_id, tour) pairs where ALL games are finished
+        # and the last game finished within the last hour
+        result = await db.execute(
+            select(
+                Game.season_id,
+                Game.tour,
+                func.count().label("total"),
+                func.count(
+                    case((Game.status == GameStatus.finished, 1))
+                ).label("finished_count"),
+                func.max(Game.finished_at).label("last_finished"),
+            )
+            .where(
+                Game.season_id.in_(settings.sync_season_ids),
+                Game.tour.isnot(None),
+            )
+            .group_by(Game.season_id, Game.tour)
+            .having(
+                # All games finished
+                func.count() == func.count(
+                    case((Game.status == GameStatus.finished, 1))
+                ),
+                # Last game finished within the last hour
+                func.max(Game.finished_at) >= one_hour_ago,
+            )
+        )
+        completed_tours = result.fetchall()
+
+        scheduled = []
+        for row in completed_tours:
+            season_id, tour = row.season_id, row.tour
+            redis_key = f"tour_reval:{season_id}:{tour}"
+
+            # Skip if already scheduled
+            if r.exists(redis_key):
+                logger.info("Revalidation already scheduled for season %d tour %d", season_id, tour)
+                continue
+
+            # Mark as scheduled (48h TTL to prevent duplicates)
+            r.set(redis_key, "1", ex=48 * 3600)
+
+            # Schedule revalidation in 24h
+            trigger_stats_revalidation.apply_async(
+                eta=now + timedelta(hours=24),
+                kwargs={"season_id": season_id, "tour": tour},
+            )
+            scheduled.append({"season_id": season_id, "tour": tour})
+            logger.info(
+                "Scheduled stats revalidation in 24h for season %d tour %d",
+                season_id, tour,
+            )
+
+        if scheduled:
+            await send_telegram_message(
+                f"⏳ Stats revalidation scheduled (24h):\n"
+                + "\n".join(f"  Season {s['season_id']} Tour {s['tour']}" for s in scheduled)
+            )
+
+        return {"scheduled": scheduled}
+
+
+async def _trigger_stats_revalidation(season_id: int | None = None, tour: int | None = None):
+    """Call Next.js on-demand revalidation for stats pages."""
+    import httpx
+
+    if not settings.revalidation_secret:
+        logger.warning("REVALIDATION_SECRET not set, skipping stats revalidation")
+        return {"skipped": "no secret configured"}
+
+    paths = [
+        "/kz/stats", "/ru/stats",
+        "/kz/stats/overview", "/ru/stats/overview",
+        "/kz/stats/players", "/ru/stats/players",
+        "/kz/stats/teams", "/ru/stats/teams",
+    ]
+
+    url = f"{settings.frontend_internal_url}/api/revalidate"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json={
+                "secret": settings.revalidation_secret,
+                "paths": paths,
+            })
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info("Stats revalidation triggered: %s (season=%s tour=%s)", result, season_id, tour)
+            await send_telegram_message(
+                f"✅ Stats pages revalidated (season {season_id} tour {tour})"
+            )
+            return result
+    except Exception as e:
+        logger.error("Stats revalidation failed: %s", e)
+        await send_telegram_message(f"❌ Stats revalidation failed: {e}")
+        raise
+
+
+@celery_app.task(name="app.tasks.sync_tasks.check_tour_completion")
+def check_tour_completion():
+    """Celery task: Check completed tours, schedule revalidation."""
+    return run_async(_check_tour_completion())
+
+
+@celery_app.task(name="app.tasks.sync_tasks.trigger_stats_revalidation")
+def trigger_stats_revalidation(season_id: int | None = None, tour: int | None = None):
+    """Celery task: Trigger Next.js on-demand revalidation for stats pages."""
+    return run_async(_trigger_stats_revalidation(season_id, tour))
 
 
 async def _backfill_player_tour_stats(season_id: int, max_tour: int):
