@@ -9,8 +9,10 @@ from functools import partial
 from typing import BinaryIO
 from urllib.parse import quote
 
+import numpy as np
 from PIL import Image
 from minio.error import S3Error
+from rembg import new_session, remove
 
 from app.minio_client import get_minio_client, get_public_url
 from app.config import get_settings
@@ -23,6 +25,37 @@ _OPTIMIZE_CATEGORIES = {"player_photos", "coach_photos"}
 _MAX_IMAGE_SIZE = (800, 1200)
 _WEBP_QUALITY = 85
 
+# Lazy-loaded rembg session (u2netp is a lightweight 4.7 MB model)
+_rembg_session = None
+
+
+def _get_rembg_session():
+    global _rembg_session
+    if _rembg_session is None:
+        _rembg_session = new_session("u2netp")
+    return _rembg_session
+
+
+def _remove_background(img: Image.Image) -> Image.Image:
+    """Remove background from a portrait photo using rembg.
+
+    Returns RGBA image with transparent background.
+    Raises ValueError if the result quality is poor (alpha covers <10% or >95%).
+    """
+    result = remove(img, session=_get_rembg_session())
+    result = result.convert("RGBA")
+
+    # Quality gate: check alpha channel coverage
+    alpha = np.array(result.split()[-1])
+    opaque_ratio = np.count_nonzero(alpha > 128) / alpha.size
+
+    if opaque_ratio < 0.10 or opaque_ratio > 0.95:
+        raise ValueError(
+            f"Background removal quality poor (opaque={opaque_ratio:.0%}), skipping"
+        )
+
+    return result
+
 
 def _run_sync(fn, *args, **kwargs):
     """Helper to run a sync function in a thread pool (non-blocking)."""
@@ -33,22 +66,39 @@ def _optimize_image(
     file_data: bytes,
     max_size: tuple[int, int] = _MAX_IMAGE_SIZE,
     quality: int = _WEBP_QUALITY,
+    remove_bg: bool = True,
 ) -> tuple[bytes, str]:
     """Resize and convert an image to WebP.
 
+    If remove_bg=True, removes background first and preserves alpha channel.
     Returns (optimized_bytes, content_type).
     """
     img = Image.open(io.BytesIO(file_data))
 
-    # Convert RGBA/P to RGB (WebP supports alpha but photos don't need it)
-    if img.mode in ("RGBA", "LA", "P"):
-        background = Image.new("RGB", img.size, (255, 255, 255))
-        if img.mode == "P":
+    # Try background removal for person photos
+    bg_removed = False
+    if remove_bg:
+        try:
+            img = _remove_background(img)
+            bg_removed = True
+            logger.info("Background removed successfully")
+        except Exception:
+            logger.warning("Background removal failed, keeping original", exc_info=True)
+
+    if bg_removed:
+        # Keep RGBA for transparent WebP
+        if img.mode != "RGBA":
             img = img.convert("RGBA")
-        background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
-        img = background
-    elif img.mode != "RGB":
-        img = img.convert("RGB")
+    else:
+        # Convert to RGB (no transparency needed)
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
 
     # Resize preserving aspect ratio
     img.thumbnail(max_size, Image.LANCZOS)
