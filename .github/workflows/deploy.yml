@@ -51,19 +51,19 @@ jobs:
             cd /home/debian/qfl
 
             echo "=== Pulling backend image ==="
-            docker compose -f docker-compose.prod.yml pull backend
+            docker compose -f docker-compose.prod.yml pull qfl-backend
 
             echo "=== Running migrations ==="
-            docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade heads
+            docker compose -f docker-compose.prod.yml run --rm qfl-backend alembic upgrade heads
 
             echo "=== Restarting backend ==="
-            docker compose -f docker-compose.prod.yml up -d --no-deps backend
+            docker compose -f docker-compose.prod.yml up -d --no-deps --remove-orphans qfl-backend
 
             echo "=== Waiting for backend health ==="
             set +e
             HEALTHY=false
             for i in $(seq 1 30); do
-              docker compose -f docker-compose.prod.yml exec -T backend \
+              docker compose -f docker-compose.prod.yml exec -T qfl-backend \
                 curl -sf http://localhost:8000/health > /dev/null 2>&1
               if [ $? -eq 0 ]; then
                 echo "Backend healthy after ${i} checks"
@@ -76,13 +76,13 @@ jobs:
             set -e
             if [ "$HEALTHY" = "false" ]; then
               echo "Backend health check failed!"
-              docker compose -f docker-compose.prod.yml logs --tail=20 backend
+              docker compose -f docker-compose.prod.yml logs --tail=20 qfl-backend
               exit 1
             fi
 
             echo "=== Restarting workers ==="
-            docker compose -f docker-compose.prod.yml up -d --no-deps celery_worker celery_beat
+            docker compose -f docker-compose.prod.yml up -d --no-deps --remove-orphans celery_worker celery_beat
 
             echo "=== Cleanup ==="
             docker image prune -f || true
-            docker compose -f docker-compose.prod.yml ps backend celery_worker celery_beat
+            docker compose -f docker-compose.prod.yml ps qfl-backend celery_worker celery_beat
