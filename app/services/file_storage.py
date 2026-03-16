@@ -2,23 +2,60 @@
 
 import asyncio
 import io
+import logging
 import uuid
 from datetime import datetime, timezone
 from functools import partial
 from typing import BinaryIO
 from urllib.parse import quote
 
+from PIL import Image
 from minio.error import S3Error
 
 from app.minio_client import get_minio_client, get_public_url
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Categories where uploaded images should be auto-optimized
+_OPTIMIZE_CATEGORIES = {"player_photos", "coach_photos"}
+_MAX_IMAGE_SIZE = (800, 1200)
+_WEBP_QUALITY = 85
 
 
 def _run_sync(fn, *args, **kwargs):
     """Helper to run a sync function in a thread pool (non-blocking)."""
     return asyncio.to_thread(partial(fn, *args, **kwargs))
+
+
+def _optimize_image(
+    file_data: bytes,
+    max_size: tuple[int, int] = _MAX_IMAGE_SIZE,
+    quality: int = _WEBP_QUALITY,
+) -> tuple[bytes, str]:
+    """Resize and convert an image to WebP.
+
+    Returns (optimized_bytes, content_type).
+    """
+    img = Image.open(io.BytesIO(file_data))
+
+    # Convert RGBA/P to RGB (WebP supports alpha but photos don't need it)
+    if img.mode in ("RGBA", "LA", "P"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    # Resize preserving aspect ratio
+    img.thumbnail(max_size, Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format="WEBP", quality=quality)
+    return buf.getvalue(), "image/webp"
 
 
 class FileStorageService:
@@ -46,6 +83,21 @@ class FileStorageService:
 
         file_id = str(uuid.uuid4())
 
+        # Read raw bytes once
+        if isinstance(file_data, bytes):
+            raw_bytes = file_data
+        else:
+            raw_bytes = file_data.read()
+
+        # Auto-optimize photos on upload
+        if category in _OPTIMIZE_CATEGORIES and content_type.startswith("image/"):
+            try:
+                raw_bytes, content_type = _optimize_image(raw_bytes)
+                filename = filename.rsplit(".", 1)[0] + ".webp"
+                logger.info("Optimized %s image: %d bytes", category, len(raw_bytes))
+            except Exception:
+                logger.warning("Image optimization failed, uploading original", exc_info=True)
+
         # If news-id is in metadata, include it in the path for prefix-based lookup
         news_id = (metadata or {}).get("news-id")
         if news_id and category == "news_image":
@@ -53,13 +105,8 @@ class FileStorageService:
         else:
             object_name = FileStorageService._get_object_name(category, filename, file_id)
 
-        if isinstance(file_data, bytes):
-            data = io.BytesIO(file_data)
-            size = len(file_data)
-        else:
-            content = file_data.read()
-            data = io.BytesIO(content)
-            size = len(content)
+        data = io.BytesIO(raw_bytes)
+        size = len(raw_bytes)
 
         file_metadata = {
             "original-filename": quote(filename, safe=""),
