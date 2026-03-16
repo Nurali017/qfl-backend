@@ -55,6 +55,12 @@ async def _sync_live_game_events():
                     events_added = sync_result.get("added", 0)
                     total_new_events += events_added
 
+                    # Sync live match time (minute + half from SOTA)
+                    try:
+                        await service.sync_live_time(game.id)
+                    except Exception as time_err:
+                        logger.warning(f"Failed to sync live time for game {game.id}: {time_err}")
+
                     # Also sync live lineup (starters/substitutes from live feed)
                     try:
                         await service.sync_live_lineup(game.id)

@@ -409,6 +409,20 @@ class SotaClient:
         )
         return response.json()
 
+    async def get_live_match_time(self, game_id: str) -> dict | None:
+        """Get live match time from /em/{game_id}-time.json."""
+        await self.ensure_authenticated()
+        url = f"https://sota.id/em/{game_id}-time.json"
+        response = await self._make_request(
+            "get", url, params={"access_token": self.access_token},
+        )
+        data = response.json()
+        if isinstance(data, list) and data:
+            return data[0]  # {"half": 1, "actual_time": ms, "actual_time_f": "M:SS"}
+        if isinstance(data, dict) and data:
+            return data
+        return None
+
     async def get_live_match_data(self, game_id: str) -> dict[str, Any]:
         """Get all live match data: both lineups and events."""
         home_lineup = await self.get_live_team_lineup(game_id, "home")

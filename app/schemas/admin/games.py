@@ -30,6 +30,7 @@ class AdminGameResponse(BaseModel):
     is_featured: bool = False
     is_free_entry: bool = False
     sync_disabled: bool = False
+    show_timeline: bool = True
     has_lineup: bool = False
     has_stats: bool = False
     stadium_id: Optional[int] = None
@@ -72,6 +73,7 @@ class AdminGameUpdateRequest(BaseModel):
     is_featured: Optional[bool] = None
     is_free_entry: Optional[bool] = None
     sync_disabled: Optional[bool] = None
+    show_timeline: Optional[bool] = None
     status: Optional[GameStatus] = None
     preview_ru: Optional[str] = None
     preview_kz: Optional[str] = None
