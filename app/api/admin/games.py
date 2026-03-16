@@ -75,6 +75,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         is_featured=game.is_featured,
         is_free_entry=game.is_free_entry,
         sync_disabled=game.sync_disabled,
+        show_timeline=game.show_timeline,
         has_lineup=game.has_lineup,
         has_stats=game.has_stats,
         stadium_id=game.stadium_id,

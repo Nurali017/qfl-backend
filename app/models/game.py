@@ -64,6 +64,11 @@ class Game(Base):
         Boolean, default=False, nullable=False, server_default="false"
     )
 
+    # Show/hide timeline and live minutes on the public website
+    show_timeline: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+
     # Live match tracking
     home_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-2-3-1"
     away_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-3-3"
@@ -86,6 +91,10 @@ class Game(Base):
     video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
     youtube_live_url: Mapped[str | None] = mapped_column(String(500))  # YouTube live stream URL
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
+
+    # Live minute/half from SOTA time endpoint
+    live_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    live_half: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Half timestamps for auto-ticking live minute
     half1_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

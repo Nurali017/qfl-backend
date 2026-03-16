@@ -273,6 +273,7 @@ async def get_games(
             has_stats=g.has_stats,
             has_lineup=g.has_lineup,
             is_live=g.is_live,
+            minute=g.live_minute if g.is_live else None,
             is_technical=g.is_technical,
             is_schedule_tentative=g.is_schedule_tentative,
             is_featured=g.is_featured,
@@ -331,23 +332,8 @@ async def get_game(
         raise HTTPException(status_code=404, detail="Game not found")
 
     current_minute = None
-    if game.is_live:
-        now = datetime.utcnow()
-        if game.half2_started_at:
-            elapsed = (now - game.half2_started_at.replace(tzinfo=None)).total_seconds() / 60
-            current_minute = int(elapsed) + 46
-        elif game.half1_started_at:
-            elapsed = (now - game.half1_started_at.replace(tzinfo=None)).total_seconds() / 60
-            current_minute = int(elapsed) + 1
-        else:
-            result2 = await db.execute(
-                select(GameEvent.minute)
-                .where(GameEvent.game_id == game_id)
-                .order_by(GameEvent.half.desc(), GameEvent.minute.desc())
-                .limit(1)
-            )
-            row = result2.first()
-            current_minute = row[0] if row else None
+    if game.is_live and game.live_minute is not None:
+        current_minute = game.live_minute
 
     home_team = None
     away_team = None
@@ -407,9 +393,11 @@ async def get_game(
         has_lineup=game.has_lineup,
         is_live=game.is_live,
         minute=current_minute,
+        half=game.live_half if game.is_live else None,
         is_technical=game.is_technical,
         is_schedule_tentative=game.is_schedule_tentative,
         is_featured=game.is_featured,
+        show_timeline=game.show_timeline,
         stadium=_build_stadium_info(game.stadium_rel, lang),
         referee=referee_name,
         visitors=game.visitors,

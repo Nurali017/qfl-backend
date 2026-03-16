@@ -385,6 +385,49 @@ class LiveSyncService:
         logger.warning("Unknown player in SOTA: %s %s (sota_id=%s)", first_name, last_name, sota_id)
         return None
 
+    async def sync_live_time(self, game_id: int) -> dict:
+        """Sync live match minute and half from SOTA /em/{sota_id}-time.json."""
+        game = await self.db.get(Game, game_id)
+        if not game or not game.sota_id:
+            return {"error": f"Game {game_id} not found or no sota_id"}
+
+        sota_uuid = str(game.sota_id)
+        try:
+            time_data = await self.client.get_live_match_time(sota_uuid)
+        except Exception as exc:
+            logger.warning("Failed to fetch live time for game %s: %s", game_id, exc)
+            return {"error": str(exc)}
+
+        if not time_data:
+            return {"game_id": game_id, "live_minute": None, "live_half": None}
+
+        half = time_data.get("half")
+        actual_time = time_data.get("actual_time")
+
+        if actual_time is not None:
+            try:
+                minute = int(actual_time) // 60000
+            except (ValueError, TypeError):
+                minute = None
+        else:
+            minute = None
+
+        if minute is not None:
+            game.live_minute = minute
+        if half is not None:
+            try:
+                game.live_half = int(half)
+            except (ValueError, TypeError):
+                pass
+
+        await self.db.commit()
+
+        return {
+            "game_id": game_id,
+            "live_minute": game.live_minute,
+            "live_half": game.live_half,
+        }
+
     async def sync_live_stats(self, game_id: int) -> dict:
         """
         Sync live match statistics from /em/{sota_id}-stat.json.
@@ -967,12 +1010,17 @@ class LiveSyncService:
 
         await set_live_flag()
 
-        sync_result = await self.sync_live_events(game_id)
+        try:
+            sync_result = await self.sync_live_events(game_id)
+            new_events = sync_result.get("added", 0)
+        except Exception:
+            logger.warning("Initial event sync failed for game %s (SOTA may not have data yet)", game_id)
+            new_events = 0
 
         return {
             "game_id": game_id,
             "is_live": True,
-            "new_events_count": sync_result.get("added", 0),
+            "new_events_count": new_events,
         }
 
     async def stop_live_tracking(self, game_id: int) -> dict:
@@ -994,6 +1042,8 @@ class LiveSyncService:
 
         game.status = GameStatus.finished
         game.finished_at = utcnow()
+        game.live_minute = None
+        game.live_half = None
         await self.db.commit()
 
         # Clear flag if no other live games remain

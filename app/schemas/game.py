@@ -145,6 +145,12 @@ class MatchCenterGame(BaseModel):
 
     has_score: bool = False
 
+    # Live minute for display
+    minute: Optional[int] = None
+
+    # Show/hide timeline and live minutes
+    show_timeline: bool = True
+
     # Optional ticket URL
     ticket_url: str | None = None
     is_free_entry: bool = False
@@ -203,6 +209,7 @@ class GameListItem(BaseModel):
     visitors: int | None = None
     status: str
     has_score: bool = False
+    minute: Optional[int] = None
     ticket_url: str | None = None
     is_free_entry: bool = False
     video_url: str | None = None
@@ -234,9 +241,11 @@ class GameDetailItem(BaseModel):
     has_lineup: bool = False
     is_live: bool = False
     minute: Optional[int] = None
+    half: Optional[int] = None
     is_technical: bool = False
     is_schedule_tentative: bool = False
     is_featured: bool = False
+    show_timeline: bool = True
     stadium: StadiumInfo | None = None
     referee: str | None = None
     visitors: int | None = None
