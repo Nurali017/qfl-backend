@@ -258,7 +258,7 @@ async def get_games(
     # Standard list format
     items = []
     for g in games:
-        game_status = compute_game_status(g)
+        game_status = compute_game_status(g, for_list=True)
 
         items.append(GameListItem(
             id=g.id,
