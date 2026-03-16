@@ -1,7 +1,10 @@
-"""Tests for compute_game_status — TDD for individual match completion.
+"""Tests for compute_game_status.
 
-Правило: матч остаётся в upcoming 1 день после игры.
-  game.date == today     → upcoming
+Detail context (for_list=False, default):
+  finished/technical_defeat → always return actual status
+
+List context (for_list=True):
+  game.date == today     → upcoming (stay in Келесі)
   game.date == yesterday → upcoming (ещё 1 день)
   game.date == 2 days ago → finished
 """
@@ -49,44 +52,52 @@ class TestCreatedGames:
         assert compute_game_status(game) == "upcoming"
 
 
-class TestTodayFinishedGames:
-    """Сегодняшние finished → upcoming (день игры)."""
+class TestFinishedGamesDetail:
+    """Detail context: finished → always actual status."""
 
-    def test_finished_today_is_upcoming(self):
+    def test_finished_today(self):
         game = _make_game(GameStatus.finished, home_score=2, away_score=1, game_date=TODAY)
-        assert compute_game_status(game) == "upcoming"
+        assert compute_game_status(game) == "finished"
 
-    def test_finished_today_zero_zero_is_upcoming(self):
-        game = _make_game(GameStatus.finished, home_score=0, away_score=0, game_date=TODAY)
-        assert compute_game_status(game) == "upcoming"
-
-    def test_technical_defeat_today_is_upcoming(self):
-        game = _make_game(GameStatus.technical_defeat, home_score=3, away_score=0, game_date=TODAY)
-        assert compute_game_status(game) == "upcoming"
-
-
-class TestYesterdayFinishedGames:
-    """Вчерашние finished → upcoming (+1 день после игры)."""
-
-    def test_finished_yesterday_is_upcoming(self):
+    def test_finished_yesterday(self):
         game = _make_game(GameStatus.finished, home_score=2, away_score=1, game_date=YESTERDAY)
-        assert compute_game_status(game) == "upcoming"
-
-    def test_technical_defeat_yesterday_is_upcoming(self):
-        game = _make_game(GameStatus.technical_defeat, home_score=3, away_score=0, game_date=YESTERDAY)
-        assert compute_game_status(game) == "upcoming"
-
-
-class TestOlderFinishedGames:
-    """2+ дня назад → finished (время вышло)."""
+        assert compute_game_status(game) == "finished"
 
     def test_finished_two_days_ago(self):
         game = _make_game(GameStatus.finished, home_score=2, away_score=1, game_date=TWO_DAYS_AGO)
         assert compute_game_status(game) == "finished"
 
-    def test_technical_defeat_two_days_ago(self):
-        game = _make_game(GameStatus.technical_defeat, home_score=3, away_score=0, game_date=TWO_DAYS_AGO)
+    def test_technical_defeat_today(self):
+        game = _make_game(GameStatus.technical_defeat, home_score=3, away_score=0, game_date=TODAY)
         assert compute_game_status(game) == "technical_defeat"
+
+    def test_technical_defeat_yesterday(self):
+        game = _make_game(GameStatus.technical_defeat, home_score=3, away_score=0, game_date=YESTERDAY)
+        assert compute_game_status(game) == "technical_defeat"
+
+
+class TestFinishedGamesForList:
+    """List context: today/yesterday finished → upcoming."""
+
+    def test_finished_today_is_upcoming(self):
+        game = _make_game(GameStatus.finished, home_score=2, away_score=1, game_date=TODAY)
+        assert compute_game_status(game, for_list=True) == "upcoming"
+
+    def test_finished_yesterday_is_upcoming(self):
+        game = _make_game(GameStatus.finished, home_score=2, away_score=1, game_date=YESTERDAY)
+        assert compute_game_status(game, for_list=True) == "upcoming"
+
+    def test_finished_two_days_ago_is_finished(self):
+        game = _make_game(GameStatus.finished, home_score=2, away_score=1, game_date=TWO_DAYS_AGO)
+        assert compute_game_status(game, for_list=True) == "finished"
+
+    def test_technical_defeat_today_is_upcoming(self):
+        game = _make_game(GameStatus.technical_defeat, home_score=3, away_score=0, game_date=TODAY)
+        assert compute_game_status(game, for_list=True) == "upcoming"
+
+    def test_technical_defeat_yesterday_is_upcoming(self):
+        game = _make_game(GameStatus.technical_defeat, home_score=3, away_score=0, game_date=YESTERDAY)
+        assert compute_game_status(game, for_list=True) == "upcoming"
 
 
 class TestLiveGames:

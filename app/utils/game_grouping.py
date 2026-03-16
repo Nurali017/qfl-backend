@@ -119,7 +119,7 @@ def group_games_by_date(
                 is_featured=game.is_featured,
                 show_timeline=game.show_timeline,
                 visitors=game.visitors,
-                status=compute_game_status(game),
+                status=compute_game_status(game, for_list=True),
                 has_score=game.home_score is not None and game.away_score is not None,
                 ticket_url=getattr(game, "ticket_url", None),
                 is_free_entry=game.is_free_entry,
