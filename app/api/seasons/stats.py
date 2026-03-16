@@ -1,5 +1,7 @@
 """Season statistics endpoints: player stats, team stats, statistics summary, goals by period."""
 
+from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, nulls_last, case, distinct, extract, text
@@ -661,13 +663,39 @@ async def get_season_statistics(
         raise HTTPException(status_code=404, detail="Season not found")
 
     # Base game filters (reused across queries)
+    # Exclude recent games (today + yesterday) — they stay in "upcoming" for +1 day
+    stats_cutoff = date.today() - timedelta(days=1)
     game_base_filters = [
         Game.season_id == season_id,
         Game.home_score.isnot(None),
         Game.away_score.isnot(None),
+        Game.date < stats_cutoff,
     ]
     if max_round is not None:
         game_base_filters.append(Game.tour <= max_round)
+
+    # Query 0: Max completed round — highest tour where ALL games have scores
+    # AND all games are past the stats cutoff date (no partial-tour leak)
+    completed_round_query = (
+        select(Game.tour)
+        .where(
+            Game.season_id == season_id,
+            Game.tour.isnot(None),
+        )
+        .group_by(Game.tour)
+        .having(
+            # Every game in the tour has scores
+            func.count() == func.count(
+                case((Game.home_score.isnot(None) & Game.away_score.isnot(None), 1))
+            ),
+            # Every game in the tour is past the cutoff
+            func.max(Game.date) < stats_cutoff,
+        )
+        .order_by(Game.tour.desc())
+        .limit(1)
+    )
+    completed_round_result = await db.execute(completed_round_query)
+    max_completed_round = completed_round_result.scalar()
 
     # Query 1: Match stats from Game table
     game_stats_query = select(
@@ -708,6 +736,7 @@ async def get_season_statistics(
         Game, GameEvent.game_id == Game.id
     ).where(
         Game.season_id == season_id,
+        Game.date < stats_cutoff,
         GameEvent.event_type == GameEventType.penalty,
     )
     if max_round is not None:
@@ -720,6 +749,7 @@ async def get_season_statistics(
         Game, GameEvent.game_id == Game.id
     ).where(
         Game.season_id == season_id,
+        Game.date < stats_cutoff,
         GameEvent.event_type == GameEventType.red_card,
     )
     if max_round is not None:
@@ -732,6 +762,7 @@ async def get_season_statistics(
         Game, GameEvent.game_id == Game.id
     ).where(
         Game.season_id == season_id,
+        Game.date < stats_cutoff,
         GameEvent.event_type == GameEventType.second_yellow,
     )
     if max_round is not None:
@@ -739,12 +770,10 @@ async def get_season_statistics(
     second_yellow_result = await db.execute(second_yellow_count_query)
     total_second_yellows = second_yellow_result.scalar() or 0
 
-    # Query 3: xG + pass accuracy
-    # xG always from TeamSeasonStats (no per-game xG)
+    # Query 3a: xG from TeamSeasonStats (no per-game xG available)
     season_agg_query = select(
         func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
         func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
-        func.avg(TeamSeasonStats.pass_ratio).label("avg_pass_accuracy"),
     ).where(TeamSeasonStats.season_id == season_id)
     season_agg_result = await db.execute(season_agg_query)
     season_agg_row = season_agg_result.one()
@@ -752,19 +781,24 @@ async def get_season_statistics(
     total_xg = float(season_agg_row.total_xg or 0)
     avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
 
-    if max_round is not None:
-        # Per-game pass_accuracy from GameTeamStats (now backfilled)
-        pa_query = select(
-            func.avg(GameTeamStats.pass_accuracy).label("avg_pass_accuracy"),
-        ).join(Game, GameTeamStats.game_id == Game.id).where(
-            *game_base_filters,
-            GameTeamStats.pass_accuracy.isnot(None),
-        )
-        pa_result = await db.execute(pa_query)
-        pa_row = pa_result.one()
-        pass_accuracy = round(float(pa_row.avg_pass_accuracy or 0), 1)
+    # Query 3b: Pass accuracy — prefer per-game, fallback to season aggregate
+    pa_query = select(
+        func.avg(GameTeamStats.pass_accuracy).label("avg_pass_accuracy"),
+    ).join(Game, GameTeamStats.game_id == Game.id).where(
+        *game_base_filters,
+        GameTeamStats.pass_accuracy.isnot(None),
+    )
+    pa_result = await db.execute(pa_query)
+    pa_row = pa_result.one()
+    if pa_row.avg_pass_accuracy is not None:
+        pass_accuracy = round(float(pa_row.avg_pass_accuracy), 1)
     else:
-        pass_accuracy = round(float(season_agg_row.avg_pass_accuracy or 0), 1)
+        # Fallback: season-level aggregate from TeamSeasonStats
+        pa_fallback = await db.execute(
+            select(func.avg(TeamSeasonStats.pass_ratio))
+            .where(TeamSeasonStats.season_id == season_id)
+        )
+        pass_accuracy = round(float(pa_fallback.scalar() or 0), 1)
 
     # Query 4: Shots on target % from GameTeamStats
     shots_query = select(
@@ -782,6 +816,7 @@ async def get_season_statistics(
         Game.season_id == season_id,
         Game.home_score == 0,
         Game.away_score == 0,
+        Game.date < stats_cutoff,
     ]
     if max_round is not None:
         clean_sheets_filters.append(Game.tour <= max_round)
@@ -791,42 +826,24 @@ async def get_season_statistics(
     clean_sheets_result = await db.execute(clean_sheets_query)
     clean_sheets = int(clean_sheets_result.scalar() or 0)
 
-    # Query 6: Player demographics — total players, minutes, Kazakh minutes %, average age
-    if max_round is not None:
-        # Per-game minutes from GamePlayerStats (now backfilled)
-        minutes_query = select(
-            func.count(distinct(GamePlayerStats.player_id)).label("total_players"),
-            func.coalesce(func.sum(GamePlayerStats.minutes_played), 0).label("total_minutes"),
-            func.coalesce(func.sum(
-                case(
-                    (func.upper(Country.code) == "KZ", GamePlayerStats.minutes_played),
-                    else_=0,
-                )
-            ), 0).label("kazakh_minutes"),
-        ).select_from(GamePlayerStats).join(
-            Game, GamePlayerStats.game_id == Game.id
-        ).join(
-            Player, GamePlayerStats.player_id == Player.id
-        ).outerjoin(
-            Country, Player.country_id == Country.id
-        ).where(*game_base_filters)
-    else:
-        minutes_query = select(
-            func.count(distinct(PlayerSeasonStats.player_id)).label("total_players"),
-            func.coalesce(func.sum(PlayerSeasonStats.time_on_field_total), 0).label("total_minutes"),
-            func.coalesce(func.sum(
-                case(
-                    (func.upper(Country.code) == "KZ", PlayerSeasonStats.time_on_field_total),
-                    else_=0,
-                )
-            ), 0).label("kazakh_minutes"),
-        ).select_from(PlayerSeasonStats).join(
-            Player, PlayerSeasonStats.player_id == Player.id
-        ).outerjoin(
-            Country, Player.country_id == Country.id
-        ).where(
-            PlayerSeasonStats.season_id == season_id,
-        )
+    # Query 6: Player demographics — total players, minutes, Kazakh minutes %
+    # Always use per-game stats (GamePlayerStats) filtered by cutoff
+    minutes_query = select(
+        func.count(distinct(GamePlayerStats.player_id)).label("total_players"),
+        func.coalesce(func.sum(GamePlayerStats.minutes_played), 0).label("total_minutes"),
+        func.coalesce(func.sum(
+            case(
+                (func.upper(Country.code) == "KZ", GamePlayerStats.minutes_played),
+                else_=0,
+            )
+        ), 0).label("kazakh_minutes"),
+    ).select_from(GamePlayerStats).join(
+        Game, GamePlayerStats.game_id == Game.id
+    ).join(
+        Player, GamePlayerStats.player_id == Player.id
+    ).outerjoin(
+        Country, Player.country_id == Country.id
+    ).where(*game_base_filters)
     minutes_result = await db.execute(minutes_query)
     min_row = minutes_result.one()
     total_players = int(min_row.total_players or 0)
@@ -835,27 +852,15 @@ async def get_season_statistics(
     kazakh_minutes_pct = round(kazakh_minutes / total_minutes * 100, 1) if total_minutes > 0 else 0.0
 
     # Average age
-    if max_round is not None:
-        # Players who played in tours <= max_round
-        age_subq = (
-            select(Player.birthday)
-            .join(GamePlayerStats, GamePlayerStats.player_id == Player.id)
-            .join(Game, GamePlayerStats.game_id == Game.id)
-            .where(
-                Game.season_id == season_id,
-                Game.tour <= max_round,
-            )
-            .distinct(Player.id)
-            .subquery()
-        )
-    else:
-        age_subq = (
-            select(Player.birthday)
-            .join(PlayerTeam, PlayerTeam.player_id == Player.id)
-            .where(PlayerTeam.season_id == season_id)
-            .distinct(PlayerTeam.player_id)
-            .subquery()
-        )
+    # Average age — only players who played in games past cutoff
+    age_subq = (
+        select(Player.birthday)
+        .join(GamePlayerStats, GamePlayerStats.player_id == Player.id)
+        .join(Game, GamePlayerStats.game_id == Game.id)
+        .where(*game_base_filters)
+        .distinct(Player.id)
+        .subquery()
+    )
     age_query = select(
         func.avg(extract("year", func.age(age_subq.c.birthday))).label("avg_age"),
     )
@@ -865,6 +870,7 @@ async def get_season_statistics(
     return SeasonStatisticsResponse(
         season_id=season_id,
         season_name=season.name,
+        max_completed_round=max_completed_round,
         matches_played=matches_played,
         wins=int(game_row.wins or 0),
         draws=int(game_row.draws or 0),
@@ -904,11 +910,13 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
+    stats_cutoff = date.today() - timedelta(days=1)
     matches_played_result = await db.execute(
         select(func.count()).select_from(Game).where(
             Game.season_id == season_id,
             Game.home_score.isnot(None),
             Game.away_score.isnot(None),
+            Game.date < stats_cutoff,
         )
     )
     matches_played = matches_played_result.scalar() or 0
@@ -927,6 +935,7 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
             Game.season_id == season_id,
             Game.home_score.isnot(None),
             Game.away_score.isnot(None),
+            Game.date < stats_cutoff,
             GameEvent.event_type == GameEventType.goal,
         )
     )

@@ -1,7 +1,7 @@
 """Game list and detail endpoints."""
 
 import logging
-from datetime import date as date_type, datetime
+from datetime import date as date_type, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,21 +179,23 @@ async def get_games(
 
     # Status filtering (uses GameStatus enum where set, falls back to derived logic)
     if status and status != "all":
+        yesterday = today - timedelta(days=1)
         if status == "upcoming":
             query = query.where(
-                Game.status == GameStatus.created,
                 or_(
-                    Game.date > today,
-                    (Game.date == today) & (Game.home_score.is_(None))
+                    # Today + yesterday: finished/tech_defeat stay in upcoming for 1 extra day
+                    (Game.date >= yesterday) & (Game.status.notin_([GameStatus.postponed, GameStatus.cancelled])),
+                    # Future created games
+                    (Game.date > today) & (Game.status == GameStatus.created),
                 )
             )
         elif status == "finished":
             query = query.where(
+                Game.date < yesterday,
                 or_(
                     Game.status == GameStatus.finished,
                     Game.status == GameStatus.technical_defeat,
                     (Game.status == GameStatus.created) & (Game.home_score.is_not(None)),
-                    (Game.status == GameStatus.created) & (Game.date < today),
                 )
             )
         elif status == "live":

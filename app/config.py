@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     serper_api_key: str = ""
     ticket_search_enabled: bool = False
 
+    # Frontend revalidation
+    revalidation_secret: str = ""
+    frontend_internal_url: str = "http://qfl-frontend:3000"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
