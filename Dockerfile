@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download rembg model to avoid cold-start delay on first upload
+RUN python -c "from rembg import new_session; new_session('u2netp')"
+
 # Copy application code
 COPY . .
 
