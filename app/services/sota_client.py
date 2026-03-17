@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 from datetime import datetime, timedelta
@@ -36,6 +37,18 @@ class SotaClient:
         self.access_token: str | None = None
         self.refresh_token: str | None = None
         self.token_expires_at: datetime | None = None
+        self._client: httpx.AsyncClient | None = None
+        self._auth_lock = asyncio.Lock()
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create the singleton httpx client with connection pooling."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=httpx.Timeout(30.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        return self._client
 
     @retry(
         stop=stop_after_attempt(3),
@@ -68,10 +81,10 @@ class SotaClient:
         if method_upper in {"POST", "PUT", "PATCH"} and json is not None:
             request_kwargs["json"] = json
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.request(method_upper, url, **request_kwargs)
-            response.raise_for_status()
-            return response
+        client = await self._get_client()
+        response = await client.request(method_upper, url, **request_kwargs)
+        response.raise_for_status()
+        return response
 
     async def authenticate(self) -> None:
         """Authenticate and get JWT tokens."""
@@ -87,11 +100,12 @@ class SotaClient:
         logger.info("SOTA API authentication successful")
 
     async def ensure_authenticated(self) -> None:
-        """Ensure we have a valid access token."""
-        if not self.access_token or not self.token_expires_at:
-            await self.authenticate()
-        elif datetime.now() >= self.token_expires_at:
-            await self.authenticate()
+        """Ensure we have a valid access token. Lock prevents auth storm."""
+        async with self._auth_lock:
+            if not self.access_token or not self.token_expires_at:
+                await self.authenticate()
+            elif datetime.now() >= self.token_expires_at:
+                await self.authenticate()
 
     def get_headers(self, language: str = "ru") -> dict[str, str]:
         """Get headers with authorization and language localization."""

@@ -9,10 +9,8 @@ from functools import partial
 from typing import BinaryIO
 from urllib.parse import quote
 
-import numpy as np
 from PIL import Image
 from minio.error import S3Error
-from rembg import new_session, remove
 
 from app.minio_client import get_minio_client, get_public_url
 from app.config import get_settings
@@ -32,6 +30,7 @@ _rembg_session = None
 def _get_rembg_session():
     global _rembg_session
     if _rembg_session is None:
+        from rembg import new_session
         _rembg_session = new_session("u2netp")
     return _rembg_session
 
@@ -42,6 +41,9 @@ def _remove_background(img: Image.Image) -> Image.Image:
     Returns RGBA image with transparent background.
     Raises ValueError if the result quality is poor (alpha covers <10% or >95%).
     """
+    import numpy as np
+    from rembg import remove
+
     result = remove(img, session=_get_rembg_session())
     result = result.convert("RGBA")
 
