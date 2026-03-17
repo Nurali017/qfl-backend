@@ -95,6 +95,7 @@ class Game(Base):
     # Live minute/half from SOTA time endpoint
     live_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     live_half: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    live_phase: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Half timestamps for auto-ticking live minute
     half1_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

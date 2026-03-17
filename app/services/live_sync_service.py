@@ -100,26 +100,44 @@ class LiveSyncService:
         return list(result.scalars().all())
 
     async def get_active_games(self) -> list[Game]:
-        """Get games that are currently live."""
+        """Get games that are currently live (excluding sync_disabled)."""
         result = await self.db.execute(
-            select(Game).where(Game.status == GameStatus.live)
+            select(Game).where(
+                Game.status == GameStatus.live,
+                Game.sync_disabled == False,
+            )
         )
         return list(result.scalars().all())
 
     async def get_games_to_end(self) -> list[Game]:
-        """Get live games that should have ended (started > 2 hours ago)."""
-        now = datetime.now(ZoneInfo("Asia/Almaty"))
-        cutoff = (now - timedelta(hours=2, minutes=6)).replace(tzinfo=None)
+        """Get live games that should have ended (started > 2h6m ago).
 
-        # Combine date + time into a timestamp for proper comparison.
-        # COALESCE(time, '00:00:00') handles nullable time field.
-        game_start = Game.date + func.coalesce(Game.time, dt_time(0, 0, 0))
+        Primary source: half1_started_at. Fallback: date + time.
+        """
+        now = datetime.now(ZoneInfo("Asia/Almaty"))
+        cutoff_tz = now - timedelta(hours=2, minutes=6)
+        cutoff_naive = cutoff_tz.replace(tzinfo=None)
+
+        # Primary: half1_started_at (timezone-aware)
+        # Fallback: date + COALESCE(time, '00:00:00') (naive)
+        game_start_fallback = Game.date + func.coalesce(Game.time, dt_time(0, 0, 0))
 
         result = await self.db.execute(
             select(Game).where(
                 and_(
                     Game.status == GameStatus.live,
-                    game_start <= cutoff,
+                    or_(
+                        # Primary: half1_started_at is set and old enough
+                        and_(
+                            Game.half1_started_at.isnot(None),
+                            Game.half1_started_at <= cutoff_tz,
+                        ),
+                        # Fallback: no half1_started_at, use date+time
+                        and_(
+                            Game.half1_started_at.is_(None),
+                            game_start_fallback <= cutoff_naive,
+                        ),
+                    ),
                 )
             )
         )
@@ -399,7 +417,28 @@ class LiveSyncService:
             return {"error": str(exc)}
 
         if not time_data:
-            return {"game_id": game_id, "live_minute": None, "live_half": None}
+            return {
+                "game_id": game_id,
+                "live_minute": None,
+                "live_half": None,
+                "live_phase": game.live_phase,
+            }
+
+        status_raw = time_data.get("status")
+        status_value = str(status_raw).strip().lower() if status_raw is not None else None
+
+        if status_value == "finished":
+            from app.services.game_lifecycle import GameLifecycleService
+
+            result = await GameLifecycleService(self.db).finish_live(game_id)
+            refreshed = await self.db.get(Game, game_id)
+            return {
+                "game_id": game_id,
+                "live_minute": refreshed.live_minute if refreshed else None,
+                "live_half": refreshed.live_half if refreshed else None,
+                "live_phase": refreshed.live_phase if refreshed else None,
+                "lifecycle_result": result,
+            }
 
         half = time_data.get("half")
         actual_time = time_data.get("actual_time")
@@ -428,12 +467,24 @@ class LiveSyncService:
             except (ValueError, TypeError):
                 pass
 
+        if status_value == "halftime":
+            game.live_phase = "halftime"
+        elif status_value == "in_progress":
+            game.live_phase = "in_progress"
+        elif status_value:
+            logger.warning("Unknown SOTA time status for game %s: %s", game_id, status_raw)
+        elif game.live_phase == "halftime" and game.live_half == 2:
+            # If the feed resumes with half=2 but omits an explicit status,
+            # don't keep the match stuck in halftime forever.
+            game.live_phase = "in_progress"
+
         await self.db.commit()
 
         return {
             "game_id": game_id,
             "live_minute": game.live_minute,
             "live_half": game.live_half,
+            "live_phase": game.live_phase,
         }
 
     async def sync_live_stats(self, game_id: int) -> dict:

@@ -4,13 +4,15 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import select, delete, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.models import Game, GameStatus, Team, GameLineup, GameEvent, LineupType, GameEventType, Referee, GameReferee, RefereeRole, Broadcaster, GameBroadcaster, GameTeamStats, GamePlayerStats, Player
+from app.models import Game, GameStatus, Team, GameLineup, GameEvent, LineupType, GameEventType, Referee, GameReferee, RefereeRole, Broadcaster, GameBroadcaster, GameTeamStats, GamePlayerStats, Player, AdminUser
 from app.models.player_team import PlayerTeam
 from app.schemas.admin.games import (
     AdminGameResponse,
@@ -34,12 +36,20 @@ from app.schemas.admin.broadcasters import (
     AdminGameBroadcasterItem,
     AdminGameBroadcasterAddRequest,
 )
+from app.services.game_lifecycle import (
+    GameLifecycleService,
+    InvalidTransition,
+    VALID_ACTIONS,
+)
+from app.utils.has_stats import enrich_games_has_stats, compute_single_has_stats
 
 router = APIRouter(
     prefix="/games",
     tags=["admin-games"],
     dependencies=[Depends(require_roles("superadmin", "editor", "operator"))],
 )
+
+_lifecycle_logger = logging.getLogger("game_lifecycle")
 
 
 def _game_to_response(game: Game) -> AdminGameResponse:
@@ -71,6 +81,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         home_penalty_score=game.home_penalty_score,
         away_penalty_score=game.away_penalty_score,
         status=game.status,
+        live_phase=game.live_phase,
         is_live=game.is_live,
         is_featured=game.is_featured,
         is_free_entry=game.is_free_entry,
@@ -161,7 +172,8 @@ async def list_games(
         .offset(offset)
         .limit(limit)
     )
-    games = result.scalars().all()
+    games = list(result.scalars().all())
+    await enrich_games_has_stats(db, games)
     items = [_game_to_response(g) for g in games]
     return AdminGamesListResponse(items=items, total=total)
 
@@ -207,7 +219,58 @@ async def get_game(game_id: int, db: AsyncSession = Depends(get_db)):
     game = result.scalar_one_or_none()
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+    game.has_stats = await compute_single_has_stats(db, game_id)
     return _game_to_response(game)
+
+
+class TransitionRequest(BaseModel):
+    action: str
+
+
+@router.post("/{game_id}/transition")
+async def transition_game(
+    game_id: int,
+    body: TransitionRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Execute a lifecycle action on a game.
+
+    Valid actions: start_live, finish_live, start_second_half,
+    reset_to_created, set_postponed, set_cancelled, set_technical_defeat.
+    """
+    if body.action not in VALID_ACTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown action '{body.action}'. Valid: {sorted(VALID_ACTIONS)}",
+        )
+    try:
+        svc = GameLifecycleService(db)
+        result = await svc.dispatch(game_id, body.action)
+        _lifecycle_logger.info(
+            "game=%s action=%s admin=%s result=%s",
+            game_id, body.action, admin.email, result,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except InvalidTransition as exc:
+        _lifecycle_logger.warning(
+            "INVALID transition game=%s action=%s admin=%s current=%s",
+            game_id, body.action, admin.email, exc.current.value,
+        )
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+# Status values that map to lifecycle actions (for transitional PATCH support)
+_STATUS_TO_ACTION = {
+    "live": "start_live",
+    "finished": "finish_live",
+    "created": "reset_to_created",
+    "postponed": "set_postponed",
+    "cancelled": "set_cancelled",
+    "technical_defeat": "set_technical_defeat",
+}
 
 
 @router.patch("/{game_id}", response_model=AdminGameResponse)
@@ -216,6 +279,27 @@ async def update_game(
     body: AdminGameUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    update_data = body.model_dump(exclude_unset=True)
+
+    # Transitional: if 'status' is in the payload, route through lifecycle service
+    headers = {}
+    if "status" in update_data and update_data["status"] is not None:
+        new_status = update_data.pop("status")
+        status_str = new_status.value if hasattr(new_status, "value") else str(new_status)
+        action = _STATUS_TO_ACTION.get(status_str)
+
+        if action:
+            _lifecycle_logger.warning(
+                "DEPRECATED: PATCH status=%s for game %s — use POST transition instead",
+                status_str, game_id,
+            )
+            headers["Warning"] = '299 - "Use POST /games/{id}/transition instead of PATCH status"'
+            try:
+                svc = GameLifecycleService(db)
+                await svc.dispatch(game_id, action)
+            except (ValueError, InvalidTransition) as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
+
     result = await db.execute(
         select(Game)
         .options(
@@ -231,16 +315,16 @@ async def update_game(
         raise HTTPException(status_code=404, detail="Game not found")
 
     # NOT NULL fields — silently skip if caller sends null
-    NOT_NULLABLE = {"date", "status", "is_featured", "is_free_entry", "sync_disabled"}
-    update_data = {
-        k: v for k, v in body.model_dump(exclude_unset=True).items()
+    NOT_NULLABLE = {"date", "is_featured", "is_free_entry", "sync_disabled"}
+    remaining = {
+        k: v for k, v in update_data.items()
         if v is not None or k not in NOT_NULLABLE
     }
-    for field, value in update_data.items():
+    for field, value in remaining.items():
         setattr(game, field, value)
 
     # Auto-extract attendance from protocol PDF
-    if "protocol_url" in update_data and update_data["protocol_url"] and "visitors" not in update_data:
+    if "protocol_url" in remaining and remaining["protocol_url"] and "visitors" not in remaining:
         try:
             from app.minio_client import get_minio_client
             from app.config import get_settings
@@ -248,7 +332,7 @@ async def update_game(
             from app.utils.protocol_parser import extract_attendance_from_protocol
 
             _settings = get_settings()
-            object_name = to_object_name(update_data["protocol_url"])
+            object_name = to_object_name(remaining["protocol_url"])
             if object_name:
                 attendance = extract_attendance_from_protocol(
                     get_minio_client(), _settings.minio_bucket, object_name
@@ -272,7 +356,14 @@ async def update_game(
         .where(Game.id == game_id)
     )
     game = result.scalar_one()
-    return _game_to_response(game)
+    game.has_stats = await compute_single_has_stats(db, game_id)
+
+    response = JSONResponse(
+        content=_game_to_response(game).model_dump(mode="json"),
+    )
+    for k, v in headers.items():
+        response.headers[k] = v
+    return response
 
 
 # --- Lineup endpoints ---

@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 from datetime import time as time_type
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 from app.schemas.team import TeamInGame, TeamStadiumInfo, TeamWithScore
@@ -16,6 +16,9 @@ class BroadcasterInfo(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+LivePhase = Literal["in_progress", "halftime"]
 
 
 class GameBase(BaseModel):
@@ -44,6 +47,7 @@ class GameResponse(GameBase):
     tournament_name: str | None = None
     stage_name: str | None = None
     status: str | None = None
+    live_phase: LivePhase | None = None
     has_score: bool = False
 
     class Config:
@@ -142,11 +146,13 @@ class MatchCenterGame(BaseModel):
 
     # Computed status field
     status: str  # "upcoming", "live", or "finished"
+    live_phase: LivePhase | None = None
 
     has_score: bool = False
 
     # Live minute for display
     minute: Optional[int] = None
+    half: Optional[int] = None
 
     # Show/hide timeline and live minutes
     show_timeline: bool = True
@@ -208,8 +214,10 @@ class GameListItem(BaseModel):
     is_featured: bool = False
     visitors: int | None = None
     status: str
+    live_phase: LivePhase | None = None
     has_score: bool = False
     minute: Optional[int] = None
+    half: Optional[int] = None
     ticket_url: str | None = None
     is_free_entry: bool = False
     video_url: str | None = None
@@ -242,6 +250,7 @@ class GameDetailItem(BaseModel):
     is_live: bool = False
     minute: Optional[int] = None
     half: Optional[int] = None
+    live_phase: LivePhase | None = None
     is_technical: bool = False
     is_schedule_tentative: bool = False
     is_featured: bool = False
@@ -276,8 +285,18 @@ class SeasonGameItem(BaseModel):
     season_id: int | None = None
     home_score: int | None = None
     away_score: int | None = None
+    home_penalty_score: int | None = None
+    away_penalty_score: int | None = None
     has_stats: bool = False
+    has_lineup: bool = False
+    is_live: bool = False
+    is_technical: bool = False
     is_schedule_tentative: bool = False
+    show_timeline: bool = True
+    status: str = "upcoming"
+    minute: Optional[int] = None
+    half: Optional[int] = None
+    live_phase: LivePhase | None = None
     stadium: str | None = None
     visitors: int | None = None
     home_team: TeamWithScore | None = None
@@ -298,11 +317,33 @@ class StageGameItem(BaseModel):
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
     has_stats: bool = False
+    has_lineup: bool = False
+    is_live: bool = False
+    is_technical: bool = False
+    show_timeline: bool = True
+    status: str = "upcoming"
+    minute: Optional[int] = None
+    half: Optional[int] = None
+    live_phase: LivePhase | None = None
     stadium: str | None = None
     visitors: int | None = None
     home_team: TeamWithScore | None = None
     away_team: TeamWithScore | None = None
     season_name: str | None = None
+
+
+class HomeMatchesWidgetResponse(BaseModel):
+    """Response for GET /games/home-widget."""
+    frontend_code: str
+    season_id: int
+    selected_round: int | None = None
+    window_state: str  # "active_round" | "completed_window" | "fallback"
+    default_tab: str  # "upcoming" | "finished"
+    show_tabs: bool
+    groups: list[MatchCenterDateGroup]
+    finished_groups: list[MatchCenterDateGroup] | None = None
+    upcoming_groups: list[MatchCenterDateGroup] | None = None
+    completed_window_expires_at: datetime | None = None
 
 
 class TeamGameItem(BaseModel):
@@ -315,6 +356,14 @@ class TeamGameItem(BaseModel):
     home_score: int | None = None
     away_score: int | None = None
     has_stats: bool = False
+    has_lineup: bool = False
+    is_live: bool = False
+    is_technical: bool = False
+    show_timeline: bool = True
+    status: str = "upcoming"
+    minute: Optional[int] = None
+    half: Optional[int] = None
+    live_phase: LivePhase | None = None
     stadium: TeamStadiumInfo | None = None
     visitors: int | None = None
     home_team: TeamWithScore | None = None

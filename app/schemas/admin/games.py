@@ -26,6 +26,7 @@ class AdminGameResponse(BaseModel):
     home_penalty_score: Optional[int] = None
     away_penalty_score: Optional[int] = None
     status: GameStatus = GameStatus.created
+    live_phase: Optional[str] = None
     is_live: bool = False
     is_featured: bool = False
     is_free_entry: bool = False

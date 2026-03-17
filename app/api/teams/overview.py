@@ -37,6 +37,7 @@ from app.services.team_overview import (
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
 from app.utils.error_messages import get_error_message
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from app.utils.has_stats import enrich_games_has_stats
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
@@ -83,7 +84,8 @@ async def get_team_overview(
         )
         .order_by(Game.date.desc(), Game.time.desc())
     )
-    team_games = games_result.scalars().all()
+    team_games = list(games_result.scalars().all())
+    await enrich_games_has_stats(db, team_games)
 
     finished_games = [
         game for game in team_games if game.home_score is not None and game.away_score is not None

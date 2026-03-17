@@ -342,21 +342,39 @@ async def backfill_player_stats(
 @router.post("/live/start/{game_id}", response_model=LiveSyncResponse)
 async def live_start(
     game_id: int,
-    service: LiveSyncService = Depends(get_live_sync_service),
+    db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    result = await service.start_live_tracking(game_id)
-    return LiveSyncResponse(**result)
+    """Legacy wrapper — routes through GameLifecycleService."""
+    from app.services.game_lifecycle import GameLifecycleService, InvalidTransition
+
+    try:
+        svc = GameLifecycleService(db)
+        result = await svc.start_live(game_id)
+        return LiveSyncResponse(game_id=game_id, is_live=True, new_events_count=result.get("new_events", 0))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/live/stop/{game_id}", response_model=LiveSyncResponse)
 async def live_stop(
     game_id: int,
-    service: LiveSyncService = Depends(get_live_sync_service),
+    db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    result = await service.stop_live_tracking(game_id)
-    return LiveSyncResponse(**result)
+    """Legacy wrapper — routes through GameLifecycleService."""
+    from app.services.game_lifecycle import GameLifecycleService, InvalidTransition
+
+    try:
+        svc = GameLifecycleService(db)
+        result = await svc.finish_live(game_id)
+        return LiveSyncResponse(game_id=game_id, is_live=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/live/half2/{game_id}")
@@ -365,12 +383,17 @@ async def start_second_half(
     db: AsyncSession = Depends(get_db),
     _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
 ):
-    game = await db.get(Game, game_id)
-    if not game:
-        raise HTTPException(status_code=404, detail="Game not found")
-    game.half2_started_at = datetime.utcnow()
-    await db.commit()
-    return {"game_id": game_id, "half2_started_at": game.half2_started_at}
+    """Legacy wrapper — routes through GameLifecycleService."""
+    from app.services.game_lifecycle import GameLifecycleService, InvalidTransition
+
+    try:
+        svc = GameLifecycleService(db)
+        result = await svc.start_second_half(game_id)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except InvalidTransition as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/live/sync-lineup/{game_id}", response_model=LineupSyncResponse)

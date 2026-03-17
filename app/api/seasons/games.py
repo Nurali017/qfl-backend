@@ -10,8 +10,10 @@ from app.models import Game
 from app.schemas.game import SeasonGameItem, StageGameItem
 from app.schemas.team import TeamWithScore
 from app.services.season_visibility import ensure_visible_season_or_404
+from app.utils.game_status import compute_game_status
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from app.utils.has_stats import enrich_games_has_stats
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -44,7 +46,8 @@ async def get_season_games(
         query = query.where(Game.tour == tour)
 
     result = await db.execute(query)
-    games = result.scalars().all()
+    games = list(result.scalars().all())
+    await enrich_games_has_stats(db, games)
 
     items = []
     for g in games:
@@ -77,8 +80,18 @@ async def get_season_games(
             season_id=g.season_id,
             home_score=g.home_score,
             away_score=g.away_score,
+            home_penalty_score=g.home_penalty_score,
+            away_penalty_score=g.away_penalty_score,
             has_stats=g.has_stats,
+            has_lineup=g.has_lineup,
+            is_live=g.is_live,
+            is_technical=g.is_technical,
             is_schedule_tentative=g.is_schedule_tentative,
+            show_timeline=g.show_timeline,
+            status=compute_game_status(g, for_list=True),
+            minute=g.live_minute if g.is_live else None,
+            half=g.live_half if g.is_live else None,
+            live_phase=g.live_phase if g.is_live else None,
             stadium=stadium_name,
             visitors=g.visitors,
             home_team=home_team,
@@ -110,7 +123,8 @@ async def get_stage_games(
         )
         .order_by(Game.date, Game.time)
     )
-    games = result.scalars().all()
+    games = list(result.scalars().all())
+    await enrich_games_has_stats(db, games)
 
     items = []
     for g in games:
@@ -147,6 +161,14 @@ async def get_stage_games(
             home_penalty_score=g.home_penalty_score,
             away_penalty_score=g.away_penalty_score,
             has_stats=g.has_stats,
+            has_lineup=g.has_lineup,
+            is_live=g.is_live,
+            is_technical=g.is_technical,
+            show_timeline=g.show_timeline,
+            status=compute_game_status(g, for_list=True),
+            minute=g.live_minute if g.is_live else None,
+            half=g.live_half if g.is_live else None,
+            live_phase=g.live_phase if g.is_live else None,
             stadium=stadium_name,
             visitors=g.visitors,
             home_team=home_team,

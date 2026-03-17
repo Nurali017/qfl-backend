@@ -1,7 +1,7 @@
 import pytest
 from httpx import AsyncClient
 from uuid import uuid4
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 
 from app.models import Championship, GameLineup, LineupType, Player
 from app.main import app
@@ -806,3 +806,94 @@ class TestGamesAPI:
         data = response.json()
         assert data["has_lineup"] is False
         assert data["rendering"]["mode"] == "hidden"
+
+
+@pytest.mark.asyncio
+async def test_home_widget_returns_narrow_statuses_and_caps_completed_window_ttl(
+    client: AsyncClient,
+    monkeypatch,
+):
+    from app.schemas.game import (
+        HomeMatchesWidgetResponse,
+        MatchCenterDateGroup,
+        MatchCenterGame,
+    )
+    import app.services.home_matches as home_matches_service
+    import app.utils.cache as cache_module
+
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+    captured: dict[str, int] = {}
+
+    async def fake_get_home_widget(*_args, **_kwargs):
+        return HomeMatchesWidgetResponse(
+            frontend_code="pl",
+            season_id=61,
+            selected_round=2,
+            window_state="completed_window",
+            default_tab="finished",
+            show_tabs=True,
+            groups=[
+                MatchCenterDateGroup(
+                    date=date(2026, 3, 17),
+                    date_label="Вторник, 17 марта 2026",
+                    games=[
+                        MatchCenterGame(
+                            id=1001,
+                            date=date(2026, 3, 17),
+                            time=datetime.strptime("18:00", "%H:%M").time(),
+                            status="finished",
+                        )
+                    ],
+                )
+            ],
+            finished_groups=[
+                MatchCenterDateGroup(
+                    date=date(2026, 3, 17),
+                    date_label="Вторник, 17 марта 2026",
+                    games=[
+                        MatchCenterGame(
+                            id=1001,
+                            date=date(2026, 3, 17),
+                            time=datetime.strptime("18:00", "%H:%M").time(),
+                            status="finished",
+                        )
+                    ],
+                )
+            ],
+            upcoming_groups=[
+                MatchCenterDateGroup(
+                    date=date(2026, 3, 18),
+                    date_label="Среда, 18 марта 2026",
+                    games=[
+                        MatchCenterGame(
+                            id=1002,
+                            date=date(2026, 3, 18),
+                            time=datetime.strptime("19:00", "%H:%M").time(),
+                            status="upcoming",
+                        )
+                    ],
+                )
+            ],
+            completed_window_expires_at=expires_at,
+        )
+
+    def fake_cache_get(_key: str):
+        return None
+
+    def fake_cache_set(_key: str, _value: bytes, ttl: int):
+        captured["ttl"] = ttl
+
+    monkeypatch.setattr(home_matches_service, "get_home_widget", fake_get_home_widget)
+    monkeypatch.setattr(cache_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(cache_module, "cache_set", fake_cache_set)
+
+    response = await client.get("/api/v1/games/home-widget?frontend_code=pl&lang=ru")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["window_state"] == "completed_window"
+    assert data["default_tab"] == "finished"
+    assert data["show_tabs"] is True
+    assert data["groups"][0]["games"][0]["status"] == "finished"
+    assert data["upcoming_groups"][0]["games"][0]["status"] == "upcoming"
+    assert 1 <= captured["ttl"] <= 30
