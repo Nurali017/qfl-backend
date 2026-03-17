@@ -14,7 +14,7 @@ Tasks:
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
@@ -25,7 +25,7 @@ from app.services.live_sync_service import LiveSyncService
 from app.services.sota_client import get_sota_client
 from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
-from app.utils.timestamps import utcnow
+from app.utils.timestamps import ensure_naive_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -459,15 +459,16 @@ async def _post_finish_followup(game_id: int):
                         logger.exception("Tour completion check dispatch failed")
 
             # 3. Extended stats: immediate if 24h+ old, else schedule
-            if game.finished_at:
+            finished_at = ensure_naive_utc(game.finished_at)
+            if finished_at:
                 now = utcnow()
-                if game.finished_at <= now - timedelta(hours=24):
+                if finished_at <= now - timedelta(hours=24):
                     try:
                         sync_extended_stats_for_game.delay(game_id)
                     except Exception:
                         logger.exception("Extended stats dispatch failed for game %s", game_id)
                 else:
-                    eta = game.finished_at + timedelta(hours=24)
+                    eta = finished_at + timedelta(hours=24)
                     try:
                         sync_extended_stats_for_game.apply_async(
                             args=[game_id], eta=eta
@@ -489,6 +490,10 @@ async def _sync_extended_stats_for_game(game_id: int):
     """Sync extended stats for a single game (24h+ post-match)."""
     from app.services.sync import SyncOrchestrator
 
+    aggregate_result = None
+    season_id = None
+    tour = None
+
     async with AsyncSessionLocal() as db:
         try:
             game = await db.get(Game, game_id)
@@ -496,30 +501,96 @@ async def _sync_extended_stats_for_game(game_id: int):
                 return {"game_id": game_id, "skipped": True}
 
             orchestrator = SyncOrchestrator(db)
-            now = datetime.utcnow()
+            now = utcnow()
 
             try:
                 r = await orchestrator.sync_game_stats(game_id)
-                if r.get("v2_enriched", 0) > 0:
-                    game.extended_stats_synced_at = now
-                    # Also sync season stats
-                    if game.season_id:
-                        await orchestrator.sync_team_season_stats(game.season_id)
-                        await orchestrator.sync_player_stats(game.season_id)
-                        if game.tour is not None:
-                            await orchestrator.sync_player_tour_stats(
-                                game.season_id, game.tour
-                            )
-                else:
+                if r.get("v2_enriched", 0) <= 0:
                     logger.info("Game %s: no v2 data yet, will retry via batch", game_id)
+                    await db.commit()
+                    return {"game_id": game_id, "synced": False, **r}
+
+                game.extended_stats_synced_at = now
+                season_id = game.season_id
+                tour = game.tour
             except Exception:
                 logger.exception("Extended stats sync failed for game %s", game_id)
+                await db.rollback()
+                return {"game_id": game_id, "synced": False}
 
             await db.commit()
-            return {"game_id": game_id, "synced": True}
         except Exception:
             await db.rollback()
             raise
+
+    if season_id:
+        aggregate_result = await _sync_extended_aggregates_for_season(season_id, {tour} if tour is not None else set())
+
+    return {
+        "game_id": game_id,
+        "synced": True,
+        "season_id": season_id,
+        "aggregate_result": aggregate_result,
+    }
+
+
+async def _sync_extended_aggregates_for_season(
+    season_id: int,
+    tours: set[int] | None = None,
+) -> dict:
+    """Run season aggregate sync in an isolated session.
+
+    This prevents a season-stats failure from rolling back already-synced
+    game-level extended stats.
+    """
+    from app.services.sync import SyncOrchestrator
+
+    tours = tours or set()
+    errors: list[str] = []
+    team_count = 0
+    player_count = 0
+    tour_counts: dict[int, int] = {}
+
+    async with AsyncSessionLocal() as db:
+        orchestrator = SyncOrchestrator(db)
+
+        try:
+            team_count = await orchestrator.sync_team_season_stats(season_id)
+        except Exception as exc:
+            await db.rollback()
+            logger.exception("Team season stats sync failed for season %s", season_id)
+            errors.append(f"team_season_stats: {exc}")
+
+        try:
+            player_count = await orchestrator.sync_player_stats(season_id)
+        except Exception as exc:
+            await db.rollback()
+            logger.exception("Player season stats sync failed for season %s", season_id)
+            errors.append(f"player_season_stats: {exc}")
+
+        for tour in sorted(tours):
+            try:
+                tour_counts[tour] = await orchestrator.sync_player_tour_stats(season_id, tour)
+            except Exception as exc:
+                await db.rollback()
+                logger.exception(
+                    "Player tour stats sync failed for season %s tour %s", season_id, tour
+                )
+                errors.append(f"player_tour_stats[{tour}]: {exc}")
+
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+    return {
+        "season_id": season_id,
+        "teams": team_count,
+        "players": player_count,
+        "tour_stats": tour_counts,
+        "errors": errors,
+    }
 
 
 async def _check_finished_without_timestamp():

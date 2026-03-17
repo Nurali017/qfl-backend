@@ -346,10 +346,12 @@ class GameSyncService(BaseSyncService):
                     if val is not None and getattr(ts, col) is None:
                         setattr(ts, col, val)
 
-            # Also fill possession_percent from /em/ if missing
-            if ts.possession_percent is None and "possessions" in em_stats:
+            # /em/ possessions is the most reliable match-level source.
+            # Overwrite stale 0/None values from v1 payloads with the percent.
+            if "possessions" in em_stats:
                 pct = _parse_possession(em_stats["possessions"].get(side))
                 if pct is not None:
+                    ts.possession = float(pct)
                     ts.possession_percent = pct
 
             # Build per-half extra_stats from captured _1/_2 metrics
