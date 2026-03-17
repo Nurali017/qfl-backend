@@ -113,6 +113,11 @@ class PlayerSeasonStats(Base):
     exit: Mapped[int | None] = mapped_column(Integer)  # keeper exits
     exit_success: Mapped[int | None] = mapped_column(Integer)
 
+    # Ranks from SOTA best_players endpoint (preserves SOTA's sort order)
+    goal_rank: Mapped[int | None] = mapped_column(Integer)
+    goal_pass_rank: Mapped[int | None] = mapped_column(Integer)
+    dry_match_rank: Mapped[int | None] = mapped_column(Integer)
+
     # Extra stats for future unknown fields from API
     extra_stats: Mapped[dict | None] = mapped_column(JSONB)
 

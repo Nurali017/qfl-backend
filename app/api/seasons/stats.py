@@ -88,15 +88,22 @@ async def get_player_stats_table(
         )
 
     # Get the sort column — red_cards sorts by the computed sum (direct + second yellow)
-    if sort_by == "red_cards":
+    # For goal/goal_pass/dry_match, sort by SOTA rank (ASC) to match SOTA's order
+    RANK_SORT_FIELDS = {"goal": "goal_rank", "goal_pass": "goal_pass_rank", "dry_match": "dry_match_rank"}
+    if sort_by in RANK_SORT_FIELDS:
+        sort_column = getattr(PlayerSeasonStats, RANK_SORT_FIELDS[sort_by])
+        use_rank_sort = True
+    elif sort_by == "red_cards":
         sort_column = (
             func.coalesce(PlayerSeasonStats.red_cards, 0)
             + func.coalesce(PlayerSeasonStats.second_yellow_cards, 0)
         )
+        use_rank_sort = False
     else:
         sort_column = getattr(PlayerSeasonStats, sort_by, None)
         if sort_column is None:
             raise HTTPException(status_code=400, detail=f"Sort field '{sort_by}' not found")
+        use_rank_sort = False
 
     # Resolve group filter
     if group:
@@ -239,9 +246,10 @@ async def get_player_stats_table(
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
 
-    query = (
-        base_query.order_by(nulls_last(desc(sort_column))).offset(offset).limit(limit)
-    )
+    if use_rank_sort:
+        query = base_query.order_by(nulls_last(sort_column.asc())).offset(offset).limit(limit)
+    else:
+        query = base_query.order_by(nulls_last(desc(sort_column))).offset(offset).limit(limit)
     result = await db.execute(query)
     rows = result.all()
     items = [
