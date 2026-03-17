@@ -37,7 +37,7 @@ class PlayerSyncService(BaseSyncService):
         """
         sota_season_id = await self.get_sota_season_id(season_id)
 
-        # Fetch top scorers and assisters in two API calls
+        # Fetch top scorers, assisters, and clean sheets in three API calls
         try:
             scorers = await self.client.get_best_players(sota_season_id, metric="goal")
         except Exception as e:
@@ -50,7 +50,13 @@ class PlayerSyncService(BaseSyncService):
             logger.warning("Failed to fetch best assisters for season %d: %s", season_id, e)
             assisters = []
 
-        if not scorers and not assisters:
+        try:
+            keepers = await self.client.get_best_players(sota_season_id, metric="dry_match")
+        except Exception as e:
+            logger.warning("Failed to fetch best keepers for season %d: %s", season_id, e)
+            keepers = []
+
+        if not scorers and not assisters and not keepers:
             logger.info("No best_players data for season %d, skipping", season_id)
             return 0
 
@@ -72,21 +78,35 @@ class PlayerSyncService(BaseSyncService):
             logger.info("No active player-team mappings for season %d", season_id)
             return 0
 
-        # Merge scorers + assisters into a combined dict keyed by sota_id
+        # Merge scorers + assisters + keepers into a combined dict keyed by sota_id
         # API returns: {"id": "uuid", "value": "16", "name": "...", "team_name": "..."}
+        # Position index in the response = SOTA's rank (1-based)
         combined: dict[str, dict] = {}
-        for p in scorers:
+        for rank, p in enumerate(scorers, start=1):
             sid = p.get("id")
             if sid:
                 try:
-                    combined.setdefault(str(sid), {})["goal"] = int(p.get("value", 0))
+                    entry = combined.setdefault(str(sid), {})
+                    entry["goal"] = int(p.get("value", 0))
+                    entry["goal_rank"] = rank
                 except (ValueError, TypeError):
                     pass
-        for p in assisters:
+        for rank, p in enumerate(assisters, start=1):
             sid = p.get("id")
             if sid:
                 try:
-                    combined.setdefault(str(sid), {})["goal_pass"] = int(p.get("value", 0))
+                    entry = combined.setdefault(str(sid), {})
+                    entry["goal_pass"] = int(p.get("value", 0))
+                    entry["goal_pass_rank"] = rank
+                except (ValueError, TypeError):
+                    pass
+        for rank, p in enumerate(keepers, start=1):
+            sid = p.get("id")
+            if sid:
+                try:
+                    entry = combined.setdefault(str(sid), {})
+                    entry["dry_match"] = int(p.get("value", 0))
+                    entry["dry_match_rank"] = rank
                 except (ValueError, TypeError):
                     pass
         count = 0
@@ -105,12 +125,10 @@ class PlayerSyncService(BaseSyncService):
             }
             update_set: dict = {"updated_at": now}
 
-            if "goal" in metrics:
-                values["goal"] = metrics["goal"]
-                update_set["goal"] = metrics["goal"]
-            if "goal_pass" in metrics:
-                values["goal_pass"] = metrics["goal_pass"]
-                update_set["goal_pass"] = metrics["goal_pass"]
+            for col in ("goal", "goal_pass", "dry_match", "goal_rank", "goal_pass_rank", "dry_match_rank"):
+                if col in metrics:
+                    values[col] = metrics[col]
+                    update_set[col] = metrics[col]
 
             stmt = insert(PlayerSeasonStats).values(**values)
             stmt = stmt.on_conflict_do_update(
