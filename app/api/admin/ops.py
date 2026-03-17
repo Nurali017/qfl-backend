@@ -145,7 +145,7 @@ async def sync_team_of_week(
 async def sync_game_stats(
     game_id: int,
     db: AsyncSession = Depends(get_db),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator", "editor")),
 ):
     await _require_sync_enabled(game_id, db)
     try:
@@ -159,7 +159,7 @@ async def sync_game_stats(
 async def sync_game_lineup(
     game_id: int,
     db: AsyncSession = Depends(get_db),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator", "editor")),
 ):
     await _require_sync_enabled(game_id, db)
     try:
@@ -199,7 +199,7 @@ async def sync_finished_lineups_positions(
 async def sync_game_events(
     game_id: int,
     db: AsyncSession = Depends(get_db),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator", "editor")),
 ):
     try:
         details = await SyncOrchestrator(db).sync_game_events(game_id)
@@ -379,7 +379,7 @@ async def live_sync_lineup(
     source: str = Query("live", description="Lineup source: 'live' (SOTA live feed with ОСНОВНЫЕ/ЗАПАСНЫЕ) or 'pregame' (SOTA pre_game_lineup API)"),
     db: AsyncSession = Depends(get_db),
     client: SotaClient = Depends(get_sota_client),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator", "editor")),
 ):
     await _require_sync_enabled(game_id, db)
     try:
@@ -407,7 +407,7 @@ async def live_sync_events(
     game_id: int,
     db: AsyncSession = Depends(get_db),
     service: LiveSyncService = Depends(get_live_sync_service),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator", "editor")),
 ):
     await _require_sync_enabled(game_id, db)
     result = await service.sync_live_events(game_id)
@@ -422,7 +422,7 @@ async def live_sync_stats(
     game_id: int,
     db: AsyncSession = Depends(get_db),
     service: LiveSyncService = Depends(get_live_sync_service),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator", "editor")),
 ):
     await _require_sync_enabled(game_id, db)
     return await service.sync_live_stats(game_id)
@@ -432,7 +432,7 @@ async def live_sync_stats(
 async def live_events(
     game_id: int,
     service: LiveSyncService = Depends(get_live_sync_service),
-    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator", "editor")),
 ):
     events = await service.get_game_events(game_id)
     return GameEventsListResponse(
