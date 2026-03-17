@@ -4,6 +4,7 @@ import logging
 from datetime import date as date_type, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import desc, select, func, or_
 from sqlalchemy.orm import joinedload, selectinload
@@ -315,6 +316,13 @@ async def get_game(
     db: AsyncSession = Depends(get_db),
 ):
     """Get game by ID."""
+    from app.utils.cache import cache_get, cache_set
+
+    cache_key = f"game:{game_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     result = await db.execute(
         select(Game)
         .where(Game.id == game_id)
@@ -379,7 +387,7 @@ async def get_game(
 
     game_status = compute_game_status(game)
 
-    return GameDetailItem(
+    detail = GameDetailItem(
         id=game.id,
         date=game.date,
         time=game.time,
@@ -430,6 +438,13 @@ async def get_game(
         ],
         weather=format_weather(game.weather_temp, game.weather_condition, lang),
     )
+
+    # Cache serialized JSON — TTL varies by game status
+    json_bytes = detail.model_dump_json().encode()
+    ttl = 5 if game.is_live else (30 if game_status == "upcoming" else 60)
+    cache_set(cache_key, json_bytes, ttl)
+
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{game_id}/news", response_model=list[NewsListItem])

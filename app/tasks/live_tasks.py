@@ -3,11 +3,14 @@ Celery tasks for live match synchronization.
 
 Tasks:
 - auto_start_live_games: Auto-start live tracking for games whose scheduled time has passed
-- sync_live_game_events: Sync events, lineup, and stats for active games
+- sync_live_game_events: Dispatcher — fans out sync_single_game per active game
+- sync_single_game: Sync events, lineup, and stats for one game (tokenized lock)
 - auto_end_finished_games: Auto-end games that have been live for over 2h15m
 - sync_post_match_protocol: Re-sync events & stats for recently finished games
 """
 import logging
+import time
+import uuid
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -23,9 +26,131 @@ from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
+# Per-game lock TTL — must cover queue wait + worst-case sync (observed peak: 45s)
+# 90s = ~30s queue headroom + 60s sync headroom
+_LOCK_KEY_PREFIX = "qfl:live-sync:game"
+_LOCK_TTL = 90
+
+# Lua script: delete key only if its value matches our token.
+# Prevents a late-finishing worker from deleting a lock that was
+# already re-acquired by a newer dispatch cycle.
+_CAS_DELETE_SCRIPT = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+async def _acquire_token_lock(key: str, ttl: int) -> str | None:
+    """SET key <token> NX EX ttl.  Returns token on success, None if held."""
+    token = uuid.uuid4().hex
+    try:
+        from app.utils.live_flag import get_redis
+        r = await get_redis()
+        ok = await r.set(key, token, nx=True, ex=ttl)
+        return token if ok else None
+    except Exception:
+        # Fail open — return a token so the task proceeds
+        return token
+
+
+async def _release_token_lock(key: str, token: str) -> None:
+    """Compare-and-delete: remove key only if it still holds our token."""
+    try:
+        from app.utils.live_flag import get_redis
+        r = await get_redis()
+        await r.eval(_CAS_DELETE_SCRIPT, 1, key, token)
+    except Exception:
+        pass
+
+
+async def _sync_single_game_impl(game_id: int, token: str):
+    """Sync all live data for a single game.
+
+    The dispatcher reserved this game by SET NX with `token` before enqueuing.
+    On completion (or failure) we compare-and-delete so only *our* reservation
+    is removed.  If the TTL expired and a new cycle already re-reserved the
+    key with a different token, our delete is a no-op.
+    """
+    lock_key = f"{_LOCK_KEY_PREFIX}:{game_id}"
+    t0 = time.monotonic()
+    try:
+        async with AsyncSessionLocal() as db:
+            try:
+                client = get_sota_client()
+                service = LiveSyncService(db, client)
+
+                # Steps run sequentially because all 5 methods mutate the same
+                # Game object via shared AsyncSession and call db.commit().
+                # asyncio.gather() would cause lost updates.
+                # Inter-game parallelism (separate Celery tasks) is the main win;
+                # intra-game parallelism requires splitting fetch/apply phases
+                # in LiveSyncService (future refactor).
+                sync_result = await service.sync_live_events(game_id)
+                events_added = sync_result.get("added", 0)
+
+                try:
+                    await service.sync_live_time(game_id)
+                except Exception as time_err:
+                    logger.warning("Failed to sync live time for game %s: %s", game_id, time_err)
+
+                try:
+                    await service.sync_live_lineup(game_id)
+                except Exception as lineup_err:
+                    logger.warning("Failed to sync lineup for game %s: %s", game_id, lineup_err)
+
+                try:
+                    await service.sync_live_stats(game_id)
+                except Exception as stats_err:
+                    logger.warning("Failed to sync stats for game %s: %s", game_id, stats_err)
+
+                try:
+                    await service.sync_live_player_stats(game_id)
+                except Exception as ps_err:
+                    logger.warning("Failed to sync player stats for game %s: %s", game_id, ps_err)
+
+                await db.commit()
+
+                elapsed = time.monotonic() - t0
+                if events_added:
+                    logger.info("Synced %d new events for game %s", events_added, game_id)
+                logger.info("sync_single_game(%s) completed in %.1fs", game_id, elapsed)
+
+                return {
+                    "game_id": game_id,
+                    "new_events": events_added,
+                    "updated_events": sync_result.get("updated", 0),
+                    "deleted_events": sync_result.get("deleted", 0),
+                    "elapsed": round(elapsed, 1),
+                }
+            except Exception:
+                await db.rollback()
+                raise
+    except Exception as e:
+        elapsed = time.monotonic() - t0
+        logger.error("Failed to sync game %s in %.1fs: %s", game_id, elapsed, e)
+        return {"game_id": game_id, "error": str(e), "elapsed": round(elapsed, 1)}
+    finally:
+        await _release_token_lock(lock_key, token)
+
 
 async def _sync_live_game_events():
-    """Sync events for all active (live) games."""
+    """Dispatcher: get active game IDs, reserve + dispatch per-game tasks.
+
+    For each game, does an atomic SET <key> <token> NX EX 90 *before* calling
+    .delay(game_id, token).  This covers the full task lifecycle
+    (queued → running → done) with no gap where the game appears unlocked.
+
+    The worker receives the token and does a compare-and-delete in its finally
+    block, so a late-finishing worker cannot accidentally remove a reservation
+    that belongs to a newer dispatch cycle.
+
+    If a .delay() call fails after SET NX succeeded, we immediately
+    compare-and-delete to avoid leaving an orphaned reservation.
+    If the task is lost (ack failure, broker crash), the TTL auto-expires.
+    """
     from app.utils.live_flag import has_live_games, set_live_flag, clear_live_flag
 
     if not await has_live_games():
@@ -45,59 +170,35 @@ async def _sync_live_game_events():
 
             # Refresh flag TTL while games are live
             await set_live_flag()
-
-            results = []
-            total_new_events = 0
-
-            for game in active_games:
-                try:
-                    sync_result = await service.sync_live_events(game.id)
-                    events_added = sync_result.get("added", 0)
-                    total_new_events += events_added
-
-                    # Sync live match time (minute + half from SOTA)
-                    try:
-                        await service.sync_live_time(game.id)
-                    except Exception as time_err:
-                        logger.warning(f"Failed to sync live time for game {game.id}: {time_err}")
-
-                    # Also sync live lineup (starters/substitutes from live feed)
-                    try:
-                        await service.sync_live_lineup(game.id)
-                    except Exception as lineup_err:
-                        logger.warning(f"Failed to sync lineup for game {game.id}: {lineup_err}")
-
-                    # Also sync live stats (score, shots, possession, etc.)
-                    try:
-                        await service.sync_live_stats(game.id)
-                    except Exception as stats_err:
-                        logger.warning(f"Failed to sync stats for game {game.id}: {stats_err}")
-
-                    # Sync per-player stats (shots, cards, etc. per player)
-                    try:
-                        await service.sync_live_player_stats(game.id)
-                    except Exception as ps_err:
-                        logger.warning(f"Failed to sync player stats for game {game.id}: {ps_err}")
-
-                    results.append({
-                        "game_id": game.id,
-                        "new_events": events_added,
-                        "updated_events": sync_result.get("updated", 0),
-                        "deleted_events": sync_result.get("deleted", 0),
-                    })
-
-                    if events_added:
-                        logger.info(f"Synced {events_added} new events for game {game.id}")
-
-                except Exception as e:
-                    logger.error(f"Failed to sync events for game {game.id}: {e}")
-                    results.append({"game_id": game.id, "error": str(e)})
-
             await db.commit()
+
+            game_ids = [g.id for g in active_games]
+            dispatched = []
+            already_locked = []
+            for gid in game_ids:
+                lock_key = f"{_LOCK_KEY_PREFIX}:{gid}"
+                token = await _acquire_token_lock(lock_key, _LOCK_TTL)
+                if token is None:
+                    # Key already held (queued or running from prior cycle)
+                    already_locked.append(gid)
+                    continue
+                try:
+                    sync_single_game.delay(gid, token)
+                    dispatched.append(gid)
+                except Exception:
+                    # .delay() failed — clean up the reservation we just made
+                    await _release_token_lock(lock_key, token)
+                    logger.exception("Failed to enqueue sync for game %s", gid)
+
+            if dispatched:
+                logger.info("Dispatched sync for games: %s", dispatched)
+            if already_locked:
+                logger.debug("Games still queued/running, skipped: %s", already_locked)
+
             return {
-                "active_games": len(active_games),
-                "total_new_events": total_new_events,
-                "results": results,
+                "active_games": len(game_ids),
+                "dispatched": dispatched,
+                "already_locked": already_locked,
             }
         except Exception:
             await db.rollback()
@@ -273,8 +374,14 @@ def auto_start_live_games():
 
 @celery_app.task(name="app.tasks.live_tasks.sync_live_game_events")
 def sync_live_game_events():
-    """Celery task: Sync events for all active games. Runs every 15 seconds."""
+    """Celery task: Dispatcher — fans out per-game sync tasks. Runs every 15 seconds."""
     return run_async(_sync_live_game_events())
+
+
+@celery_app.task(name="app.tasks.live_tasks.sync_single_game")
+def sync_single_game(game_id: int, token: str):
+    """Celery task: Sync events/lineup/stats for one game. Dispatched by sync_live_game_events."""
+    return run_async(_sync_single_game_impl(game_id, token))
 
 
 @celery_app.task(name="app.tasks.live_tasks.auto_end_finished_games")
