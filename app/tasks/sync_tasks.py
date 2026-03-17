@@ -18,6 +18,66 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+async def _sync_extended_aggregate_bundle(
+    season_id: int,
+    tours: set[int] | None = None,
+    *,
+    force: bool = False,
+) -> dict:
+    """Sync season-level aggregates in an isolated transaction bundle.
+
+    A failure here must not roll back already-persisted game-level extended
+    stats for individual matches.
+    """
+    tours = tours or set()
+    errors: list[str] = []
+    team_count = 0
+    player_count = 0
+    tour_counts: dict[int, int] = {}
+
+    async with AsyncSessionLocal() as db:
+        orchestrator = SyncOrchestrator(db)
+
+        try:
+            team_count = await orchestrator.sync_team_season_stats(season_id, force=force)
+        except Exception as exc:
+            await db.rollback()
+            logger.exception("Team season stats failed for season %s", season_id)
+            errors.append(f"team_season_stats: {exc}")
+
+        try:
+            player_count = await orchestrator.sync_player_stats(season_id, force=force)
+        except Exception as exc:
+            await db.rollback()
+            logger.exception("Player season stats failed for season %s", season_id)
+            errors.append(f"player_season_stats: {exc}")
+
+        for tour in sorted(tours):
+            try:
+                tour_counts[tour] = await orchestrator.sync_player_tour_stats(
+                    season_id, tour, force=force
+                )
+            except Exception as exc:
+                await db.rollback()
+                logger.exception(
+                    "Player tour stats failed for season %s tour %s", season_id, tour
+                )
+                errors.append(f"player_tour_stats[{tour}]: {exc}")
+
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+    return {
+        "teams": team_count,
+        "players": player_count,
+        "tour_stats": tour_counts,
+        "errors": errors,
+    }
+
+
 async def _sync_games():
     """Sync games for all configured seasons."""
     async with AsyncSessionLocal() as db:
@@ -117,13 +177,15 @@ async def _sync_extended_stats():
     3. Syncs team/player season stats ONLY if new games were processed
     4. Marks games as synced to avoid redundant work
     """
+    now = datetime.utcnow()
+    cutoff = now - timedelta(hours=24)
+    season_tours: dict[int, set[int]] = {}
+    game_results = []
+    game_errors = []
+
     async with AsyncSessionLocal() as db:
         try:
-            now = datetime.utcnow()
-            cutoff = now - timedelta(hours=24)
-
             orchestrator = SyncOrchestrator(db)
-            seasons_to_sync = set()
 
             # 1. Find games finished 24h+ ago, not yet synced, in active seasons only
             result = await db.execute(
@@ -143,68 +205,23 @@ async def _sync_extended_stats():
                 return {"extended_stats": "no new games to sync"}
 
             # 2. Re-sync game stats (with v2 enrichment)
-            game_results = []
-            game_errors = []
             for game in games:
                 try:
                     r = await orchestrator.sync_game_stats(game.id)
                     game_results.append({"game_id": game.id, **r})
-                    # Only mark as synced if v2 data was actually received
                     if r.get("v2_enriched", 0) > 0:
                         game.extended_stats_synced_at = now
-                        seasons_to_sync.add(game.season_id)
+                        if game.season_id:
+                            season_tours.setdefault(game.season_id, set())
+                            if game.tour is not None:
+                                season_tours[game.season_id].add(game.tour)
                     else:
                         logger.info("Game %s: no v2 data yet, will retry", game.id)
                 except Exception as e:
                     logger.warning("Extended game stats failed for game %s: %s", game.id, e)
                     game_errors.append(f"Game {game.id}: {e}")
 
-            # 3. Sync team + player season stats for affected seasons
-            # Also collect (season_id, tour) pairs for player tour stats
-            season_tours: dict[int, set[int]] = {}
-            for game in games:
-                if game.season_id in seasons_to_sync and game.tour is not None:
-                    season_tours.setdefault(game.season_id, set()).add(game.tour)
-
-            season_results = {}
-            for season_id in seasons_to_sync:
-                if not await orchestrator.is_sync_enabled(season_id):
-                    continue
-                team_count = await orchestrator.sync_team_season_stats(season_id)
-                player_count = await orchestrator.sync_player_stats(season_id)
-                # Sync player tour stats for each tour with finished games
-                tour_counts = {}
-                for tour in sorted(season_tours.get(season_id, [])):
-                    try:
-                        tc = await orchestrator.sync_player_tour_stats(season_id, tour)
-                        tour_counts[tour] = tc
-                    except Exception as e:
-                        logger.warning("Player tour stats failed for season %d tour %d: %s", season_id, tour, e)
-                season_results[season_id] = {
-                    "teams": team_count,
-                    "players": player_count,
-                    "tour_stats": tour_counts,
-                }
-
             await db.commit()
-
-            # 4. Telegram notification
-            if season_results or game_errors:
-                lines = ["📊 Extended stats synced (24h+ post-match)"]
-                lines.append(f"Games: {len(game_results)} synced")
-                for sid, counts in season_results.items():
-                    lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
-                if game_errors:
-                    lines.append(f"⚠️ Errors ({len(game_errors)}):")
-                    for err in game_errors[:5]:
-                        lines.append(f"  {err}")
-                await send_telegram_message("\n".join(lines))
-
-            return {
-                "games_resynced": len(game_results),
-                "seasons_synced": season_results,
-                "errors": game_errors,
-            }
         except Exception as e:
             await db.rollback()
             try:
@@ -213,14 +230,46 @@ async def _sync_extended_stats():
                 pass
             raise
 
+    # 3. Sync season aggregates in isolated transactions
+    season_results = {}
+    for season_id, tours in sorted(season_tours.items()):
+        result = await _sync_extended_aggregate_bundle(season_id, tours)
+        season_results[season_id] = {
+            "teams": result["teams"],
+            "players": result["players"],
+            "tour_stats": result["tour_stats"],
+        }
+        game_errors.extend(
+            [f"Season {season_id}: {err}" for err in result.get("errors", [])]
+        )
+
+    # 4. Telegram notification
+    if season_results or game_errors:
+        lines = ["📊 Extended stats synced (24h+ post-match)"]
+        lines.append(f"Games: {len(game_results)} synced")
+        for sid, counts in season_results.items():
+            lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
+        if game_errors:
+            lines.append(f"⚠️ Errors ({len(game_errors)}):")
+            for err in game_errors[:5]:
+                lines.append(f"  {err}")
+        await send_telegram_message("\n".join(lines))
+
+    return {
+        "games_resynced": len(game_results),
+        "seasons_synced": season_results,
+        "errors": game_errors,
+    }
+
 
 async def _resync_extended_stats(game_ids: list[int]):
     """Resync extended stats for specific games (admin-triggered)."""
+    now = datetime.utcnow()
+    season_tours: dict[int, set[int]] = {}
+
     async with AsyncSessionLocal() as db:
         try:
-            now = datetime.utcnow()
             orchestrator = SyncOrchestrator(db)
-            seasons_to_sync = set()
 
             result = await db.execute(
                 select(Game).where(Game.id.in_(game_ids), Game.sync_disabled == False)
@@ -237,33 +286,17 @@ async def _resync_extended_stats(game_ids: list[int]):
                     game_results.append({"game_id": game.id, **r})
                     if r.get("v2_enriched", 0) > 0:
                         game.extended_stats_synced_at = now
-                        seasons_to_sync.add(game.season_id)
+                        if game.season_id:
+                            season_tours.setdefault(game.season_id, set())
+                            if game.tour is not None:
+                                season_tours[game.season_id].add(game.tour)
                     else:
                         logger.info("Game %s: no v2 data yet", game.id)
                 except Exception as e:
                     logger.warning("Resync failed for game %s: %s", game.id, e)
                     game_errors.append(f"Game {game.id}: {e}")
 
-            # Sync team + player season stats (force=True for admin override)
-            season_results = {}
-            for sid in seasons_to_sync:
-                team_count = await orchestrator.sync_team_season_stats(sid, force=True)
-                player_count = await orchestrator.sync_player_stats(sid, force=True)
-                season_results[sid] = {"teams": team_count, "players": player_count}
-
             await db.commit()
-
-            # Telegram notification
-            lines = ["🔄 Admin resync extended stats"]
-            lines.append(f"Games: {len(game_results)} synced, {len(game_errors)} errors")
-            for sid, counts in season_results.items():
-                lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
-            if game_errors:
-                for err in game_errors[:5]:
-                    lines.append(f"  ⚠️ {err}")
-            await send_telegram_message("\n".join(lines))
-
-            return {"games_resynced": len(game_results), "errors": game_errors}
         except Exception as e:
             await db.rollback()
             try:
@@ -271,6 +304,24 @@ async def _resync_extended_stats(game_ids: list[int]):
             except Exception:
                 pass
             raise
+
+    season_results = {}
+    for sid, tours in sorted(season_tours.items()):
+        result = await _sync_extended_aggregate_bundle(sid, tours, force=True)
+        season_results[sid] = {"teams": result["teams"], "players": result["players"]}
+        game_errors.extend([f"Season {sid}: {err}" for err in result.get("errors", [])])
+
+    # Telegram notification
+    lines = ["🔄 Admin resync extended stats"]
+    lines.append(f"Games: {len(game_results)} synced, {len(game_errors)} errors")
+    for sid, counts in season_results.items():
+        lines.append(f"Season {sid}: {counts['teams']} teams, {counts['players']} players")
+    if game_errors:
+        for err in game_errors[:5]:
+            lines.append(f"  ⚠️ {err}")
+    await send_telegram_message("\n".join(lines))
+
+    return {"games_resynced": len(game_results), "errors": game_errors}
 
 
 @celery_app.task(name="app.tasks.sync_tasks.resync_extended_stats")
