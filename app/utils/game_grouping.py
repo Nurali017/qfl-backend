@@ -1,11 +1,12 @@
 """Game grouping and player name fallback utilities."""
 
 from collections import defaultdict
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Game, GameEvent
+from app.models import Game, GameEvent, GameStatus
 from app.schemas.game import (
     BroadcasterInfo, MatchCenterDateGroup, MatchCenterGame, StadiumInfo, TeamInMatchCenter,
 )
@@ -81,9 +82,24 @@ def _build_stadium(stadium, lang: str) -> StadiumInfo | None:
     )
 
 
+def _get_grouped_game_status(
+    game: Game,
+    status_mode: Literal["list", "home_widget"],
+) -> str:
+    if status_mode == "home_widget":
+        if game.status == GameStatus.live:
+            return "live"
+        if game.status in (GameStatus.finished, GameStatus.technical_defeat):
+            return "finished"
+        return "upcoming"
+
+    return compute_game_status(game, for_list=True)
+
+
 def group_games_by_date(
     games: list[Game],
     lang: str = "ru",
+    status_mode: Literal["list", "home_widget"] = "list",
 ) -> list[MatchCenterDateGroup]:
     """
     Group games by date with formatted labels.
@@ -111,6 +127,8 @@ def group_games_by_date(
                 home_penalty_score=game.home_penalty_score,
                 away_penalty_score=game.away_penalty_score,
                 minute=game.live_minute if game.is_live else None,
+                half=game.live_half if game.is_live else None,
+                live_phase=game.live_phase if game.is_live else None,
                 is_live=game.is_live,
                 has_stats=game.has_stats,
                 has_lineup=game.has_lineup,
@@ -119,7 +137,7 @@ def group_games_by_date(
                 is_featured=game.is_featured,
                 show_timeline=game.show_timeline,
                 visitors=game.visitors,
-                status=compute_game_status(game, for_list=True),
+                status=_get_grouped_game_status(game, status_mode),
                 has_score=game.home_score is not None and game.away_score is not None,
                 ticket_url=getattr(game, "ticket_url", None),
                 is_free_entry=game.is_free_entry,

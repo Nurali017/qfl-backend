@@ -7,6 +7,9 @@ Tasks:
 - sync_single_game: Sync events, lineup, and stats for one game (tokenized lock)
 - auto_end_finished_games: Auto-end games that have been live for over 2h15m
 - sync_post_match_protocol: Re-sync events & stats for recently finished games
+- post_finish_followup: Post-match pipeline (resync, tour check, extended stats)
+- sync_extended_stats_for_game: Game-scoped extended stats sync
+- check_finished_without_timestamp: Guardrail — alert on broken finished games
 """
 import logging
 import time
@@ -207,6 +210,8 @@ async def _sync_live_game_events():
 
 async def _auto_start_live_games():
     """Find games whose scheduled time has passed and start live tracking."""
+    from app.services.game_lifecycle import GameLifecycleService
+
     async with AsyncSessionLocal() as db:
         try:
             client = get_sota_client()
@@ -217,19 +222,20 @@ async def _auto_start_live_games():
                 await db.commit()
                 return {"started": 0, "results": []}
 
+            lifecycle = GameLifecycleService(db)
             results = []
             for game in games:
                 try:
-                    result = await service.start_live_tracking(game.id)
+                    result = await lifecycle.start_live(game.id)
                     results.append(result)
-                    logger.info(f"Auto-started live tracking for game {game.id}")
+                    logger.info("Auto-started live tracking for game %s", game.id)
                 except Exception as e:
-                    logger.error(f"Failed to auto-start game {game.id}: {e}")
+                    logger.error("Failed to auto-start game %s: %s", game.id, e)
                     results.append({"game_id": game.id, "error": str(e)})
 
             await db.commit()
             return {
-                "started": len([r for r in results if r.get("is_live")]),
+                "started": len([r for r in results if "error" not in r]),
                 "results": results,
             }
         except Exception:
@@ -238,7 +244,13 @@ async def _auto_start_live_games():
 
 
 async def _auto_end_finished_games():
-    """End games that have been live for over 2h15m."""
+    """End games that have been live for over 2h6m.
+
+    Primary source: half1_started_at. Fallback: date + time.
+    Routes through GameLifecycleService.finish_live.
+    """
+    from app.services.game_lifecycle import GameLifecycleService
+
     async with AsyncSessionLocal() as db:
         try:
             client = get_sota_client()
@@ -247,14 +259,15 @@ async def _auto_end_finished_games():
             if not games:
                 await db.commit()
                 return {"ended": 0, "results": []}
+            lifecycle = GameLifecycleService(db)
             results = []
             for game in games:
                 try:
-                    await service.stop_live_tracking(game.id)
+                    await lifecycle.finish_live(game.id)
                     results.append({"game_id": game.id, "status": "ended"})
-                    logger.info(f"Auto-ended game {game.id}")
+                    logger.info("Auto-ended game %s", game.id)
                 except Exception as e:
-                    logger.error(f"Failed to auto-end game {game.id}: {e}")
+                    logger.error("Failed to auto-end game %s: %s", game.id, e)
                     results.append({"game_id": game.id, "error": str(e)})
             await db.commit()
             return {"ended": len([r for r in results if "status" in r]), "results": results}
@@ -400,3 +413,167 @@ def sync_post_match_protocol():
 def fetch_pregame_lineups():
     """Celery task: Pre-fetch lineups from /em/ for upcoming games. Runs every 3 minutes."""
     return run_async(_fetch_pregame_lineups())
+
+
+# ==================== Post-finish follow-up ====================
+
+
+async def _post_finish_followup(game_id: int):
+    """Post-match pipeline: resync, tour completion check, extended stats scheduling."""
+    from app.utils.live_flag import get_redis
+
+    redis = await get_redis()
+
+    # Dedupe by game_id (5 min TTL)
+    dedup_key = f"qfl:post_finish:{game_id}"
+    if not await redis.set(dedup_key, "1", nx=True, ex=300):
+        logger.info("post_finish_followup(%s) already running, skipping", game_id)
+        return {"game_id": game_id, "skipped": True}
+
+    async with AsyncSessionLocal() as db:
+        try:
+            game = await db.get(Game, game_id)
+            if not game:
+                return {"error": f"Game {game_id} not found"}
+
+            # 1. Immediate post-match resync
+            if game.sota_id and not game.sync_disabled:
+                try:
+                    client = get_sota_client()
+                    svc = LiveSyncService(db, client)
+                    await svc.sync_live_events(game_id)
+                    await svc.sync_live_stats(game_id)
+                    await svc.sync_live_player_stats(game_id)
+                    logger.info("Post-finish resync completed for game %s", game_id)
+                except Exception:
+                    logger.exception("Post-finish resync failed for game %s", game_id)
+
+            # 2. Tour completion check (deduped by season_id/tour)
+            if game.season_id and game.tour is not None:
+                tour_key = f"qfl:post_finish_tour:{game.season_id}:{game.tour}"
+                if await redis.set(tour_key, "1", nx=True, ex=3600):
+                    try:
+                        from app.tasks.sync_tasks import check_tour_completion
+                        check_tour_completion.delay()
+                    except Exception:
+                        logger.exception("Tour completion check dispatch failed")
+
+            # 3. Extended stats: immediate if 24h+ old, else schedule
+            if game.finished_at:
+                now = utcnow()
+                if game.finished_at <= now - timedelta(hours=24):
+                    try:
+                        sync_extended_stats_for_game.delay(game_id)
+                    except Exception:
+                        logger.exception("Extended stats dispatch failed for game %s", game_id)
+                else:
+                    eta = game.finished_at + timedelta(hours=24)
+                    try:
+                        sync_extended_stats_for_game.apply_async(
+                            args=[game_id], eta=eta
+                        )
+                        logger.info(
+                            "Scheduled extended stats for game %s at %s", game_id, eta
+                        )
+                    except Exception:
+                        logger.exception("Extended stats schedule failed for game %s", game_id)
+
+            await db.commit()
+            return {"game_id": game_id, "status": "completed"}
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def _sync_extended_stats_for_game(game_id: int):
+    """Sync extended stats for a single game (24h+ post-match)."""
+    from app.services.sync import SyncOrchestrator
+
+    async with AsyncSessionLocal() as db:
+        try:
+            game = await db.get(Game, game_id)
+            if not game or game.sync_disabled:
+                return {"game_id": game_id, "skipped": True}
+
+            orchestrator = SyncOrchestrator(db)
+            now = datetime.utcnow()
+
+            try:
+                r = await orchestrator.sync_game_stats(game_id)
+                if r.get("v2_enriched", 0) > 0:
+                    game.extended_stats_synced_at = now
+                    # Also sync season stats
+                    if game.season_id:
+                        await orchestrator.sync_team_season_stats(game.season_id)
+                        await orchestrator.sync_player_stats(game.season_id)
+                        if game.tour is not None:
+                            await orchestrator.sync_player_tour_stats(
+                                game.season_id, game.tour
+                            )
+                else:
+                    logger.info("Game %s: no v2 data yet, will retry via batch", game_id)
+            except Exception:
+                logger.exception("Extended stats sync failed for game %s", game_id)
+
+            await db.commit()
+            return {"game_id": game_id, "synced": True}
+        except Exception:
+            await db.rollback()
+            raise
+
+
+async def _check_finished_without_timestamp():
+    """Guardrail: detect games with status=finished but finished_at=NULL.
+
+    Sends a deduped Telegram alert. Does NOT auto-fix.
+    """
+    from app.utils.live_flag import get_redis
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Game.id).where(
+                Game.status == GameStatus.finished,
+                Game.finished_at.is_(None),
+            )
+        )
+        broken_ids = list(result.scalars().all())
+
+        if not broken_ids:
+            return {"broken": 0}
+
+        # Dedupe: alert once per broken game (6h TTL)
+        redis = await get_redis()
+        new_broken = []
+        for gid in broken_ids:
+            key = f"qfl:guardrail:broken_finish:{gid}"
+            if await redis.set(key, "1", nx=True, ex=21600):
+                new_broken.append(gid)
+
+        if new_broken:
+            await send_telegram_message(
+                f"⚠️ Guardrail: {len(new_broken)} game(s) with status=finished "
+                f"but finished_at=NULL:\n"
+                + "\n".join(f"  Game #{gid}" for gid in new_broken[:20])
+                + ("\n  ..." if len(new_broken) > 20 else "")
+                + "\n\nUse POST /transition with action=finish_live to repair."
+            )
+
+        return {"broken": len(broken_ids), "alerted": len(new_broken)}
+
+
+@celery_app.task(name="app.tasks.live_tasks.post_finish_followup")
+def post_finish_followup(game_id: int):
+    """Celery task: Post-match pipeline for a single game."""
+    return run_async(_post_finish_followup(game_id))
+
+
+@celery_app.task(name="app.tasks.live_tasks.sync_extended_stats_for_game")
+def sync_extended_stats_for_game(game_id: int):
+    """Celery task: Sync extended stats for a single game."""
+    return run_async(_sync_extended_stats_for_game(game_id))
+
+
+@celery_app.task(name="app.tasks.live_tasks.check_finished_without_timestamp")
+def check_finished_without_timestamp():
+    """Celery task: Guardrail — alert on broken finished games. Runs every 10 min."""
+    return run_async(_check_finished_without_timestamp())

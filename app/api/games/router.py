@@ -29,6 +29,7 @@ from app.services.weather import format_weather
 from app.config import get_settings
 from app.services.season_visibility import ensure_visible_season_or_404, get_current_season_id
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids
+from app.utils.has_stats import enrich_games_has_stats, compute_single_has_stats
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -223,7 +224,10 @@ async def get_games(
     )
 
     result = await db.execute(query)
-    games = result.scalars().all()
+    games = list(result.scalars().all())
+
+    # Derive has_stats from actual stats records
+    await enrich_games_has_stats(db, games)
 
     # Return grouped format if requested
     if group_by_date:
@@ -277,11 +281,13 @@ async def get_games(
             has_lineup=g.has_lineup,
             is_live=g.is_live,
             minute=g.live_minute if g.is_live else None,
+            half=g.live_half if g.is_live else None,
             is_technical=g.is_technical,
             is_schedule_tentative=g.is_schedule_tentative,
             is_featured=g.is_featured,
             visitors=g.visitors,
             status=game_status,
+            live_phase=g.live_phase if g.is_live else None,
             has_score=g.home_score is not None and g.away_score is not None,
             ticket_url=getattr(g, "ticket_url", None),
             is_free_entry=g.is_free_entry,
@@ -307,6 +313,43 @@ async def get_games(
         ))
 
     return {"items": items, "total": total}
+
+
+@router.get("/home-widget")
+async def home_widget(
+    frontend_code: str = Query(..., pattern="^(pl|1l|el)$"),
+    lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Home matches widget for tour-based leagues (pl, 1l, el)."""
+    from app.utils.cache import cache_get, cache_set
+    from app.services.home_matches import get_home_widget
+
+    cache_key = f"home_widget:{frontend_code}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
+    result = await get_home_widget(db, frontend_code, lang)
+    json_bytes = result.model_dump_json().encode()
+
+    # TTL varies by window_state
+    if result.window_state == "completed_window" and result.completed_window_expires_at:
+        from datetime import datetime as _dt, timezone as _tz
+        remaining = (result.completed_window_expires_at - _dt.now(_tz.utc)).total_seconds()
+        if remaining <= 0:
+            return Response(content=json_bytes, media_type="application/json")
+        ttl = max(1, min(60, int(remaining)))
+    elif result.window_state == "active_round":
+        has_live = any(
+            g.status == "live" for group in result.groups for g in group.games
+        )
+        ttl = 10 if has_live else 15
+    else:
+        ttl = 60
+
+    cache_set(cache_key, json_bytes, ttl)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{game_id}")
@@ -340,6 +383,8 @@ async def get_game(
 
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+
+    game.has_stats = await compute_single_has_stats(db, game_id)
 
     current_minute = None
     if game.is_live and game.live_minute is not None:
@@ -404,6 +449,7 @@ async def get_game(
         is_live=game.is_live,
         minute=current_minute,
         half=game.live_half if game.is_live else None,
+        live_phase=game.live_phase if game.is_live else None,
         is_technical=game.is_technical,
         is_schedule_tentative=game.is_schedule_tentative,
         is_featured=game.is_featured,

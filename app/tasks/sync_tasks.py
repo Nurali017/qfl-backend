@@ -3,12 +3,12 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import redis
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, exists
 
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
 from app.services.sync import SyncOrchestrator
-from app.models import Game, GameStatus
+from app.models import Game, GameStatus, GameTeamStats, GamePlayerStats
 from app.config import get_settings
 from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
@@ -54,11 +54,16 @@ async def _sync_live_stats():
                     results_by_season[f"season_{season_id}"] = "skipped"
                     continue
 
+                # Derived has_stats: check actual stats records instead of stored flag
+                has_stats_filter = (
+                    exists().where(GameTeamStats.game_id == Game.id)
+                    | exists().where(GamePlayerStats.game_id == Game.id)
+                )
                 result = await db.execute(
                     select(Game.id).where(
                         Game.season_id == season_id,
                         Game.date >= three_days_ago,
-                        Game.has_stats == True,
+                        has_stats_filter,
                         Game.sync_disabled == False,
                     )
                 )

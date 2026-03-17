@@ -28,8 +28,10 @@ from app.models import Championship
 from app.services.season_participants import resolve_season_participants
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause, resolve_visible_season_id
 from app.services.team_overview import _extract_year
+from app.utils.game_status import compute_game_status
 from app.utils.localization import get_localized_name, get_localized_city, get_localized_field
 from app.utils.error_messages import get_error_message
+from app.utils.has_stats import enrich_games_has_stats
 from app.utils.positions import infer_position_code
 from app.utils.team_logo_fallback import resolve_team_logo_url
 
@@ -253,7 +255,8 @@ async def get_team_games(
     )
 
     result = await db.execute(query)
-    games = result.scalars().all()
+    games = list(result.scalars().all())
+    await enrich_games_has_stats(db, games)
 
     items = []
     for g in games:
@@ -291,6 +294,14 @@ async def get_team_games(
             home_score=g.home_score,
             away_score=g.away_score,
             has_stats=g.has_stats,
+            has_lineup=g.has_lineup,
+            is_live=g.is_live,
+            is_technical=g.is_technical,
+            show_timeline=g.show_timeline,
+            status=compute_game_status(g, for_list=True),
+            minute=g.live_minute if g.is_live else None,
+            half=g.live_half if g.is_live else None,
+            live_phase=g.live_phase if g.is_live else None,
             stadium=stadium_data,
             visitors=g.visitors,
             home_team=home_team,

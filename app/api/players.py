@@ -21,6 +21,7 @@ from app.services.season_visibility import ensure_visible_season_or_404, resolve
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.numbers import sanitize_non_finite_numbers
 from app.utils.team_logo_fallback import resolve_team_logo_url
+from app.utils.has_stats import enrich_games_has_stats
 
 router = APIRouter(prefix="/players", tags=["players"])
 
@@ -225,7 +226,8 @@ async def get_player_games(
         .order_by(Game.date.desc())
         .limit(limit)
     )
-    games = result.scalars().all()
+    games = list(result.scalars().all())
+    await enrich_games_has_stats(db, games)
 
     items = []
     for g in games:
