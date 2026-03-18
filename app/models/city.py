@@ -20,9 +20,9 @@ class City(Base):
     name_kz: Mapped[str | None] = mapped_column(String(255))
     name_en: Mapped[str | None] = mapped_column(String(255))
     country_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("countries.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships

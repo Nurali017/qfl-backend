@@ -75,7 +75,7 @@ class GameEvent(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
 
     # Relationships

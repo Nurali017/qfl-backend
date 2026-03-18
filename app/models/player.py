@@ -48,7 +48,7 @@ class Player(Base):
     top_role_kz: Mapped[str | None] = mapped_column(String(100))
     top_role_en: Mapped[str | None] = mapped_column(String(100))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     @property

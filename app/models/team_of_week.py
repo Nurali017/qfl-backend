@@ -16,9 +16,9 @@ class TeamOfWeek(Base):
     locale: Mapped[str] = mapped_column(String(5), nullable=False, default="ru")
     scheme: Mapped[str | None] = mapped_column(String(20), nullable=True)
     payload: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     season: Mapped["Season"] = relationship("Season")

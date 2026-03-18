@@ -12,6 +12,7 @@ from app.models import Game, GameStatus, GameTeamStats, GamePlayerStats
 from app.config import get_settings
 from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
+from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,7 @@ async def _sync_extended_stats():
     3. Syncs team/player season stats ONLY if new games were processed
     4. Marks games as synced to avoid redundant work
     """
-    now = datetime.utcnow()
+    now = utcnow()
     cutoff = now - timedelta(hours=24)
     season_tours: dict[int, set[int]] = {}
     game_results = []
@@ -377,7 +378,7 @@ async def _sync_extended_stats():
 
 async def _resync_extended_stats(game_ids: list[int]):
     """Resync extended stats for specific games (admin-triggered)."""
-    now = datetime.utcnow()
+    now = utcnow()
     season_tours: dict[int, set[int]] = {}
 
     async with AsyncSessionLocal() as db:

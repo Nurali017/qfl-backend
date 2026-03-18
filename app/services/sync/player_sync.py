@@ -5,13 +5,13 @@ Handles synchronization of player season statistics from SOTA API.
 Player profiles (top_role) are managed locally — no longer synced from SOTA.
 """
 import logging
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
 from app.services.sync.base import BaseSyncService, PLAYER_SEASON_STATS_FIELDS
+from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class PlayerSyncService(BaseSyncService):
                 except (ValueError, TypeError):
                     pass
         count = 0
-        now = datetime.utcnow()
+        now = utcnow()
         for sota_id_str, metrics in combined.items():
             mapping = lookup.get(sota_id_str)
             if not mapping:
@@ -263,7 +263,7 @@ class PlayerSyncService(BaseSyncService):
                     exit_success=stats.get("exit_success"),
                     # Extra stats for unknown fields
                     extra_stats=extra_stats if extra_stats else None,
-                    updated_at=datetime.utcnow(),
+                    updated_at=utcnow(),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["player_id", "season_id"],

@@ -10,10 +10,11 @@ from app.models import (
     Season, Game, ScoreTable, Team, Player, PlayerTeam,
     PlayerSeasonStats, TeamSeasonStats, Country,
     GameEvent, GameEventType, GameTeamStats, GamePlayerStats,
-    PlayerTourStats, TourSyncStatus,
+    PlayerTourStats,
 )
 from app.services.season_filters import get_group_team_ids
 from app.services.season_participants import resolve_season_participants
+from app.services.season_scope import compute_season_stats_scope
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
 from app.utils.localization import get_localized_field
 from app.utils.numbers import to_finite_float
@@ -35,44 +36,6 @@ AMPLUA_TO_POSITION = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 POSITION_TO_AMPLUA = {v: k for k, v in AMPLUA_TO_POSITION.items()}
 
 _ensure_visible_season = ensure_visible_season_or_404
-
-
-async def _compute_stats_scope(
-    db: AsyncSession,
-    season_id: int,
-    season: Season,
-    max_round: int | None = None,
-) -> tuple[int | None, int | None]:
-    """Returns (max_completed_round, effective_max_round).
-
-    effective_max_round caps stats to completed tours for round-robin seasons.
-    For cup/knockout seasons or when no tour is complete, returns None (uncapped).
-
-    Tour readiness is determined by TourSyncStatus marker (persisted after
-    successful aggregate sync), not by date cutoff.
-    """
-    # Highest tour with a TourSyncStatus marker
-    completed_round_query = (
-        select(TourSyncStatus.tour)
-        .where(TourSyncStatus.season_id == season_id)
-        .order_by(TourSyncStatus.tour.desc())
-        .limit(1)
-    )
-    max_completed_round = (await db.execute(completed_round_query)).scalar()
-
-    # Resolve effective_max_round
-    is_round_robin = season.tournament_format == "round_robin" or (
-        season.tournament_format is None and season.has_table
-    )
-    if max_round is not None:
-        effective_max_round = max_round
-    elif is_round_robin:
-        # Cap to completed tours; 0 means "no tour completed yet" → filters out all games
-        effective_max_round = max_completed_round if max_completed_round is not None else 0
-    else:
-        effective_max_round = None  # cup/knockout — no tour restriction
-
-    return max_completed_round, effective_max_round
 
 
 # Available sort fields for player stats
@@ -708,7 +671,7 @@ async def get_season_statistics(
         raise HTTPException(status_code=404, detail="Season not found")
 
     # Compute scope: completed round and effective round cap
-    max_completed_round, effective_max_round = await _compute_stats_scope(
+    max_completed_round, effective_max_round = await compute_season_stats_scope(
         db, season_id, season, max_round
     )
 
@@ -971,7 +934,7 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
-    _, effective_max_round = await _compute_stats_scope(db, season_id, season)
+    _, effective_max_round = await compute_season_stats_scope(db, season_id, season)
 
     game_filters = [
         Game.season_id == season_id,

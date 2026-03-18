@@ -20,4 +20,4 @@ class TourSyncStatus(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     season_id: Mapped[int] = mapped_column(Integer, ForeignKey("seasons.id"))
     tour: Mapped[int] = mapped_column(Integer, nullable=False)
-    synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

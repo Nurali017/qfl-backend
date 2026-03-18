@@ -19,9 +19,9 @@ class Country(Base):
     name_en: Mapped[str | None] = mapped_column(String(100))
     flag_url: Mapped[str | None] = mapped_column(FileUrlType)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships

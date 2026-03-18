@@ -57,6 +57,7 @@ class AttendanceByTour(BaseModel):
 
 class AttendanceResponse(BaseModel):
     season_id: int
+    max_completed_round: int | None = None
     summary: AttendanceSummary
     top_matches: list[TopAttendanceMatch]
     by_team: list[AttendanceByTeam]

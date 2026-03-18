@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Game, GameStatus, Stadium
+from app.utils.timestamps import ensure_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,7 @@ async def fetch_and_update_weather(db: AsyncSession) -> dict:
 
     today = date.today()
     cutoff = today + timedelta(days=16)
-    three_hours_ago = datetime.utcnow() - timedelta(hours=3)
+    three_hours_ago = utcnow() - timedelta(hours=3)
 
     result = await db.execute(
         select(Game)
@@ -173,7 +174,8 @@ async def fetch_and_update_weather(db: AsyncSession) -> dict:
 
     async with httpx.AsyncClient(timeout=10) as client:
         for game in games:
-            if game.weather_fetched_at and game.weather_fetched_at > three_hours_ago:
+            weather_fetched_at = ensure_utc(game.weather_fetched_at)
+            if weather_fetched_at and weather_fetched_at > three_hours_ago:
                 skipped += 1
                 continue
 
@@ -200,7 +202,7 @@ async def fetch_and_update_weather(db: AsyncSession) -> dict:
                     temp, condition = weather
                     game.weather_temp = temp
                     game.weather_condition = condition
-                    game.weather_fetched_at = datetime.utcnow()
+                    game.weather_fetched_at = utcnow()
                     updated += 1
                 else:
                     skipped += 1

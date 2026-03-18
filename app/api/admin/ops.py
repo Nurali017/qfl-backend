@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -19,6 +17,7 @@ from app.services.season_visibility import get_current_season_id
 from app.services.sota_client import SotaClient, get_sota_client
 from app.services.sync import GameSyncService, SyncOrchestrator
 from app.tasks.sync_tasks import resync_extended_stats_task, backfill_player_tour_stats_task
+from app.utils.timestamps import utcnow
 router = APIRouter(prefix="/ops", tags=["admin-ops"])
 
 
@@ -515,7 +514,7 @@ async def generate_preview(
         if preview_ru or preview_kz:
             game.preview_ru = preview_ru
             game.preview_kz = preview_kz
-            game.preview_generated_at = datetime.utcnow()
+            game.preview_generated_at = utcnow()
             await db.commit()
 
         return SyncResponse(

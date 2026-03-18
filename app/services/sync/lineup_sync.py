@@ -35,6 +35,7 @@ from app.utils.lineup_feed_parser import (
     parse_team_lineup_feed,
 )
 from app.utils.lineup_positions import derive_field_positions, infer_formation
+from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class LineupSyncService(BaseSyncService):
             sota_id=sota_id,
             first_name=first_name,
             last_name=last_name,
-            updated_at=datetime.utcnow(),
+            updated_at=utcnow(),
         )
         self.db.add(new_player)
         await self.db.flush()
@@ -697,7 +698,7 @@ class LineupSyncService(BaseSyncService):
                 result["positions_updated"] += recalc
 
         if mode == "live_read" and touch_live_sync_timestamp:
-            game.lineup_live_synced_at = datetime.utcnow()
+            game.lineup_live_synced_at = utcnow()
 
         total_updates = (
             result["positions_updated"]
@@ -884,7 +885,7 @@ class LineupSyncService(BaseSyncService):
                 .values(
                     has_lineup=True,
                     lineup_source="sota_live",
-                    updated_at=datetime.utcnow(),
+                    updated_at=utcnow(),
                 )
             )
 

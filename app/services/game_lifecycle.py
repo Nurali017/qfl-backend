@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Game, GameStatus
-from app.utils.timestamps import utcnow
+from app.utils.timestamps import ensure_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class GameLifecycleService:
 
         # --- repair-tail (the 16-Mar incident path) ---
         if game.status == GameStatus.finished and game.finished_at is None:
-            game.finished_at = game.updated_at or utcnow()
+            game.finished_at = ensure_utc(game.updated_at) or utcnow()
             game.live_minute = None
             game.live_half = None
             game.live_phase = None

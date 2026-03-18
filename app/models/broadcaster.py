@@ -18,8 +18,8 @@ class Broadcaster(Base):
     website: Mapped[str | None] = mapped_column(String(500))
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
-    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     # Relationships
     game_assignments: Mapped[list["GameBroadcaster"]] = relationship(

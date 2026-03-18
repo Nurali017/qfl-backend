@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Game, GameStatus, Team
 from app.services.telegram import send_telegram_message
+from app.utils.timestamps import ensure_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +276,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
 
     today = date.today()
     cutoff = today + timedelta(days=14)
-    three_hours_ago = datetime.utcnow() - timedelta(hours=3)
+    three_hours_ago = utcnow() - timedelta(hours=3)
 
     result = await db.execute(
         select(Game)
@@ -299,7 +300,8 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
     async with httpx.AsyncClient(timeout=15) as client:
         for game in games:
             # Skip if recently searched
-            if game.ticket_url_fetched_at and game.ticket_url_fetched_at > three_hours_ago:
+            fetched_at = ensure_utc(game.ticket_url_fetched_at)
+            if fetched_at and fetched_at > three_hours_ago:
                 skipped += 1
                 continue
 
@@ -350,7 +352,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                             f'\U0001f517 Ссылка: <a href="{ticket_url}">Купить билеты</a>'
                         )
 
-                game.ticket_url_fetched_at = datetime.utcnow()
+                game.ticket_url_fetched_at = utcnow()
                 searched += 1
 
                 # Rate limit: SerpAPI allows ~1 req/sec on free plan

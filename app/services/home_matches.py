@@ -12,7 +12,7 @@ Selection rules:
 """
 
 import logging
-from datetime import date, datetime, time as time_type, timedelta, timezone
+from datetime import date, datetime, time as time_type, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -24,6 +24,7 @@ from app.schemas.game import HomeMatchesWidgetResponse
 from app.services.season_visibility import is_season_visible_clause
 from app.utils.game_grouping import group_games_by_date
 from app.utils.has_stats import enrich_games_has_stats
+from app.utils.timestamps import to_almaty
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,7 @@ async def _load_tours(
 def _game_finished_at(game: Game) -> datetime | None:
     """Effective finished-at in Asia/Almaty."""
     if game.finished_at is not None:
-        # finished_at stored as naive UTC
-        return game.finished_at.replace(tzinfo=timezone.utc).astimezone(ALMATY_TZ)
+        return to_almaty(game.finished_at)
     # Fallback: scheduled date+time (Almaty local)
     t = game.time if game.time is not None else time_type(23, 59, 59)
     return datetime.combine(game.date, t, tzinfo=ALMATY_TZ)

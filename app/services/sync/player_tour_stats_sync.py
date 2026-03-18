@@ -5,7 +5,6 @@ Syncs cumulative per-tour player statistics from SOTA API v2.
 """
 import asyncio
 import logging
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -13,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models import Player, PlayerTeam
 from app.models.player_tour_stats import PlayerTourStats
 from app.services.sync.base import BaseSyncService, PLAYER_SEASON_STATS_FIELDS
+from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class PlayerTourStatsSyncService(BaseSyncService):
                     if k not in PLAYER_SEASON_STATS_FIELDS
                 }
 
-                now = datetime.utcnow()
+                now = utcnow()
                 stmt = insert(PlayerTourStats).values(
                     player_id=player_id,
                     season_id=season_id,

@@ -27,9 +27,9 @@ class SeasonParticipant(Base):
     fine_points: Mapped[int] = mapped_column(Integer, default=0)
     stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships
