@@ -353,6 +353,9 @@ async def get_league_performance(
     """
     await _ensure_visible_season(db, season_id)
 
+    season = await db.get(Season, season_id)
+    total_rounds = season.total_rounds if season else None
+
     filter_team_ids: set[int] | None = None
     if team_ids:
         filter_team_ids = {
@@ -374,7 +377,7 @@ async def get_league_performance(
     games = result.scalars().all()
 
     if not games:
-        return {"season_id": season_id, "max_tour": 0, "teams": []}
+        return {"season_id": season_id, "max_tour": 0, "total_rounds": total_rounds, "teams": []}
 
     max_tour = max(g.tour for g in games)
 
@@ -450,4 +453,4 @@ async def get_league_performance(
         key=lambda t: t["positions"][-1] if t["positions"] else 999
     )
 
-    return {"season_id": season_id, "max_tour": max_tour, "teams": teams_result}
+    return {"season_id": season_id, "max_tour": max_tour, "total_rounds": total_rounds, "teams": teams_result}

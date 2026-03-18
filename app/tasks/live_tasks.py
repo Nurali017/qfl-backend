@@ -16,7 +16,7 @@ import time
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, func, case
 
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
@@ -458,6 +458,34 @@ async def _post_finish_followup(game_id: int):
                     except Exception:
                         logger.exception("Tour completion check dispatch failed")
 
+                # 2b. Team-of-week sync: all games in tour completed?
+                try:
+                    TERMINAL = {GameStatus.finished, GameStatus.technical_defeat}
+                    tour_check = await db.execute(
+                        select(
+                            func.count().label("total"),
+                            func.count(case(
+                                (
+                                    Game.status.in_(TERMINAL)
+                                    & Game.home_score.isnot(None)
+                                    & Game.away_score.isnot(None),
+                                    1,
+                                ),
+                            )).label("completed"),
+                        ).where(
+                            Game.season_id == game.season_id,
+                            Game.tour == game.tour,
+                        )
+                    )
+                    row = tour_check.one()
+                    if row.total > 0 and row.completed == row.total:
+                        from app.tasks.sync_tasks import _dispatch_tow_sync_for_tours
+                        await _dispatch_tow_sync_for_tours(
+                            game.season_id, [game.tour], "initial", countdown=60
+                        )
+                except Exception:
+                    logger.exception("Team-of-week immediate sync dispatch failed")
+
             # 3. Extended stats: immediate if 24h+ old, else schedule
             finished_at = ensure_naive_utc(game.finished_at)
             if finished_at:
@@ -601,6 +629,11 @@ async def _sync_extended_aggregates_for_season(
             await db.commit()
             for tour in marked_tours:
                 await maybe_trigger_tour_revalidation(db, season_id, tour)
+
+        # Dispatch team-of-week re-sync with extended stats data
+        if marked_tours:
+            from app.tasks.sync_tasks import _dispatch_tow_sync_for_tours
+            await _dispatch_tow_sync_for_tours(season_id, marked_tours, "extended")
 
     return {
         "season_id": season_id,

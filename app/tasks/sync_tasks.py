@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import redis
+import redis as redis_lib
 from sqlalchemy import select, func, case, exists
 
 from app.tasks import celery_app
@@ -16,6 +16,96 @@ from app.utils.async_celery import run_async
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+async def _sync_team_of_week_for_tour(season_id: int, tour: int) -> dict:
+    """Sync team-of-week for a single tour via SyncOrchestrator.
+
+    Returns dict with 'needs_retry' flag based on sync completeness.
+    """
+    async with AsyncSessionLocal() as db:
+        try:
+            orchestrator = SyncOrchestrator(db)
+            result = await orchestrator.sync_team_of_week(
+                season_id, tour_keys=[f"tour_{tour}"]
+            )
+
+            # Skipped (disabled season) — no retry needed
+            if result.get("skipped"):
+                logger.info(
+                    "Team-of-week sync skipped (disabled): season=%s tour=%s",
+                    season_id, tour,
+                )
+                return {**result, "needs_retry": False}
+
+            tours_synced = result.get("tours_synced", 0)
+            tours_empty = result.get("tours_empty", 0)
+            tours_skipped = result.get("tours_skipped", 0)
+
+            # Full success: both locales synced, no empty/skipped
+            needs_retry = (
+                tours_synced < 2 or tours_empty > 0 or tours_skipped > 0
+            )
+            logger.info(
+                "Team-of-week sync result: season=%s tour=%s synced=%d empty=%d skipped=%d needs_retry=%s",
+                season_id, tour, tours_synced, tours_empty, tours_skipped, needs_retry,
+            )
+            return {**result, "needs_retry": needs_retry}
+        except Exception:
+            logger.exception(
+                "Team-of-week sync error: season=%s tour=%s", season_id, tour
+            )
+            return {"needs_retry": True, "error": True}
+
+
+@celery_app.task(
+    name="app.tasks.sync_tasks.sync_team_of_week_for_tour",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=600,  # 10 min
+)
+def sync_team_of_week_for_tour(self, season_id: int, tour: int):
+    """Celery task: Sync team-of-week for a specific tour with retries."""
+    result = run_async(_sync_team_of_week_for_tour(season_id, tour))
+    if result.get("needs_retry"):
+        try:
+            raise self.retry(
+                exc=Exception(f"SOTA partial/empty for s{season_id} t{tour}")
+            )
+        except self.MaxRetriesExceededError:
+            run_async(send_telegram_message(
+                f"❌ Team-of-week sync failed after retries: season {season_id} tour {tour}"
+            ))
+            return {**result, "final_status": "failed"}
+    if result.get("tours_synced", 0) > 0:
+        run_async(send_telegram_message(
+            f"⚽ Team of week synced: season {season_id} tour {tour}"
+        ))
+    return {**result, "final_status": "success"}
+
+
+async def _dispatch_tow_sync_for_tours(
+    season_id: int, tours: list[int], suffix: str, countdown: int = 0
+):
+    """Dispatch team-of-week sync for completed tours with Redis dedupe.
+
+    suffix: 'initial' or 'extended' — for separate dedupe keys
+    countdown: delay in seconds before task execution
+    """
+    r = redis_lib.from_url(settings.redis_url)
+    for tour in tours:
+        key = f"qfl:tow_sync:{season_id}:{tour}:{suffix}"
+        if r.set(key, "1", nx=True, ex=86400):
+            if countdown > 0:
+                sync_team_of_week_for_tour.apply_async(
+                    args=[season_id, tour], countdown=countdown
+                )
+            else:
+                sync_team_of_week_for_tour.delay(season_id, tour)
+            logger.info(
+                "Dispatched team-of-week sync: season=%s tour=%s (%s, countdown=%ds)",
+                season_id, tour, suffix, countdown,
+            )
 
 
 async def _sync_extended_aggregate_bundle(
@@ -88,6 +178,10 @@ async def _sync_extended_aggregate_bundle(
             await db2.commit()
             for tour in marked_tours:
                 await maybe_trigger_tour_revalidation(db2, season_id, tour)
+
+        # Dispatch team-of-week re-sync with extended stats data
+        if marked_tours:
+            await _dispatch_tow_sync_for_tours(season_id, marked_tours, "extended")
 
     return {
         "teams": team_count,
@@ -382,7 +476,7 @@ async def _check_tour_completion():
     from app.models.tour_sync_status import TourSyncStatus
     from app.tasks.tour_readiness import maybe_trigger_tour_revalidation
 
-    r = redis.from_url(settings.redis_url)
+    r = redis_lib.from_url(settings.redis_url)
     triggered = []
 
     async with AsyncSessionLocal() as db:
