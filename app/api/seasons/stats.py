@@ -850,13 +850,16 @@ async def get_season_statistics(
     pa_row = pa_result.one()
     if pa_row.avg_pass_accuracy is not None:
         pass_accuracy = round(float(pa_row.avg_pass_accuracy), 1)
-    else:
+    elif matches_played > 0:
         # Fallback: season-level aggregate from TeamSeasonStats
+        # Only when scoped matches exist but GameTeamStats lacks pass_accuracy
         pa_fallback = await db.execute(
             select(func.avg(TeamSeasonStats.pass_ratio))
             .where(TeamSeasonStats.season_id == season_id)
         )
         pass_accuracy = round(float(pa_fallback.scalar() or 0), 1)
+    else:
+        pass_accuracy = 0.0
 
     # Query 4: Shots on target % from GameTeamStats
     shots_query = select(
