@@ -1030,6 +1030,112 @@ class TestSeasonsAPI:
         assert data["total_goals"] == 0
         assert data["max_completed_round"] is None
 
+    async def test_statistics_pass_accuracy_zero_when_no_matches_in_scope(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """pass_accuracy must be 0.0 when matches_played=0, even if TeamSeasonStats has data."""
+        from app.models import Season, Game, TeamSeasonStats
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=310,
+            name="2026 PA leak",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        # No TourSyncStatus → effective_max_round=0 → matches_played=0
+        test_session.add(Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=310,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
+            away_score=0,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        ))
+        # TeamSeasonStats with pass_ratio — this must NOT leak into the response
+        test_session.add_all([
+            TeamSeasonStats(season_id=310, team_id=sample_teams[0].id, games_played=1, pass_ratio=77.9),
+            TeamSeasonStats(season_id=310, team_id=sample_teams[1].id, games_played=1, pass_ratio=68.2),
+        ])
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/310/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["matches_played"] == 0
+        assert data["pass_accuracy"] == 0.0
+
+    async def test_statistics_pass_accuracy_fallback_with_scoped_matches(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """When scoped matches exist but GameTeamStats lacks pass_accuracy, fallback to TeamSeasonStats."""
+        from app.models import Season, Game, GameTeamStats, TeamSeasonStats
+        from app.models.tour_sync_status import TourSyncStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=311,
+            name="2026 PA fallback",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        g = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=311,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
+            away_score=0,
+            visitors=5000,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        test_session.add(g)
+        await test_session.flush()
+
+        # GameTeamStats WITHOUT pass_accuracy
+        test_session.add_all([
+            GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=3, pass_accuracy=None),
+            GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=2, pass_accuracy=None),
+        ])
+        # TeamSeasonStats WITH pass_ratio — fallback should work since matches_played > 0
+        test_session.add_all([
+            TeamSeasonStats(season_id=311, team_id=sample_teams[0].id, games_played=1, pass_ratio=80.0),
+            TeamSeasonStats(season_id=311, team_id=sample_teams[1].id, games_played=1, pass_ratio=70.0),
+        ])
+        test_session.add(TourSyncStatus(season_id=311, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/311/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["matches_played"] == 1
+        assert data["pass_accuracy"] == 75.0  # avg(80.0, 70.0)
+
     async def test_statistics_round_robin_caps_to_completed_tour(
         self, client: AsyncClient, test_session, sample_championship, sample_teams,
     ):
