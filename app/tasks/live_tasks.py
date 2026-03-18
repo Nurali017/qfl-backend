@@ -584,6 +584,24 @@ async def _sync_extended_aggregates_for_season(
             await db.rollback()
             raise
 
+        # Mark completed tours and trigger revalidation
+        from app.tasks.tour_readiness import mark_tour_synced, maybe_trigger_tour_revalidation
+
+        season_syncs_ok = not any(
+            "team_season_stats" in e or "player_season_stats" in e for e in errors
+        )
+        marked_tours: list[int] = []
+        for tour in sorted(tours):
+            tour_sync_ok = not any(f"player_tour_stats[{tour}]" in e for e in errors)
+            if season_syncs_ok and tour_sync_ok:
+                await mark_tour_synced(db, season_id, tour)
+                marked_tours.append(tour)
+
+        if marked_tours:
+            await db.commit()
+            for tour in marked_tours:
+                await maybe_trigger_tour_revalidation(db, season_id, tour)
+
     return {
         "season_id": season_id,
         "teams": team_count,
@@ -594,11 +612,12 @@ async def _sync_extended_aggregates_for_season(
 
 
 async def _check_finished_without_timestamp():
-    """Guardrail: detect games with status=finished but finished_at=NULL.
+    """Guardrail: auto-repair games with status=finished but finished_at=NULL.
 
-    Sends a deduped Telegram alert. Does NOT auto-fix.
+    Uses GameLifecycleService.finish_live() repair-tail path.
+    Sends a Telegram notification with results.
     """
-    from app.utils.live_flag import get_redis
+    from app.services.game_lifecycle import GameLifecycleService
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -612,24 +631,25 @@ async def _check_finished_without_timestamp():
         if not broken_ids:
             return {"broken": 0}
 
-        # Dedupe: alert once per broken game (6h TTL)
-        redis = await get_redis()
-        new_broken = []
+        repaired, failed = [], []
         for gid in broken_ids:
-            key = f"qfl:guardrail:broken_finish:{gid}"
-            if await redis.set(key, "1", nx=True, ex=21600):
-                new_broken.append(gid)
+            try:
+                service = GameLifecycleService(db)
+                await service.finish_live(gid)
+                repaired.append(gid)
+            except Exception:
+                logger.exception("Auto-repair failed for game %s", gid)
+                failed.append(gid)
 
-        if new_broken:
-            await send_telegram_message(
-                f"⚠️ Guardrail: {len(new_broken)} game(s) with status=finished "
-                f"but finished_at=NULL:\n"
-                + "\n".join(f"  Game #{gid}" for gid in new_broken[:20])
-                + ("\n  ..." if len(new_broken) > 20 else "")
-                + "\n\nUse POST /transition with action=finish_live to repair."
-            )
+        if repaired or failed:
+            msg_parts = [f"🔧 Auto-repaired {len(repaired)} game(s) with broken finished_at."]
+            if repaired:
+                msg_parts.append("Repaired: " + ", ".join(f"#{gid}" for gid in repaired[:20]))
+            if failed:
+                msg_parts.append(f"{len(failed)} failed: " + ", ".join(f"#{gid}" for gid in failed[:20]))
+            await send_telegram_message("\n".join(msg_parts))
 
-        return {"broken": len(broken_ids), "alerted": len(new_broken)}
+        return {"broken": len(broken_ids), "repaired": len(repaired), "failed": len(failed)}
 
 
 @celery_app.task(name="app.tasks.live_tasks.post_finish_followup")

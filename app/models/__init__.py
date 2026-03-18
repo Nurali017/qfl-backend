@@ -22,6 +22,7 @@ from app.models.coach import Coach, TeamCoach, CoachRole
 from app.models.game_referee import GameReferee, RefereeRole
 from app.models.game_lineup import GameLineup, LineupType
 from app.models.game_event import GameEvent, GameEventType
+from app.models.tour_sync_status import TourSyncStatus
 
 # Legacy migration models
 from app.models.championship import Championship
@@ -69,6 +70,7 @@ __all__ = [
     "LineupType",
     "GameEvent",
     "GameEventType",
+    "TourSyncStatus",
     # Legacy migration models
     "Championship",
     "City",

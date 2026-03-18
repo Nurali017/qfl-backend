@@ -1,7 +1,5 @@
 """Season statistics endpoints: player stats, team stats, statistics summary, goals by period."""
 
-from datetime import date, timedelta
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, nulls_last, case, distinct, extract, text
@@ -12,6 +10,7 @@ from app.models import (
     Season, Game, ScoreTable, Team, Player, PlayerTeam,
     PlayerSeasonStats, TeamSeasonStats, Country,
     GameEvent, GameEventType, GameTeamStats, GamePlayerStats,
+    PlayerTourStats, TourSyncStatus,
 )
 from app.services.season_filters import get_group_team_ids
 from app.services.season_participants import resolve_season_participants
@@ -36,6 +35,44 @@ AMPLUA_TO_POSITION = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 POSITION_TO_AMPLUA = {v: k for k, v in AMPLUA_TO_POSITION.items()}
 
 _ensure_visible_season = ensure_visible_season_or_404
+
+
+async def _compute_stats_scope(
+    db: AsyncSession,
+    season_id: int,
+    season: Season,
+    max_round: int | None = None,
+) -> tuple[int | None, int | None]:
+    """Returns (max_completed_round, effective_max_round).
+
+    effective_max_round caps stats to completed tours for round-robin seasons.
+    For cup/knockout seasons or when no tour is complete, returns None (uncapped).
+
+    Tour readiness is determined by TourSyncStatus marker (persisted after
+    successful aggregate sync), not by date cutoff.
+    """
+    # Highest tour with a TourSyncStatus marker
+    completed_round_query = (
+        select(TourSyncStatus.tour)
+        .where(TourSyncStatus.season_id == season_id)
+        .order_by(TourSyncStatus.tour.desc())
+        .limit(1)
+    )
+    max_completed_round = (await db.execute(completed_round_query)).scalar()
+
+    # Resolve effective_max_round
+    is_round_robin = season.tournament_format == "round_robin" or (
+        season.tournament_format is None and season.has_table
+    )
+    if max_round is not None:
+        effective_max_round = max_round
+    elif is_round_robin:
+        # Cap to completed tours; 0 means "no tour completed yet" → filters out all games
+        effective_max_round = max_completed_round if max_completed_round is not None else 0
+    else:
+        effective_max_round = None  # cup/knockout — no tour restriction
+
+    return max_completed_round, effective_max_round
 
 
 # Available sort fields for player stats
@@ -670,40 +707,20 @@ async def get_season_statistics(
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
+    # Compute scope: completed round and effective round cap
+    max_completed_round, effective_max_round = await _compute_stats_scope(
+        db, season_id, season, max_round
+    )
+
     # Base game filters (reused across queries)
-    # Exclude recent games (today + yesterday) — they stay in "upcoming" for +1 day
-    stats_cutoff = date.today() - timedelta(days=1)
     game_base_filters = [
         Game.season_id == season_id,
         Game.home_score.isnot(None),
         Game.away_score.isnot(None),
-        Game.date < stats_cutoff,
+        Game.extended_stats_synced_at.isnot(None),
     ]
-    if max_round is not None:
-        game_base_filters.append(Game.tour <= max_round)
-
-    # Query 0: Max completed round — highest tour where ALL games have scores
-    # AND all games are past the stats cutoff date (no partial-tour leak)
-    completed_round_query = (
-        select(Game.tour)
-        .where(
-            Game.season_id == season_id,
-            Game.tour.isnot(None),
-        )
-        .group_by(Game.tour)
-        .having(
-            # Every game in the tour has scores
-            func.count() == func.count(
-                case((Game.home_score.isnot(None) & Game.away_score.isnot(None), 1))
-            ),
-            # Every game in the tour is past the cutoff
-            func.max(Game.date) < stats_cutoff,
-        )
-        .order_by(Game.tour.desc())
-        .limit(1)
-    )
-    completed_round_result = await db.execute(completed_round_query)
-    max_completed_round = completed_round_result.scalar()
+    if effective_max_round is not None:
+        game_base_filters.append(Game.tour <= effective_max_round)
 
     # Query 1: Match stats from Game table
     game_stats_query = select(
@@ -744,11 +761,11 @@ async def get_season_statistics(
         Game, GameEvent.game_id == Game.id
     ).where(
         Game.season_id == season_id,
-        Game.date < stats_cutoff,
+        Game.extended_stats_synced_at.isnot(None),
         GameEvent.event_type == GameEventType.penalty,
     )
-    if max_round is not None:
-        penalty_scored_query = penalty_scored_query.where(Game.tour <= max_round)
+    if effective_max_round is not None:
+        penalty_scored_query = penalty_scored_query.where(Game.tour <= effective_max_round)
     penalty_result = await db.execute(penalty_scored_query)
     penalties_scored = penalty_result.scalar() or 0
 
@@ -757,11 +774,11 @@ async def get_season_statistics(
         Game, GameEvent.game_id == Game.id
     ).where(
         Game.season_id == season_id,
-        Game.date < stats_cutoff,
+        Game.extended_stats_synced_at.isnot(None),
         GameEvent.event_type == GameEventType.red_card,
     )
-    if max_round is not None:
-        red_card_count_query = red_card_count_query.where(Game.tour <= max_round)
+    if effective_max_round is not None:
+        red_card_count_query = red_card_count_query.where(Game.tour <= effective_max_round)
     red_card_result = await db.execute(red_card_count_query)
     total_red_cards = red_card_result.scalar() or 0
 
@@ -770,24 +787,57 @@ async def get_season_statistics(
         Game, GameEvent.game_id == Game.id
     ).where(
         Game.season_id == season_id,
-        Game.date < stats_cutoff,
+        Game.extended_stats_synced_at.isnot(None),
         GameEvent.event_type == GameEventType.second_yellow,
     )
-    if max_round is not None:
-        second_yellow_count_query = second_yellow_count_query.where(Game.tour <= max_round)
+    if effective_max_round is not None:
+        second_yellow_count_query = second_yellow_count_query.where(Game.tour <= effective_max_round)
     second_yellow_result = await db.execute(second_yellow_count_query)
     total_second_yellows = second_yellow_result.scalar() or 0
 
-    # Query 3a: xG from TeamSeasonStats (no per-game xG available)
-    season_agg_query = select(
-        func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
-        func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
-    ).where(TeamSeasonStats.season_id == season_id)
-    season_agg_result = await db.execute(season_agg_query)
-    season_agg_row = season_agg_result.one()
-    total_team_games = int(season_agg_row.total_team_games or 0)
-    total_xg = float(season_agg_row.total_xg or 0)
-    avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
+    # Query 3a: avg xG per match — round-aware via PlayerTourStats when capped
+    if effective_max_round is not None:
+        # Check if PlayerTourStats rows exist for this tour (row count, not xG sum)
+        pts_count_query = select(func.count()).select_from(PlayerTourStats).where(
+            PlayerTourStats.season_id == season_id,
+            PlayerTourStats.tour == effective_max_round,
+        )
+        pts_count = (await db.execute(pts_count_query)).scalar() or 0
+
+        if pts_count > 0:
+            # Rows exist — use cumulative xG (zero is a valid value)
+            xg_query = select(
+                func.coalesce(func.sum(PlayerTourStats.xg), 0).label("total_xg"),
+            ).where(
+                PlayerTourStats.season_id == season_id,
+                PlayerTourStats.tour == effective_max_round,
+            )
+            total_xg = float((await db.execute(xg_query)).scalar() or 0)
+            avg_xg_per_match = round(total_xg / matches_played, 2) if matches_played > 0 else 0.0
+        elif matches_played > 0:
+            # FALLBACK: player_tour_stats not yet synced for this round
+            season_agg_query = select(
+                func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
+                func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
+            ).where(TeamSeasonStats.season_id == season_id)
+            season_agg_result = await db.execute(season_agg_query)
+            season_agg_row = season_agg_result.one()
+            total_team_games = int(season_agg_row.total_team_games or 0)
+            total_xg = float(season_agg_row.total_xg or 0)
+            avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
+        else:
+            avg_xg_per_match = 0.0
+    else:
+        # Uncapped: use TeamSeasonStats (current behavior)
+        season_agg_query = select(
+            func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
+            func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
+        ).where(TeamSeasonStats.season_id == season_id)
+        season_agg_result = await db.execute(season_agg_query)
+        season_agg_row = season_agg_result.one()
+        total_team_games = int(season_agg_row.total_team_games or 0)
+        total_xg = float(season_agg_row.total_xg or 0)
+        avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
 
     # Query 3b: Pass accuracy — prefer per-game, fallback to season aggregate
     pa_query = select(
@@ -824,10 +874,10 @@ async def get_season_statistics(
         Game.season_id == season_id,
         Game.home_score == 0,
         Game.away_score == 0,
-        Game.date < stats_cutoff,
+        Game.extended_stats_synced_at.isnot(None),
     ]
-    if max_round is not None:
-        clean_sheets_filters.append(Game.tour <= max_round)
+    if effective_max_round is not None:
+        clean_sheets_filters.append(Game.tour <= effective_max_round)
     clean_sheets_query = select(
         func.count().label("clean_sheets"),
     ).where(*clean_sheets_filters)
@@ -918,14 +968,19 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
-    stats_cutoff = date.today() - timedelta(days=1)
+    _, effective_max_round = await _compute_stats_scope(db, season_id, season)
+
+    game_filters = [
+        Game.season_id == season_id,
+        Game.home_score.isnot(None),
+        Game.away_score.isnot(None),
+        Game.extended_stats_synced_at.isnot(None),
+    ]
+    if effective_max_round is not None:
+        game_filters.append(Game.tour <= effective_max_round)
+
     matches_played_result = await db.execute(
-        select(func.count()).select_from(Game).where(
-            Game.season_id == season_id,
-            Game.home_score.isnot(None),
-            Game.away_score.isnot(None),
-            Game.date < stats_cutoff,
-        )
+        select(func.count()).select_from(Game).where(*game_filters)
     )
     matches_played = matches_played_result.scalar() or 0
 
@@ -940,10 +995,7 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
         )
         .join(Game, GameEvent.game_id == Game.id)
         .where(
-            Game.season_id == season_id,
-            Game.home_score.isnot(None),
-            Game.away_score.isnot(None),
-            Game.date < stats_cutoff,
+            *game_filters,
             GameEvent.event_type == GameEventType.goal,
         )
     )

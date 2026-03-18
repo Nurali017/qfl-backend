@@ -70,6 +70,25 @@ async def _sync_extended_aggregate_bundle(
             await db.rollback()
             raise
 
+    # Mark completed tours and trigger revalidation
+    from app.tasks.tour_readiness import mark_tour_synced, maybe_trigger_tour_revalidation
+
+    season_syncs_ok = not any(
+        "team_season_stats" in e or "player_season_stats" in e for e in errors
+    )
+    async with AsyncSessionLocal() as db2:
+        marked_tours: list[int] = []
+        for tour in sorted(tours):
+            tour_sync_ok = not any(f"player_tour_stats[{tour}]" in e for e in errors)
+            if season_syncs_ok and tour_sync_ok:
+                await mark_tour_synced(db2, season_id, tour)
+                marked_tours.append(tour)
+
+        if marked_tours:
+            await db2.commit()
+            for tour in marked_tours:
+                await maybe_trigger_tour_revalidation(db2, season_id, tour)
+
     return {
         "teams": team_count,
         "players": player_count,
@@ -355,76 +374,30 @@ def sync_extended_stats():
 
 
 async def _check_tour_completion():
-    """
-    Check if any tour just completed all games, schedule revalidation in 24h.
+    """Backstop: pick up any marked tours that missed revalidation.
 
-    A tour is "just completed" if all its games are finished and the last
-    game finished within the last hour.
+    Scans TourSyncStatus for tours with markers but no Redis dedupe key,
+    and triggers revalidation via the unified helper.
     """
+    from app.models.tour_sync_status import TourSyncStatus
+    from app.tasks.tour_readiness import maybe_trigger_tour_revalidation
+
     r = redis.from_url(settings.redis_url)
-    now = datetime.utcnow()
-    one_hour_ago = now - timedelta(hours=1)
+    triggered = []
 
     async with AsyncSessionLocal() as db:
-        # Find (season_id, tour) pairs where ALL games are finished
-        # and the last game finished within the last hour
         result = await db.execute(
-            select(
-                Game.season_id,
-                Game.tour,
-                func.count().label("total"),
-                func.count(
-                    case((Game.status == GameStatus.finished, 1))
-                ).label("finished_count"),
-                func.max(Game.finished_at).label("last_finished"),
-            )
-            .where(
-                Game.season_id.in_(settings.sync_season_ids),
-                Game.tour.isnot(None),
-            )
-            .group_by(Game.season_id, Game.tour)
-            .having(
-                # All games finished
-                func.count() == func.count(
-                    case((Game.status == GameStatus.finished, 1))
-                ),
-                # Last game finished within the last hour
-                func.max(Game.finished_at) >= one_hour_ago,
-            )
+            select(TourSyncStatus.season_id, TourSyncStatus.tour)
+            .where(TourSyncStatus.season_id.in_(settings.sync_season_ids))
         )
-        completed_tours = result.fetchall()
+        for row in result.all():
+            redis_key = f"tour_reval:{row.season_id}:{row.tour}"
+            if not r.exists(redis_key):
+                ok = await maybe_trigger_tour_revalidation(db, row.season_id, row.tour)
+                if ok:
+                    triggered.append({"season_id": row.season_id, "tour": row.tour})
 
-        scheduled = []
-        for row in completed_tours:
-            season_id, tour = row.season_id, row.tour
-            redis_key = f"tour_reval:{season_id}:{tour}"
-
-            # Skip if already scheduled
-            if r.exists(redis_key):
-                logger.info("Revalidation already scheduled for season %d tour %d", season_id, tour)
-                continue
-
-            # Mark as scheduled (48h TTL to prevent duplicates)
-            r.set(redis_key, "1", ex=48 * 3600)
-
-            # Schedule revalidation in 24h
-            trigger_stats_revalidation.apply_async(
-                eta=now + timedelta(hours=24),
-                kwargs={"season_id": season_id, "tour": tour},
-            )
-            scheduled.append({"season_id": season_id, "tour": tour})
-            logger.info(
-                "Scheduled stats revalidation in 24h for season %d tour %d",
-                season_id, tour,
-            )
-
-        if scheduled:
-            await send_telegram_message(
-                f"⏳ Stats revalidation scheduled (24h):\n"
-                + "\n".join(f"  Season {s['season_id']} Tour {s['tour']}" for s in scheduled)
-            )
-
-        return {"scheduled": scheduled}
+        return {"triggered": triggered}
 
 
 async def _trigger_stats_revalidation(season_id: int | None = None, tour: int | None = None):
