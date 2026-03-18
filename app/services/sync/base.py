@@ -9,7 +9,7 @@ import re
 from datetime import datetime, date, time
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Country, Season, Stadium, Team
@@ -221,9 +221,22 @@ class BaseSyncService:
         if not stadium_name:
             return None
 
-        # Try to find existing stadium
+        name = stadium_name.strip()
+        if not name:
+            return None
+
+        # Try exact match first
         result = await self.db.execute(
-            select(Stadium).where(Stadium.name == stadium_name)
+            select(Stadium).where(Stadium.name == name)
+        )
+        stadium = result.scalar_one_or_none()
+
+        if stadium:
+            return stadium.id
+
+        # Case-insensitive fallback
+        result = await self.db.execute(
+            select(Stadium).where(func.lower(Stadium.name) == name.lower())
         )
         stadium = result.scalar_one_or_none()
 
@@ -231,7 +244,8 @@ class BaseSyncService:
             return stadium.id
 
         # Create new stadium
-        new_stadium = Stadium(name=stadium_name)
+        logger.warning(f"Creating new stadium: '{name}'")
+        new_stadium = Stadium(name=name)
         self.db.add(new_stadium)
         await self.db.flush()
         return new_stadium.id
