@@ -1,7 +1,7 @@
 import pytest
 from httpx import AsyncClient
 from uuid import uuid4
-from datetime import date, time
+from datetime import date, time, datetime
 
 
 async def _seed_score_table(
@@ -900,6 +900,7 @@ class TestSeasonsAPI:
             away_score=0,
             has_stats=True,
             visitors=9000,
+            extended_stats_synced_at=datetime(2025, 5, 22, 22, 0, 0),
         )
 
         goal_events = [
@@ -970,3 +971,410 @@ class TestSeasonsAPI:
             "matches_with_goal_events": 1,
             "coverage_pct": 50.0,
         }
+
+    # ── effective_max_round / _compute_stats_scope tests ──────────────
+
+    async def test_statistics_round_robin_no_completed_tour_shows_zero(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """Round-robin season with no fully completed tour → matches_played=0, all stats zero."""
+        from app.models import Season, Game
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=300,
+            name="2026 RR empty",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        # Tour 1: only 1 of 2 games finished → tour not complete
+        test_session.add_all([
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 4, 1),
+                time=time(18, 0),
+                tour=1,
+                season_id=300,
+                home_team_id=sample_teams[0].id,
+                away_team_id=sample_teams[1].id,
+                home_score=1,
+                away_score=0,
+            ),
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 4, 1),
+                time=time(18, 0),
+                tour=1,
+                season_id=300,
+                home_team_id=sample_teams[1].id,
+                away_team_id=sample_teams[2].id,
+                home_score=None,
+                away_score=None,
+            ),
+        ])
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/300/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["matches_played"] == 0
+        assert data["total_goals"] == 0
+        assert data["max_completed_round"] is None
+
+    async def test_statistics_round_robin_caps_to_completed_tour(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """Round-robin season caps stats to highest fully completed tour."""
+        from app.models import Season, Game, GameTeamStats
+        from app.models.tour_sync_status import TourSyncStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=301,
+            name="2026 RR capped",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        # Tour 1: fully complete with TourSyncStatus marker
+        game_t1 = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=301,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=2,
+            away_score=1,
+            visitors=5000,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        # Tour 2: partially complete (1 scored, 1 not) — no TourSyncStatus
+        game_t2a = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 1),
+            time=time(18, 0),
+            tour=2,
+            season_id=301,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[2].id,
+            home_score=3,
+            away_score=0,
+        )
+        game_t2b = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 1),
+            time=time(18, 0),
+            tour=2,
+            season_id=301,
+            home_team_id=sample_teams[1].id,
+            away_team_id=sample_teams[2].id,
+            home_score=None,
+            away_score=None,
+        )
+        test_session.add_all([game_t1, game_t2a, game_t2b])
+        await test_session.flush()
+
+        # Add GameTeamStats for game_t1 so team_stats_query doesn't return NULL
+        test_session.add_all([
+            GameTeamStats(game_id=game_t1.id, team_id=sample_teams[0].id, yellow_cards=1, fouls=5),
+            GameTeamStats(game_id=game_t1.id, team_id=sample_teams[1].id, yellow_cards=2, fouls=3),
+        ])
+        # TourSyncStatus marker for tour 1 only
+        test_session.add(TourSyncStatus(season_id=301, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/301/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Only tour 1 counts
+        assert data["max_completed_round"] == 1
+        assert data["matches_played"] == 1
+        assert data["total_goals"] == 3  # 2 + 1
+
+    async def test_statistics_cup_season_uncapped(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """Cup/knockout season (no round_robin, no has_table) → all scored games count."""
+        from app.models import Season, Game, GameTeamStats
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=302,
+            name="Cup 2026",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="knockout",
+            has_table=False,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        # Two games in different tours, both scored + extended_stats_synced
+        g1 = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=302,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
+            away_score=0,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        g2 = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 1),
+            time=time(18, 0),
+            tour=2,
+            season_id=302,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[2].id,
+            home_score=2,
+            away_score=2,
+            extended_stats_synced_at=datetime(2025, 5, 2, 10, 0, 0),
+        )
+        test_session.add_all([g1, g2])
+        await test_session.flush()
+
+        test_session.add_all([
+            GameTeamStats(game_id=g1.id, team_id=sample_teams[0].id, fouls=1),
+            GameTeamStats(game_id=g1.id, team_id=sample_teams[1].id, fouls=1),
+            GameTeamStats(game_id=g2.id, team_id=sample_teams[0].id, fouls=1),
+            GameTeamStats(game_id=g2.id, team_id=sample_teams[2].id, fouls=1),
+        ])
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/302/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Both games counted — cup has no tour cap
+        assert data["matches_played"] == 2
+        assert data["total_goals"] == 5  # 1+0 + 2+2
+
+    async def test_statistics_capped_xg_from_player_tour_stats(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams, sample_player,
+    ):
+        """When PlayerTourStats rows exist (even with xg=0), use them — no fallback."""
+        from app.models import Season, Game, GameTeamStats, PlayerTourStats
+        from app.models.tour_sync_status import TourSyncStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=303,
+            name="2026 xG test",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        # Tour 1: complete with extended stats synced
+        g = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=303,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=0,
+            away_score=0,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        test_session.add(g)
+        await test_session.flush()
+
+        test_session.add_all([
+            GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=0),
+            GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=0),
+        ])
+
+        # PlayerTourStats with xg=0.0 — valid data, not missing
+        test_session.add(PlayerTourStats(
+            player_id=sample_player.id,
+            season_id=303,
+            team_id=sample_teams[0].id,
+            tour=1,
+            games_played=1,
+            xg=0.0,
+        ))
+        # TourSyncStatus marker for tour 1
+        test_session.add(TourSyncStatus(season_id=303, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/303/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["max_completed_round"] == 1
+        assert data["matches_played"] == 1
+        # xg=0 from PlayerTourStats, should be 0.0 (not fallback)
+        assert data["avg_xg_per_match"] == 0.0
+
+    async def test_statistics_xg_fallback_when_no_player_tour_stats(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """When no PlayerTourStats rows exist for the capped round, fall back to TeamSeasonStats."""
+        from app.models import Season, Game, GameTeamStats, TeamSeasonStats
+        from app.models.tour_sync_status import TourSyncStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=304,
+            name="2026 xG fallback",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        g = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=304,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
+            away_score=1,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        test_session.add(g)
+        await test_session.flush()
+
+        test_session.add_all([
+            GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=2),
+            GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=3),
+        ])
+        # No PlayerTourStats rows → should fall back to TeamSeasonStats
+        test_session.add_all([
+            TeamSeasonStats(season_id=304, team_id=sample_teams[0].id, games_played=1, xg=1.5),
+            TeamSeasonStats(season_id=304, team_id=sample_teams[1].id, games_played=1, xg=0.8),
+        ])
+        # TourSyncStatus marker for tour 1
+        test_session.add(TourSyncStatus(season_id=304, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/304/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["max_completed_round"] == 1
+        assert data["matches_played"] == 1
+        # Fallback: total_xg = 1.5+0.8 = 2.3, total_team_games = 2, avg = 2.3 / (2/2) = 2.3
+        assert data["avg_xg_per_match"] == 2.3
+
+    async def test_goals_by_period_respects_round_cap(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """Goals-by-period for round-robin only includes goals from completed tours."""
+        from app.models import Season, Game, GameEvent, GameEventType
+        from app.models.tour_sync_status import TourSyncStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=305,
+            name="2026 GBP capped",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        # Tour 1: complete with TourSyncStatus marker
+        g1 = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=305,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
+            away_score=0,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        # Tour 2: incomplete (only 1 of 2 games scored) — no TourSyncStatus
+        g2 = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 1),
+            time=time(18, 0),
+            tour=2,
+            season_id=305,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[2].id,
+            home_score=2,
+            away_score=1,
+        )
+        g3 = Game(
+            sota_id=uuid4(),
+            date=date(2025, 5, 1),
+            time=time(18, 0),
+            tour=2,
+            season_id=305,
+            home_team_id=sample_teams[1].id,
+            away_team_id=sample_teams[2].id,
+            home_score=None,
+            away_score=None,
+        )
+        test_session.add_all([g1, g2, g3])
+        await test_session.flush()
+
+        test_session.add_all([
+            GameEvent(game_id=g1.id, half=1, minute=10, event_type=GameEventType.goal, team_id=sample_teams[0].id),
+            GameEvent(game_id=g2.id, half=1, minute=20, event_type=GameEventType.goal, team_id=sample_teams[0].id),
+            GameEvent(game_id=g2.id, half=2, minute=55, event_type=GameEventType.goal, team_id=sample_teams[0].id),
+            GameEvent(game_id=g2.id, half=2, minute=70, event_type=GameEventType.goal, team_id=sample_teams[2].id),
+        ])
+        # TourSyncStatus marker for tour 1 only
+        test_session.add(TourSyncStatus(season_id=305, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/305/goals-by-period")
+        assert response.status_code == 200
+        data = response.json()
+
+        # Only tour 1 games counted
+        assert data["meta"]["matches_played"] == 1
+        total_goals = sum(p["goals"] for p in data["periods"])
+        assert total_goals == 1  # only the goal from g1

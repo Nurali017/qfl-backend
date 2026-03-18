@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from typing import AsyncGenerator, Generator
 from uuid import uuid4
-from datetime import date, time
+from datetime import date, time, datetime
 
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import event, String
@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from app.main import app
 from app.database import Base
 from app.api.deps import get_db  # Import from where routes actually use it
+from app.services.season_visibility import invalidate_season_cache
 from app.models import (
     Season, Team, Player, PlayerTeam,
     Game, GameTeamStats, GamePlayerStats, ScoreTable,
@@ -36,6 +37,24 @@ def compile_jsonb_sqlite(type_, compiler, **kw):
     return "JSON"
 
 
+# Register PostgreSQL-specific functions for SQLite
+def _register_pg_functions(dbapi_conn, connection_record):
+    """Register PostgreSQL functions (age) for SQLite compatibility in tests."""
+    from datetime import date as _date
+
+    def _age(birthday_str):
+        if birthday_str is None:
+            return None
+        try:
+            bd = _date.fromisoformat(birthday_str)
+            today = _date.today()
+            return f"{today.year - bd.year - ((today.month, today.day) < (bd.month, bd.day))} years"
+        except (ValueError, TypeError):
+            return None
+
+    dbapi_conn.create_function("age", 1, _age)
+
+
 # Note: Using pytest-asyncio's built-in event_loop fixture (asyncio_mode = auto)
 # Custom event_loop removed to avoid conflicts with pytest-asyncio 0.23.3+
 
@@ -48,6 +67,9 @@ async def test_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # Register custom PG functions for SQLite
+    event.listen(engine.sync_engine, "connect", _register_pg_functions)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -83,6 +105,7 @@ async def client(test_session) -> AsyncGenerator[AsyncClient, None]:
         yield test_session
 
     app.dependency_overrides[get_db] = override_get_db
+    invalidate_season_cache()
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -114,6 +137,7 @@ async def sample_season(test_session, sample_championship) -> Season:
         championship_id=sample_championship.id,
         date_start=date(2025, 3, 1),
         date_end=date(2025, 11, 30),
+        has_table=False,
     )
     test_session.add(season)
     await test_session.commit()
@@ -169,6 +193,7 @@ async def sample_game(test_session, sample_season, sample_teams) -> Game:
         away_score=1,
         has_stats=True,
         visitors=15000,
+        extended_stats_synced_at=datetime(2025, 5, 15, 22, 0, 0),
     )
     test_session.add(game)
     await test_session.commit()
