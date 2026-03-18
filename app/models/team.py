@@ -17,7 +17,7 @@ class Team(Base):
     name_kz: Mapped[str | None] = mapped_column(String(255))
     name_en: Mapped[str | None] = mapped_column(String(255))
     logo_url: Mapped[str | None] = mapped_column(FileUrlType)
-    logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     city: Mapped[str | None] = mapped_column(String(100))  # Russian (default)
     city_kz: Mapped[str | None] = mapped_column(String(100))
     city_en: Mapped[str | None] = mapped_column(String(100))
@@ -28,10 +28,10 @@ class Team(Base):
     primary_color: Mapped[str | None] = mapped_column(String(7))  # Hex: #FF5733
     secondary_color: Mapped[str | None] = mapped_column(String(7))
     accent_color: Mapped[str | None] = mapped_column(String(7))
-    colors_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    colors_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships

@@ -122,7 +122,7 @@ class PlayerSeasonStats(Base):
     extra_stats: Mapped[dict | None] = mapped_column(JSONB)
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships

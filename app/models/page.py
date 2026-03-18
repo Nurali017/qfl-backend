@@ -32,9 +32,9 @@ class Page(Base):
     structured_data: Mapped[dict | None] = mapped_column(JSONB)
     created_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"))
     updated_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admin_users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     __table_args__ = (

@@ -23,7 +23,7 @@ from app.services.sync.lineup_sync import LineupSyncService
 from app.services.telegram import send_telegram_message
 from app.utils.live_flag import get_redis
 from app.utils.team_name_matcher import TeamNameMatcher
-from app.utils.timestamps import utcnow
+from app.utils.timestamps import combine_almaty_local_to_utc, ensure_utc, utcnow
 
 
 # Mapping SOTA action names to our event types
@@ -114,34 +114,24 @@ class LiveSyncService:
 
         Primary source: half1_started_at. Fallback: date + time.
         """
-        now = datetime.now(ZoneInfo("Asia/Almaty"))
-        cutoff_tz = now - timedelta(hours=2, minutes=6)
-        cutoff_naive = cutoff_tz.replace(tzinfo=None)
-
-        # Primary: half1_started_at (timezone-aware)
-        # Fallback: date + COALESCE(time, '00:00:00') (naive)
-        game_start_fallback = Game.date + func.coalesce(Game.time, dt_time(0, 0, 0))
-
+        cutoff_utc = utcnow() - timedelta(hours=2, minutes=6)
         result = await self.db.execute(
-            select(Game).where(
-                and_(
-                    Game.status == GameStatus.live,
-                    or_(
-                        # Primary: half1_started_at is set and old enough
-                        and_(
-                            Game.half1_started_at.isnot(None),
-                            Game.half1_started_at <= cutoff_tz,
-                        ),
-                        # Fallback: no half1_started_at, use date+time
-                        and_(
-                            Game.half1_started_at.is_(None),
-                            game_start_fallback <= cutoff_naive,
-                        ),
-                    ),
-                )
-            )
+            select(Game).where(Game.status == GameStatus.live)
         )
-        return list(result.scalars().all())
+        games = list(result.scalars().all())
+
+        due_games: list[Game] = []
+        for game in games:
+            started_at = ensure_utc(game.half1_started_at)
+            if started_at is None:
+                started_at = combine_almaty_local_to_utc(
+                    game.date,
+                    game.time or dt_time(0, 0, 0),
+                )
+            if started_at <= cutoff_utc:
+                due_games.append(game)
+
+        return due_games
 
     def _extract_formation(self, lineup_data: list[dict]) -> str | None:
         """Extract formation string from lineup data."""

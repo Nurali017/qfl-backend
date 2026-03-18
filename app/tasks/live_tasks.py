@@ -25,7 +25,7 @@ from app.services.live_sync_service import LiveSyncService
 from app.services.sota_client import get_sota_client
 from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
-from app.utils.timestamps import ensure_naive_utc, utcnow
+from app.utils.timestamps import ensure_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -487,7 +487,7 @@ async def _post_finish_followup(game_id: int):
                     logger.exception("Team-of-week immediate sync dispatch failed")
 
             # 3. Extended stats: immediate if 24h+ old, else schedule
-            finished_at = ensure_naive_utc(game.finished_at)
+            finished_at = ensure_utc(game.finished_at)
             if finished_at:
                 now = utcnow()
                 if finished_at <= now - timedelta(hours=24):

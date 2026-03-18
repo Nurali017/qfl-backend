@@ -5,13 +5,13 @@ Handles synchronization of team season statistics from SOTA API.
 Score table is managed locally — no longer synced from SOTA.
 """
 import logging
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Game, ScoreTable, SeasonParticipant, TeamSeasonStats
 from app.services.sync.base import BaseSyncService, TEAM_SEASON_STATS_FIELDS
+from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ class StatsSyncService(BaseSyncService):
                     average_visitors=stats.get("average_visitors"),
                     # Extra stats for unknown fields
                     extra_stats=extra_stats if extra_stats else None,
-                    updated_at=datetime.utcnow(),
+                    updated_at=utcnow(),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["team_id", "season_id"],

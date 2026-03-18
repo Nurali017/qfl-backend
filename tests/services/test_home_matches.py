@@ -8,8 +8,8 @@ from app.services.home_matches import ALMATY_TZ, _fallback, _resolve_season, get
 import app.services.home_matches as home_matches_service
 
 
-def _utc_naive_from_almaty(dt: datetime) -> datetime:
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+def _utc_from_almaty(dt: datetime) -> datetime:
+    return dt.astimezone(timezone.utc)
 
 
 def _make_game(
@@ -61,7 +61,7 @@ async def test_get_home_widget_completed_window_keeps_finished_default_and_expos
         status=GameStatus.finished,
         home_score=2,
         away_score=1,
-        finished_at=_utc_naive_from_almaty(now - timedelta(hours=2)),
+        finished_at=_utc_from_almaty(now - timedelta(hours=2)),
     )
     technical_game = _make_game(
         season_id=sample_season.id,
@@ -73,7 +73,7 @@ async def test_get_home_widget_completed_window_keeps_finished_default_and_expos
         status=GameStatus.technical_defeat,
         home_score=3,
         away_score=0,
-        finished_at=_utc_naive_from_almaty(now - timedelta(hours=1)),
+        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
     )
     next_round_upcoming = _make_game(
         season_id=sample_season.id,
@@ -130,7 +130,7 @@ async def test_get_home_widget_active_round_keeps_full_current_tour_in_upcoming_
         status=GameStatus.finished,
         home_score=2,
         away_score=1,
-        finished_at=_utc_naive_from_almaty(now - timedelta(days=2, hours=1)),
+        finished_at=_utc_from_almaty(now - timedelta(days=2, hours=1)),
     )
     current_tour_finished = _make_game(
         season_id=sample_season.id,
@@ -142,7 +142,7 @@ async def test_get_home_widget_active_round_keeps_full_current_tour_in_upcoming_
         status=GameStatus.finished,
         home_score=1,
         away_score=0,
-        finished_at=_utc_naive_from_almaty(now - timedelta(hours=1)),
+        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
     )
     upcoming_game = _make_game(
         season_id=sample_season.id,
@@ -207,7 +207,7 @@ async def test_get_home_widget_after_completed_window_switches_to_next_round(
         status=GameStatus.finished,
         home_score=1,
         away_score=0,
-        finished_at=_utc_naive_from_almaty(now - timedelta(hours=30)),
+        finished_at=_utc_from_almaty(now - timedelta(hours=30)),
     )
     next_round_upcoming = _make_game(
         season_id=sample_season.id,

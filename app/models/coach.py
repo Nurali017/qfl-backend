@@ -33,9 +33,9 @@ class Coach(Base):
     last_name_en: Mapped[str | None] = mapped_column(String(100))
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)
     country_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("countries.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships
@@ -61,9 +61,9 @@ class TeamCoach(Base):
         default=CoachRole.head_coach
     )
     is_active: Mapped[bool] = mapped_column(default=True)
-    start_date: Mapped[datetime | None] = mapped_column(DateTime)
-    end_date: Mapped[datetime | None] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # Relationships
     team: Mapped["Team"] = relationship("Team", back_populates="coaches")

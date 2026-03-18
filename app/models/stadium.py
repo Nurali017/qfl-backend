@@ -35,9 +35,9 @@ class Stadium(Base):
     address_kz: Mapped[str | None] = mapped_column(String(500))
     address_en: Mapped[str | None] = mapped_column(String(500))
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships

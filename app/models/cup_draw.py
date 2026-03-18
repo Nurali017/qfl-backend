@@ -25,9 +25,9 @@ class CupDraw(Base):
 
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("admin_users.id"))
     published_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("admin_users.id"))
-    published_at: Mapped[datetime | None] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     season: Mapped["Season"] = relationship("Season")
     creator: Mapped["AdminUser"] = relationship("AdminUser", foreign_keys=[created_by])

@@ -1484,3 +1484,210 @@ class TestSeasonsAPI:
         assert data["meta"]["matches_played"] == 1
         total_goals = sum(p["goals"] for p in data["periods"])
         assert total_goals == 1  # only the goal from g1
+
+    async def test_get_season_attendance_hidden_season_returns_404(
+        self, client: AsyncClient, sample_season, test_session
+    ):
+        sample_season.is_visible = False
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/attendance")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Season not found"
+
+    async def test_get_season_attendance_round_robin_caps_to_completed_tour(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        from app.models import Season, Game, GameStatus
+        from app.models.tour_sync_status import TourSyncStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=320,
+            name="2026 attendance capped",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        test_session.add_all([
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 4, 1),
+                time=time(18, 0),
+                tour=1,
+                season_id=320,
+                home_team_id=sample_teams[0].id,
+                away_team_id=sample_teams[1].id,
+                home_score=2,
+                away_score=1,
+                visitors=5000,
+                status=GameStatus.finished,
+            ),
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 5, 1),
+                time=time(18, 0),
+                tour=2,
+                season_id=320,
+                home_team_id=sample_teams[0].id,
+                away_team_id=sample_teams[2].id,
+                home_score=1,
+                away_score=0,
+                visitors=9000,
+                status=GameStatus.finished,
+            ),
+        ])
+        test_session.add(TourSyncStatus(season_id=320, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/320/attendance?lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["max_completed_round"] == 1
+        assert data["summary"] == {
+            "total_matches": 1,
+            "total_attendance": 5000,
+            "average_attendance": 5000.0,
+        }
+        assert len(data["top_matches"]) == 1
+        assert data["top_matches"][0]["visitors"] == 5000
+        assert data["by_tour"] == [
+            {
+                "tour": 1,
+                "matches": 1,
+                "total_attendance": 5000,
+                "average_attendance": 5000.0,
+            }
+        ]
+
+    async def test_get_season_attendance_respects_explicit_max_round(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        from app.models import Season, Game, GameStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=321,
+            name="2026 attendance explicit round",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        test_session.add_all([
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 4, 1),
+                time=time(18, 0),
+                tour=1,
+                season_id=321,
+                home_team_id=sample_teams[0].id,
+                away_team_id=sample_teams[1].id,
+                home_score=2,
+                away_score=1,
+                visitors=4000,
+                status=GameStatus.finished,
+            ),
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 5, 1),
+                time=time(18, 0),
+                tour=2,
+                season_id=321,
+                home_team_id=sample_teams[1].id,
+                away_team_id=sample_teams[2].id,
+                home_score=1,
+                away_score=1,
+                visitors=7000,
+                status=GameStatus.finished,
+            ),
+        ])
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/321/attendance?lang=ru&max_round=1")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["max_completed_round"] is None
+        assert data["summary"] == {
+            "total_matches": 1,
+            "total_attendance": 4000,
+            "average_attendance": 4000.0,
+        }
+        assert [item["tour"] for item in data["by_tour"]] == [1]
+
+    async def test_get_season_attendance_cup_season_uncapped(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        from app.models import Season, Game, GameStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=322,
+            name="Cup 2026 attendance",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="knockout",
+            has_table=False,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        test_session.add_all([
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 4, 1),
+                time=time(18, 0),
+                tour=1,
+                season_id=322,
+                home_team_id=sample_teams[0].id,
+                away_team_id=sample_teams[1].id,
+                home_score=1,
+                away_score=0,
+                visitors=6000,
+                status=GameStatus.finished,
+            ),
+            Game(
+                sota_id=uuid4(),
+                date=date(2025, 5, 1),
+                time=time(18, 0),
+                tour=2,
+                season_id=322,
+                home_team_id=sample_teams[0].id,
+                away_team_id=sample_teams[2].id,
+                home_score=2,
+                away_score=2,
+                visitors=8000,
+                status=GameStatus.finished,
+            ),
+        ])
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/322/attendance?lang=ru")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["max_completed_round"] is None
+        assert data["summary"] == {
+            "total_matches": 2,
+            "total_attendance": 14000,
+            "average_attendance": 7000.0,
+        }
+        assert [item["tour"] for item in data["by_tour"]] == [1, 2]

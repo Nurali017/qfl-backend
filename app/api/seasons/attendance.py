@@ -1,13 +1,14 @@
 """Season attendance statistics endpoint."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, case, literal_column
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.models import Game, GameStatus, Stadium, Team
-from app.services.season_visibility import ensure_visible_season_or_404
+from app.models import Game, GameStatus, Season, Stadium, Team
+from app.services.season_scope import compute_season_stats_scope
+from app.services.season_visibility import is_season_visible_clause
 from app.utils.localization import get_localized_field, get_localized_city
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.attendance import (
@@ -25,11 +26,24 @@ router = APIRouter(prefix="/seasons", tags=["seasons"])
 @router.get("/{season_id}/attendance", response_model=AttendanceResponse)
 async def get_season_attendance(
     season_id: int,
+    max_round: int | None = Query(None, description="Filter attendance stats up to this round (tour) number"),
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed attendance statistics for a season."""
-    await ensure_visible_season_or_404(db, season_id)
+    season_result = await db.execute(
+        select(Season).where(
+            Season.id == season_id,
+            is_season_visible_clause(),
+        )
+    )
+    season = season_result.scalar_one_or_none()
+    if not season:
+        raise HTTPException(status_code=404, detail="Season not found")
+
+    max_completed_round, effective_max_round = await compute_season_stats_scope(
+        db, season_id, season, max_round
+    )
 
     # Base filter: finished games with attendance data
     base_filter = [
@@ -38,6 +52,8 @@ async def get_season_attendance(
         Game.visitors > 0,
         Game.status == GameStatus.finished,
     ]
+    if effective_max_round is not None:
+        base_filter.append(Game.tour <= effective_max_round)
 
     # --- 1. Summary ---
     summary_q = select(
@@ -217,6 +233,7 @@ async def get_season_attendance(
 
     return AttendanceResponse(
         season_id=season_id,
+        max_completed_round=max_completed_round,
         summary=summary,
         top_matches=top_matches,
         by_team=by_team,

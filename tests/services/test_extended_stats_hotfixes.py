@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import Game, GameStatus, GameTeamStats
 from app.services.sync.game_sync import GameSyncService
 from app.tasks import live_tasks
-from app.utils.timestamps import ensure_naive_utc
+from app.utils.timestamps import UTC, ensure_utc, utcnow
 
 
 class FakeLiveStatsClient:
@@ -67,13 +67,16 @@ async def test_enrich_team_stats_from_live_overwrites_zero_possession(
     assert refreshed.extra_stats["by_half"]["2"]["possessions"] == 48
 
 
-def test_ensure_naive_utc_normalizes_aware_values():
+def test_ensure_utc_normalizes_naive_and_aware_values():
     aware = datetime(2026, 3, 18, 10, 0, tzinfo=timezone.utc)
+    naive = datetime(2026, 3, 18, 12, 30)
 
-    normalized = ensure_naive_utc(aware)
+    normalized_aware = ensure_utc(aware)
+    normalized_naive = ensure_utc(naive)
 
-    assert normalized == datetime(2026, 3, 18, 10, 0)
-    assert normalized.tzinfo is None
+    assert normalized_aware == aware
+    assert normalized_aware.tzinfo is UTC
+    assert normalized_naive == datetime(2026, 3, 18, 12, 30, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
@@ -98,7 +101,7 @@ async def test_sync_extended_stats_for_game_persists_flag_when_aggregates_fail(
             home_team_id=sample_teams[0].id,
             away_team_id=sample_teams[1].id,
             status=GameStatus.finished,
-            finished_at=datetime.utcnow() - timedelta(days=2),
+            finished_at=utcnow() - timedelta(days=2),
         )
         session.add(game)
         await session.commit()

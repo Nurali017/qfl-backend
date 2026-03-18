@@ -74,17 +74,17 @@ class Game(Base):
     away_formation: Mapped[str | None] = mapped_column(String(20))  # e.g., "4-3-3"
     home_kit_color: Mapped[str | None] = mapped_column(String(10))
     away_kit_color: Mapped[str | None] = mapped_column(String(10))
-    lineup_live_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lineup_live_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lineup_source: Mapped[str | None] = mapped_column(String(32))  # team_squad, sota_api, vsporte_api, matches_players
     lineup_render_mode: Mapped[str | None] = mapped_column(String(16))  # field, list, hidden
-    lineup_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lineup_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Stadium FK
     stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"), index=True)
 
     visitors: Mapped[int | None] = mapped_column(Integer)
     ticket_url: Mapped[str | None] = mapped_column(String(500))  # URL for ticket purchase
-    ticket_url_fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    ticket_url_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_free_entry: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
@@ -102,15 +102,15 @@ class Game(Base):
     half2_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # When match was marked as finished (for post-match protocol sync window)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 
     # When extended stats (xG, season stats) were synced post-match
-    extended_stats_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    extended_stats_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 
     # AI-generated match preview
     preview_ru: Mapped[str | None] = mapped_column(Text, nullable=True)
     preview_kz: Mapped[str | None] = mapped_column(Text, nullable=True)
-    preview_generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    preview_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Broadcast fields (В-1)
     where_broadcast: Mapped[str | None] = mapped_column(String(500))  # Where to watch
@@ -119,10 +119,10 @@ class Game(Base):
     # Weather data (fetched from OpenWeatherMap)
     weather_temp: Mapped[int | None] = mapped_column(Integer)
     weather_condition: Mapped[str | None] = mapped_column(String(50))
-    weather_fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    weather_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Derived boolean helpers (backward-compatible with removed columns)

@@ -23,9 +23,9 @@ class Referee(Base):
     last_name_en: Mapped[str | None] = mapped_column(String(100))
     country_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("countries.id"), index=True)
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships

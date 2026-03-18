@@ -27,7 +27,7 @@ class ScoreTable(Base):
     form: Mapped[str | None] = mapped_column(String(20))
     note: Mapped[str | None] = mapped_column(Text)  # Reason/note for point deductions etc. (В-9)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     # Relationships

@@ -5,7 +5,6 @@ Handles synchronization of games, game statistics, and game events from SOTA API
 """
 import asyncio
 import logging
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select, or_
@@ -21,6 +20,7 @@ from app.services.sync.base import (
     GAME_PLAYER_STATS_FIELDS, GAME_TEAM_STATS_FIELDS,
 )
 from app.services.season_visibility import get_current_season_id
+from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class GameSyncService(BaseSyncService):
                 has_stats=g.get("has_stats", False),
                 stadium_id=stadium_id,
                 visitors=g.get("visitors"),
-                updated_at=datetime.utcnow(),
+                updated_at=utcnow(),
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["id"],
@@ -495,7 +495,7 @@ class GameSyncService(BaseSyncService):
             sota_id=sota_id,
             first_name=first_name or "",
             last_name=last_name or "",
-            updated_at=datetime.utcnow(),
+            updated_at=utcnow(),
         )
         self.db.add(player)
         await self.db.flush()
