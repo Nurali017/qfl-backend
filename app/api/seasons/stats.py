@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, nulls_last, case, distinct, extract, text
+from sqlalchemy import select, func, desc, nulls_last, case, distinct, extract, text, cast
+from sqlalchemy.types import Numeric
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
@@ -758,71 +759,69 @@ async def get_season_statistics(
     second_yellow_result = await db.execute(second_yellow_count_query)
     total_second_yellows = second_yellow_result.scalar() or 0
 
-    # Query 3a: avg xG per match — round-aware via PlayerTourStats when capped
-    if effective_max_round is not None:
-        # Check if PlayerTourStats rows exist for this tour (row count, not xG sum)
-        pts_count_query = select(func.count()).select_from(PlayerTourStats).where(
-            PlayerTourStats.season_id == season_id,
-            PlayerTourStats.tour == effective_max_round,
-        )
-        pts_count = (await db.execute(pts_count_query)).scalar() or 0
+    # Query 3a: avg xG per match — from per-game player stats
+    # Two separate queries: total rows and xG sum (avoids JSONB has_key which breaks SQLite)
+    xg_total_query = select(
+        func.count().label("total_rows"),
+    ).select_from(GamePlayerStats).join(
+        Game, GamePlayerStats.game_id == Game.id
+    ).where(*game_base_filters)
+    total_rows = (await db.execute(xg_total_query)).scalar() or 0
 
-        if pts_count > 0:
-            # Rows exist — use cumulative xG (zero is a valid value)
-            xg_query = select(
-                func.coalesce(func.sum(PlayerTourStats.xg), 0).label("total_xg"),
-            ).where(
-                PlayerTourStats.season_id == season_id,
-                PlayerTourStats.tour == effective_max_round,
-            )
-            total_xg = float((await db.execute(xg_query)).scalar() or 0)
-            avg_xg_per_match = round(total_xg / matches_played, 2) if matches_played > 0 else 0.0
-        elif matches_played > 0:
-            # FALLBACK: player_tour_stats not yet synced for this round
-            season_agg_query = select(
-                func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
-                func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
-            ).where(TeamSeasonStats.season_id == season_id)
-            season_agg_result = await db.execute(season_agg_query)
-            season_agg_row = season_agg_result.one()
-            total_team_games = int(season_agg_row.total_team_games or 0)
-            total_xg = float(season_agg_row.total_xg or 0)
-            avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
-        else:
-            avg_xg_per_match = 0.0
-    else:
-        # Uncapped: use TeamSeasonStats (current behavior)
+    xg_sum_query = select(
+        func.count().label("rows_with_xg"),
+        func.coalesce(func.sum(cast(GamePlayerStats.extra_stats['xg'].as_string(), Numeric)), 0).label("total_xg"),
+    ).select_from(GamePlayerStats).join(
+        Game, GamePlayerStats.game_id == Game.id
+    ).where(
+        *game_base_filters,
+        GamePlayerStats.extra_stats['xg'].isnot(None),
+    )
+    xg_row = (await db.execute(xg_sum_query)).one()
+
+    rows_with_xg = xg_row.rows_with_xg or 0
+    total_xg = float(xg_row.total_xg or 0)
+    xg_coverage = rows_with_xg / total_rows if total_rows > 0 else 0
+
+    if xg_coverage >= 0.8 and matches_played > 0:
+        avg_xg_per_match = round(total_xg / matches_played, 2)
+    elif effective_max_round is None and matches_played > 0:
+        # Full-season, low coverage — fallback to TeamSeasonStats
         season_agg_query = select(
             func.coalesce(func.sum(TeamSeasonStats.xg), 0).label("total_xg"),
             func.coalesce(func.sum(TeamSeasonStats.games_played), 0).label("total_team_games"),
         ).where(TeamSeasonStats.season_id == season_id)
-        season_agg_result = await db.execute(season_agg_query)
-        season_agg_row = season_agg_result.one()
-        total_team_games = int(season_agg_row.total_team_games or 0)
-        total_xg = float(season_agg_row.total_xg or 0)
-        avg_xg_per_match = round(total_xg / (total_team_games / 2), 2) if total_team_games > 0 else 0.0
+        season_agg_row = (await db.execute(season_agg_query)).one()
+        tt_games = int(season_agg_row.total_team_games or 0)
+        tt_xg = float(season_agg_row.total_xg or 0)
+        avg_xg_per_match = round(tt_xg / (tt_games / 2), 2) if tt_games > 0 else None
+    else:
+        # Round-scoped, low coverage — null
+        avg_xg_per_match = None
 
-    # Query 3b: Pass accuracy — prefer per-game, fallback to season aggregate
+    # Query 3b: Pass accuracy — scoped GameTeamStats only
+    # Coverage denominator = matches_played * 2 (two team rows per match)
     pa_query = select(
-        func.avg(GameTeamStats.pass_accuracy).label("avg_pass_accuracy"),
-    ).join(Game, GameTeamStats.game_id == Game.id).where(
-        *game_base_filters,
-        GameTeamStats.pass_accuracy.isnot(None),
-    )
-    pa_result = await db.execute(pa_query)
-    pa_row = pa_result.one()
-    if pa_row.avg_pass_accuracy is not None:
-        pass_accuracy = round(float(pa_row.avg_pass_accuracy), 1)
-    elif matches_played > 0:
-        # Fallback: season-level aggregate from TeamSeasonStats
-        # Only when scoped matches exist but GameTeamStats lacks pass_accuracy
-        pa_fallback = await db.execute(
+        func.avg(GameTeamStats.pass_accuracy).label("avg_pa"),
+        func.count(GameTeamStats.pass_accuracy).label("with_pa"),
+    ).join(Game, GameTeamStats.game_id == Game.id).where(*game_base_filters)
+    pa_row = (await db.execute(pa_query)).one()
+    pa_expected = matches_played * 2
+    pa_with = pa_row.with_pa or 0
+    pa_coverage = pa_with / pa_expected if pa_expected > 0 else 0
+
+    if pa_coverage >= 0.8 and pa_row.avg_pa is not None:
+        pass_accuracy = round(float(pa_row.avg_pa), 1)
+    elif effective_max_round is None and matches_played > 0:
+        # Full-season fallback: TeamSeasonStats.pass_ratio
+        pa_fb = await db.execute(
             select(func.avg(TeamSeasonStats.pass_ratio))
             .where(TeamSeasonStats.season_id == season_id)
         )
-        pass_accuracy = round(float(pa_fallback.scalar() or 0), 1)
+        pa_val = pa_fb.scalar()
+        pass_accuracy = round(float(pa_val), 1) if pa_val is not None else None
     else:
-        pass_accuracy = 0.0
+        pass_accuracy = None
 
     # Query 4: Shots on target % from GameTeamStats
     shots_query = select(
