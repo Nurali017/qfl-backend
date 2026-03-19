@@ -117,6 +117,12 @@ def _build_search_query(home_name: str, away_name: str, game_date: date) -> str:
     return f"билеты {home_name} {away_name} {date_str}"
 
 
+def _build_instagram_query(home_name: str, away_name: str, game_date: date) -> str:
+    """Build a Google search query targeting team Instagram posts."""
+    date_str = _format_date_ru(game_date)
+    return f"site:instagram.com {home_name} {away_name} {date_str}"
+
+
 # Phrases indicating free entry (case-insensitive)
 _FREE_ENTRY_PHRASES = [
     "вход свободный",
@@ -309,10 +315,18 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                 query = _build_search_query(home_team.name, away_team.name, game.date)
                 organic = await _search_serper(query, settings.serper_api_key, client)
 
-                # Check for free entry in Google results
-                is_free = _detect_free_entry(organic, home_team.name)
+                # Also search team Instagram posts for ticket/free entry info
+                ig_query = _build_instagram_query(home_team.name, away_team.name, game.date)
+                await asyncio.sleep(1.0)  # rate limit between requests
+                ig_organic = await _search_serper(ig_query, settings.serper_api_key, client)
 
-                # If Google didn't detect free entry, check home team's website
+                # Merge results: general search + Instagram-specific
+                all_organic = organic + ig_organic
+
+                # Check for free entry in all results
+                is_free = _detect_free_entry(all_organic, home_team.name)
+
+                # If search didn't detect free entry, check home team's website
                 if not is_free and home_team.website:
                     is_free = await _check_team_website_free_entry(
                         home_team.website, home_team.name, client,
@@ -331,7 +345,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                         f"\U0001f4c5 Дата: {game.date}"
                     )
                 else:
-                    ticket_url = _extract_ticket_url(organic, home_team.name, away_team.name)
+                    ticket_url = _extract_ticket_url(all_organic, home_team.name, away_team.name)
                     if ticket_url:
                         game.ticket_url = ticket_url
                         updated += 1
