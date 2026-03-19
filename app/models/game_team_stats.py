@@ -53,6 +53,31 @@ class GameTeamStats(Base):
     penalties: Mapped[int | None] = mapped_column(Integer)
     saves: Mapped[int | None] = mapped_column(Integer)
 
+    # New metrics from SOTA v1 /games/{id}/teams/ endpoint
+    minutes: Mapped[int | None] = mapped_column(Integer)
+    xg: Mapped[float | None] = mapped_column(Numeric(6, 2))
+    freekicks: Mapped[int | None] = mapped_column(Integer)
+    freekick_shots: Mapped[int | None] = mapped_column(Integer)
+    freekick_passes: Mapped[int | None] = mapped_column(Integer)
+    throw_ins: Mapped[int | None] = mapped_column(Integer)
+    goal_kicks: Mapped[int | None] = mapped_column(Integer)
+    assists: Mapped[int | None] = mapped_column(Integer)
+    passes_forward: Mapped[int | None] = mapped_column(Integer)
+    passes_progressive: Mapped[int | None] = mapped_column(Integer)
+    key_passes: Mapped[int | None] = mapped_column(Integer)
+    passes_to_final_third: Mapped[int | None] = mapped_column(Integer)
+    passes_to_box: Mapped[int | None] = mapped_column(Integer)
+    crosses: Mapped[int | None] = mapped_column(Integer)
+
+    # Ratio metrics (0-100%)
+    shot_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    corner_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    freekick_shot_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    freekick_pass_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    throw_in_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    goal_kick_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    penalty_accuracy: Mapped[float | None] = mapped_column(Numeric(5, 2))
+
     # Extra stats for future unknown fields from API
     extra_stats: Mapped[dict | None] = mapped_column(JSONB)
 

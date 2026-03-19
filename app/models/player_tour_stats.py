@@ -11,9 +11,9 @@ from app.utils.timestamps import utcnow
 
 class PlayerTourStats(Base):
     """
-    Cumulative player statistics per tour from SOTA API v2.
+    Per-tour player statistics from SOTA API v2.
 
-    Each row = one player's stats accumulated through a given tour.
+    Each row = one player's stats for a specific tour (not cumulative).
     Used as the authoritative source for max_round trend queries
     instead of aggregating per-game GamePlayerStats.
     """

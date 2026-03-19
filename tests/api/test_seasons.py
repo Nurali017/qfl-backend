@@ -1030,10 +1030,10 @@ class TestSeasonsAPI:
         assert data["total_goals"] == 0
         assert data["max_completed_round"] is None
 
-    async def test_statistics_pass_accuracy_zero_when_no_matches_in_scope(
+    async def test_statistics_pass_accuracy_null_when_no_matches_in_scope(
         self, client: AsyncClient, test_session, sample_championship, sample_teams,
     ):
-        """pass_accuracy must be 0.0 when matches_played=0, even if TeamSeasonStats has data."""
+        """pass_accuracy must be null when matches_played=0, even if TeamSeasonStats has data."""
         from app.models import Season, Game, TeamSeasonStats
         from app.services.season_visibility import invalidate_season_cache
 
@@ -1076,19 +1076,19 @@ class TestSeasonsAPI:
         data = response.json()
 
         assert data["matches_played"] == 0
-        assert data["pass_accuracy"] == 0.0
+        assert data["pass_accuracy"] is None
 
-    async def test_statistics_pass_accuracy_fallback_with_scoped_matches(
+    async def test_statistics_pass_accuracy_null_when_low_coverage_round_scoped(
         self, client: AsyncClient, test_session, sample_championship, sample_teams,
     ):
-        """When scoped matches exist but GameTeamStats lacks pass_accuracy, fallback to TeamSeasonStats."""
+        """Round-scoped: GameTeamStats lacks pass_accuracy (0/2 coverage) → null, no fallback."""
         from app.models import Season, Game, GameTeamStats, TeamSeasonStats
         from app.models.tour_sync_status import TourSyncStatus
         from app.services.season_visibility import invalidate_season_cache
 
         season = Season(
             id=311,
-            name="2026 PA fallback",
+            name="2026 PA low cov",
             championship_id=sample_championship.id,
             date_start=date(2025, 3, 1),
             date_end=date(2025, 11, 30),
@@ -1115,12 +1115,12 @@ class TestSeasonsAPI:
         test_session.add(g)
         await test_session.flush()
 
-        # GameTeamStats WITHOUT pass_accuracy
+        # GameTeamStats WITHOUT pass_accuracy — 0/2 = 0% coverage
         test_session.add_all([
             GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=3, pass_accuracy=None),
             GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=2, pass_accuracy=None),
         ])
-        # TeamSeasonStats WITH pass_ratio — fallback should work since matches_played > 0
+        # TeamSeasonStats WITH pass_ratio — must NOT be used (round-scoped, low coverage)
         test_session.add_all([
             TeamSeasonStats(season_id=311, team_id=sample_teams[0].id, games_played=1, pass_ratio=80.0),
             TeamSeasonStats(season_id=311, team_id=sample_teams[1].id, games_played=1, pass_ratio=70.0),
@@ -1134,7 +1134,116 @@ class TestSeasonsAPI:
         data = response.json()
 
         assert data["matches_played"] == 1
-        assert data["pass_accuracy"] == 75.0  # avg(80.0, 70.0)
+        assert data["pass_accuracy"] is None  # round-scoped + low coverage → null
+
+    async def test_statistics_pass_accuracy_fallback_full_season(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """Full-season (cup): GameTeamStats lacks pass_accuracy → fallback to TeamSeasonStats."""
+        from app.models import Season, Game, GameTeamStats, TeamSeasonStats
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=312,
+            name="Cup 2026 PA fallback",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="knockout",
+            has_table=False,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        g = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=312,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
+            away_score=0,
+            visitors=5000,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        test_session.add(g)
+        await test_session.flush()
+
+        # GameTeamStats WITHOUT pass_accuracy — 0/2 coverage
+        test_session.add_all([
+            GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=3, pass_accuracy=None),
+            GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=2, pass_accuracy=None),
+        ])
+        # TeamSeasonStats WITH pass_ratio — should be used as full-season fallback
+        test_session.add_all([
+            TeamSeasonStats(season_id=312, team_id=sample_teams[0].id, games_played=1, pass_ratio=80.0),
+            TeamSeasonStats(season_id=312, team_id=sample_teams[1].id, games_played=1, pass_ratio=70.0),
+        ])
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/312/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["matches_played"] == 1
+        assert data["pass_accuracy"] == 75.0  # full-season fallback: avg(80.0, 70.0)
+
+    async def test_statistics_pass_accuracy_high_coverage(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """Round-scoped: GameTeamStats has pass_accuracy on all rows (100% coverage) → uses it."""
+        from app.models import Season, Game, GameTeamStats
+        from app.models.tour_sync_status import TourSyncStatus
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=313,
+            name="2026 PA high cov",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="round_robin",
+            has_table=True,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        g = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            tour=1,
+            season_id=313,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
+            away_score=0,
+            visitors=5000,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        test_session.add(g)
+        await test_session.flush()
+
+        # GameTeamStats WITH pass_accuracy — 2/2 = 100% coverage
+        test_session.add_all([
+            GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=3, pass_accuracy=82.5),
+            GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=2, pass_accuracy=71.3),
+        ])
+        test_session.add(TourSyncStatus(season_id=313, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/313/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["matches_played"] == 1
+        assert data["pass_accuracy"] == 76.9  # avg(82.5, 71.3) = 76.9
 
     async def test_statistics_round_robin_caps_to_completed_tour(
         self, client: AsyncClient, test_session, sample_championship, sample_teams,
@@ -1281,11 +1390,11 @@ class TestSeasonsAPI:
         assert data["matches_played"] == 2
         assert data["total_goals"] == 5  # 1+0 + 2+2
 
-    async def test_statistics_capped_xg_from_player_tour_stats(
+    async def test_statistics_xg_high_coverage_from_game_player_stats(
         self, client: AsyncClient, test_session, sample_championship, sample_teams, sample_player,
     ):
-        """When PlayerTourStats rows exist (even with xg=0), use them — no fallback."""
-        from app.models import Season, Game, GameTeamStats, PlayerTourStats
+        """When GamePlayerStats rows have xg in extra_stats with high coverage, use them."""
+        from app.models import Season, Game, GameTeamStats, GamePlayerStats
         from app.models.tour_sync_status import TourSyncStatus
         from app.services.season_visibility import invalidate_season_cache
 
@@ -1302,7 +1411,12 @@ class TestSeasonsAPI:
         test_session.add(season)
         await test_session.flush()
 
-        # Tour 1: complete with extended stats synced
+        # Create a second player for the away team
+        from app.models import Player
+        player2 = Player(first_name="Away", last_name="Player", country_id=sample_player.country_id)
+        test_session.add(player2)
+        await test_session.flush()
+
         g = Game(
             sota_id=uuid4(),
             date=date(2025, 4, 1),
@@ -1311,8 +1425,8 @@ class TestSeasonsAPI:
             season_id=303,
             home_team_id=sample_teams[0].id,
             away_team_id=sample_teams[1].id,
-            home_score=0,
-            away_score=0,
+            home_score=2,
+            away_score=1,
             extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
         )
         test_session.add(g)
@@ -1323,16 +1437,17 @@ class TestSeasonsAPI:
             GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=0),
         ])
 
-        # PlayerTourStats with xg=0.0 — valid data, not missing
-        test_session.add(PlayerTourStats(
-            player_id=sample_player.id,
-            season_id=303,
-            team_id=sample_teams[0].id,
-            tour=1,
-            games_played=1,
-            xg=0.0,
-        ))
-        # TourSyncStatus marker for tour 1
+        # GamePlayerStats with xg in extra_stats — 2/2 rows = 100% coverage
+        test_session.add_all([
+            GamePlayerStats(
+                game_id=g.id, player_id=sample_player.id, team_id=sample_teams[0].id,
+                started=True, extra_stats={"xg": "1.5"},
+            ),
+            GamePlayerStats(
+                game_id=g.id, player_id=player2.id, team_id=sample_teams[1].id,
+                started=True, extra_stats={"xg": "1.5"},
+            ),
+        ])
         test_session.add(TourSyncStatus(season_id=303, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
         await test_session.commit()
         invalidate_season_cache()
@@ -1343,20 +1458,20 @@ class TestSeasonsAPI:
 
         assert data["max_completed_round"] == 1
         assert data["matches_played"] == 1
-        # xg=0 from PlayerTourStats, should be 0.0 (not fallback)
-        assert data["avg_xg_per_match"] == 0.0
+        # total_xg = 1.5 + 1.5 = 3.0, matches = 1 → avg = 3.0
+        assert data["avg_xg_per_match"] == 3.0
 
-    async def test_statistics_xg_fallback_when_no_player_tour_stats(
+    async def test_statistics_xg_null_when_low_coverage_round_scoped(
         self, client: AsyncClient, test_session, sample_championship, sample_teams,
     ):
-        """When no PlayerTourStats rows exist for the capped round, fall back to TeamSeasonStats."""
-        from app.models import Season, Game, GameTeamStats, TeamSeasonStats
+        """When no GamePlayerStats rows exist (low coverage) and round-scoped, return null."""
+        from app.models import Season, Game, GameTeamStats
         from app.models.tour_sync_status import TourSyncStatus
         from app.services.season_visibility import invalidate_season_cache
 
         season = Season(
             id=304,
-            name="2026 xG fallback",
+            name="2026 xG low coverage",
             championship_id=sample_championship.id,
             date_start=date(2025, 3, 1),
             date_end=date(2025, 11, 30),
@@ -1376,6 +1491,58 @@ class TestSeasonsAPI:
             home_team_id=sample_teams[0].id,
             away_team_id=sample_teams[1].id,
             home_score=1,
+            away_score=0,
+            extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
+        )
+        test_session.add(g)
+        await test_session.flush()
+
+        test_session.add_all([
+            GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=2),
+            GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=3),
+        ])
+
+        # No GamePlayerStats rows → total_rows=0 → 0% xg coverage → null for round-scoped
+        test_session.add(TourSyncStatus(season_id=304, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
+        await test_session.commit()
+        invalidate_season_cache()
+
+        response = await client.get("/api/v1/seasons/304/statistics")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["max_completed_round"] == 1
+        assert data["matches_played"] == 1
+        assert data["avg_xg_per_match"] is None
+
+    async def test_statistics_xg_fallback_full_season_low_coverage(
+        self, client: AsyncClient, test_session, sample_championship, sample_teams,
+    ):
+        """Full-season (cup), low xG coverage → fallback to TeamSeasonStats."""
+        from app.models import Season, Game, GameTeamStats, TeamSeasonStats
+        from app.services.season_visibility import invalidate_season_cache
+
+        season = Season(
+            id=306,
+            name="2026 Cup xG fallback",
+            championship_id=sample_championship.id,
+            date_start=date(2025, 3, 1),
+            date_end=date(2025, 11, 30),
+            tournament_format="cup",
+            has_table=False,
+            is_visible=True,
+        )
+        test_session.add(season)
+        await test_session.flush()
+
+        g = Game(
+            sota_id=uuid4(),
+            date=date(2025, 4, 1),
+            time=time(18, 0),
+            season_id=306,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=1,
             away_score=1,
             extended_stats_synced_at=datetime(2025, 4, 2, 10, 0, 0),
         )
@@ -1386,21 +1553,20 @@ class TestSeasonsAPI:
             GameTeamStats(game_id=g.id, team_id=sample_teams[0].id, fouls=2),
             GameTeamStats(game_id=g.id, team_id=sample_teams[1].id, fouls=3),
         ])
-        # No PlayerTourStats rows → should fall back to TeamSeasonStats
+
+        # No GamePlayerStats rows → total_rows=0 → 0% xg coverage → fallback to TeamSeasonStats
+        # TeamSeasonStats as fallback source
         test_session.add_all([
-            TeamSeasonStats(season_id=304, team_id=sample_teams[0].id, games_played=1, xg=1.5),
-            TeamSeasonStats(season_id=304, team_id=sample_teams[1].id, games_played=1, xg=0.8),
+            TeamSeasonStats(season_id=306, team_id=sample_teams[0].id, games_played=1, xg=1.5),
+            TeamSeasonStats(season_id=306, team_id=sample_teams[1].id, games_played=1, xg=0.8),
         ])
-        # TourSyncStatus marker for tour 1
-        test_session.add(TourSyncStatus(season_id=304, tour=1, synced_at=datetime(2025, 4, 2, 12, 0, 0)))
         await test_session.commit()
         invalidate_season_cache()
 
-        response = await client.get("/api/v1/seasons/304/statistics")
+        response = await client.get("/api/v1/seasons/306/statistics")
         assert response.status_code == 200
         data = response.json()
 
-        assert data["max_completed_round"] == 1
         assert data["matches_played"] == 1
         # Fallback: total_xg = 1.5+0.8 = 2.3, total_team_games = 2, avg = 2.3 / (2/2) = 2.3
         assert data["avg_xg_per_match"] == 2.3

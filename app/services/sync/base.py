@@ -142,6 +142,12 @@ GAME_TEAM_STATS_FIELDS = {
     "pass", "pass_accuracy", "pass_ratio", "foul", "yellow_cards", "red_cards", "corner", "offside",
     "shots_on_bar", "shot_on_bar", "shots_blocked", "shot_blocked",
     "penalty", "penalties", "saves", "save", "save_shot",
+    # New metrics from v1 /games/{id}/teams/
+    "minutes", "xg", "freekick", "freekick_shot", "freekick_pass",
+    "out", "goal_kick", "goal_pass", "pass_forward", "pass_progressive",
+    "key_pass", "pass_to_3rd", "pass_to_box", "pass_cross",
+    "shot_ratio", "corner_ratio", "freekick_shot_ratio", "freekick_pass_ratio",
+    "out_ratio", "goal_kick_ratio", "penalty_ratio",
 }
 
 

@@ -25,6 +25,28 @@ class GameStatsTeamEntry(BaseModel):
     shots_blocked: int | None = None
     penalties: int | None = None
     saves: int | None = None
+    # New metrics from SOTA v1
+    minutes: int | None = None
+    xg: float | None = None
+    freekicks: int | None = None
+    freekick_shots: int | None = None
+    freekick_passes: int | None = None
+    throw_ins: int | None = None
+    goal_kicks: int | None = None
+    assists: int | None = None
+    passes_forward: int | None = None
+    passes_progressive: int | None = None
+    key_passes: int | None = None
+    passes_to_final_third: int | None = None
+    passes_to_box: int | None = None
+    crosses: int | None = None
+    shot_accuracy: float | None = None
+    corner_accuracy: float | None = None
+    freekick_shot_accuracy: float | None = None
+    freekick_pass_accuracy: float | None = None
+    throw_in_accuracy: float | None = None
+    goal_kick_accuracy: float | None = None
+    penalty_accuracy: float | None = None
     extra_stats: dict | None = None
 
 

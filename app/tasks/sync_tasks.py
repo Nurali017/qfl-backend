@@ -323,14 +323,16 @@ async def _sync_extended_stats():
                 try:
                     r = await orchestrator.sync_game_stats(game.id)
                     game_results.append({"game_id": game.id, **r})
-                    if r.get("v2_enriched", 0) > 0:
+                    team_count = r.get("teams", 0)
+                    v2_count = r.get("v2_enriched", 0)
+                    if team_count > 0 or v2_count > 0:
                         game.extended_stats_synced_at = now
                         if game.season_id:
                             season_tours.setdefault(game.season_id, set())
                             if game.tour is not None:
                                 season_tours[game.season_id].add(game.tour)
                     else:
-                        logger.info("Game %s: no v2 data yet, will retry", game.id)
+                        logger.info("Game %s: no team stats or v2 data yet, will retry", game.id)
                 except Exception as e:
                     logger.warning("Extended game stats failed for game %s: %s", game.id, e)
                     game_errors.append(f"Game {game.id}: {e}")
@@ -398,14 +400,16 @@ async def _resync_extended_stats(game_ids: list[int]):
                 try:
                     r = await orchestrator.sync_game_stats(game.id)
                     game_results.append({"game_id": game.id, **r})
-                    if r.get("v2_enriched", 0) > 0:
+                    team_count = r.get("teams", 0)
+                    v2_count = r.get("v2_enriched", 0)
+                    if team_count > 0 or v2_count > 0:
                         game.extended_stats_synced_at = now
                         if game.season_id:
                             season_tours.setdefault(game.season_id, set())
                             if game.tour is not None:
                                 season_tours[game.season_id].add(game.tour)
                     else:
-                        logger.info("Game %s: no v2 data yet", game.id)
+                        logger.info("Game %s: no team stats or v2 data", game.id)
                 except Exception as e:
                     logger.warning("Resync failed for game %s: %s", game.id, e)
                     game_errors.append(f"Game {game.id}: {e}")

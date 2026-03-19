@@ -92,8 +92,8 @@ class SeasonStatisticsResponse(BaseModel):
     red_cards: int = 0
 
     # New metrics
-    avg_xg_per_match: float = 0.0
-    pass_accuracy: float = 0.0
+    avg_xg_per_match: float | None = None
+    pass_accuracy: float | None = None
     shots_on_target_pct: float = 0.0
     clean_sheets: int = 0
     total_players: int = 0
