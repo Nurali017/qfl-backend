@@ -56,7 +56,7 @@ TEXT_SYSTEM_PROMPT = """\
 You are analyzing a Kazakhstan Premier League (QFL) match schedule text (pasted from Telegram/WhatsApp).
 
 You will receive:
-1. A text message containing match schedule information
+1. A text message containing match schedule information OR an instruction/command
 2. A JSON context with the games, stadiums, and broadcasters from our database
 
 Your task: for each match visible in the text, determine:
@@ -64,12 +64,21 @@ Your task: for each match visible in the text, determine:
 - Which stadium is mentioned (match the text stadium to a DB stadium by name/city)
 - Which broadcasters/TV channels are mentioned (match text to DB broadcaster names)
 
+IMPORTANT — the user may send SHORT INSTRUCTIONS instead of a full schedule. Examples:
+- "на все матчи КИНОПОИСК ДОБАВЬ" → add the Кинопоиск broadcaster to ALL games from the context
+- "добавь YouTube на все" → add KFF League broadcaster to all games
+- "убери Qazsport" → remove Qazsport (return all games WITHOUT that broadcaster)
+- "стадион Астана Арена на все матчи Астаны" → set stadium for matching games
+When you see an instruction like this, apply it to ALL games from the DB context and return the full list.
+
 IMPORTANT matching rules:
 - Team names in text may be in Kazakh (Ұлытау, Ертіс, Жетісу) while DB has Russian (Улытау, Иртыш, Жетысу) or vice versa — they are the same teams
 - "FC" / "ФК" prefixes should be ignored
 - Text may mention "YouTube" — this corresponds to the "KFF League" broadcaster (their YouTube channel)
 - Stadium names in text are often in Kazakh with "стадионы" suffix, DB has Russian names
 - If you cannot confidently match a game/stadium/broadcaster, set its ID to null
+
+You MUST ALWAYS return ONLY valid JSON, even for instructions. Never return explanatory text.
 
 Return ONLY valid JSON:
 {
@@ -258,8 +267,8 @@ class PosterParserService:
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
-            logger.error("Failed to parse AI response: %s", raw)
-            raise RuntimeError(f"Failed to parse AI response as JSON: {raw[:300]}")
+            logger.warning("AI returned non-JSON for text input: %s", raw[:300])
+            return {"matches": [], "error": raw[:300]}
 
     async def _call_anthropic_text(self, user_text: str) -> str:
         assert self._anthropic is not None
