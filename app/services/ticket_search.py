@@ -1,4 +1,4 @@
-"""Ticket search service — finds ticket URLs via SerpAPI (Google Search)."""
+"""Ticket search service — finds ticket URLs via Serper (Google Search)."""
 
 import asyncio
 import logging
@@ -35,7 +35,7 @@ _GENERIC_PATHS = {
     "/ru/page/bilety", "/kz/page/bilety",
 }
 
-SERPAPI_URL = "https://serpapi.com/search.json"
+SERPER_URL = "https://google.serper.dev/search"
 
 # Russian month names (genitive case) for query formatting
 _MONTHS_RU = {
@@ -243,24 +243,18 @@ def _is_retryable(exc: BaseException) -> bool:
     retry=retry_if_exception(_is_retryable),
     reraise=True,
 )
-async def _search_serpapi(
+async def _search_serper(
     query: str, api_key: str, client: httpx.AsyncClient
 ) -> list[dict]:
-    """Search Google via SerpAPI. Returns organic_results list."""
-    resp = await client.get(
-        SERPAPI_URL,
-        params={
-            "engine": "google",
-            "q": query,
-            "gl": "kz",
-            "hl": "ru",
-            "num": 10,
-            "api_key": api_key,
-        },
+    """Search Google via Serper.dev. Returns organic results list."""
+    resp = await client.post(
+        SERPER_URL,
+        headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+        json={"q": query, "gl": "kz", "hl": "ru", "num": 10},
     )
     resp.raise_for_status()
     data = resp.json()
-    return data.get("organic_results", [])
+    return data.get("organic", [])
 
 
 async def search_and_update_tickets(db: AsyncSession) -> dict:
@@ -313,7 +307,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
 
             try:
                 query = _build_search_query(home_team.name, away_team.name, game.date)
-                organic = await _search_serpapi(query, settings.serper_api_key, client)
+                organic = await _search_serper(query, settings.serper_api_key, client)
 
                 # Check for free entry in Google results
                 is_free = _detect_free_entry(organic, home_team.name)
@@ -355,7 +349,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                 game.ticket_url_fetched_at = utcnow()
                 searched += 1
 
-                # Rate limit: SerpAPI allows ~1 req/sec on free plan
+                # Rate limit: Serper allows ~1 req/sec
                 await asyncio.sleep(1.0)
 
             except Exception:
