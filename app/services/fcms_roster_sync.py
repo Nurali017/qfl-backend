@@ -13,6 +13,7 @@ from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.models.country import Country
 from app.models.fcms_roster_sync_log import FcmsRosterSyncLog
 from app.models.player import Player
 from app.models.player_team import PlayerTeam
@@ -219,6 +220,11 @@ class FcmsRosterSyncService:
             club_name = club_info.get("title") or club_info.get("internationalTitle") or ""
             fcms_name = f"{fn_ru} {ln_ru}".strip() or f"{fn_en} {ln_en}".strip()
 
+            # Extract country from nationalCitizenships
+            citizenships = p_data.get("nationalCitizenships") or []
+            country_iso2 = citizenships[0].get("iso2") if citizenships else None
+            country_id = await self._resolve_country(country_iso2) if country_iso2 else None
+
             # Step 0: no jersey number = deregistered → hide from roster
             if num is None:
                 match, method = self._find_in_roster(
@@ -322,6 +328,10 @@ class FcmsRosterSyncService:
                     except ValueError:
                         pass
 
+                if country_id and lp.country_id != country_id:
+                    player_updates.append(f"страна: {lp.country_id} → {country_id} ({country_iso2})")
+                    lp.country_id = country_id
+
                 if num is not None and pt.number != num:
                     player_updates.append(f"номер: {pt.number} → {num}")
                     pt.number = num
@@ -350,6 +360,8 @@ class FcmsRosterSyncService:
                     "dob": dob,
                     "person_id": person_id,
                     "club": club_name,
+                    "country_id": country_id,
+                    "country_iso2": country_iso2,
                     "team_id": team.id,
                     "season_id": season_id,
                 })
@@ -437,6 +449,20 @@ class FcmsRosterSyncService:
                 pass
 
         return None, None
+
+    _country_cache: dict[str, int | None] = {}
+
+    async def _resolve_country(self, iso2: str) -> int | None:
+        """Resolve ISO2 country code to country_id, with caching."""
+        iso2 = iso2.upper()
+        if iso2 in self._country_cache:
+            return self._country_cache[iso2]
+        result = await self.db.execute(
+            select(Country.id).where(Country.code == iso2)
+        )
+        country_id = result.scalar()
+        self._country_cache[iso2] = country_id
+        return country_id
 
     def _format_telegram_report_chunks(self, all_changes: list[dict], comp_name: str) -> list[str]:
         """Format all changes into Telegram messages, split by team to stay under 4096 chars."""
