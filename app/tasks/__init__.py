@@ -60,12 +60,6 @@ if settings.sota_enabled:
 else:
     celery_app.conf.beat_schedule = {}
 
-# Guardrail: detect broken finished games (always on, regardless of SOTA)
-celery_app.conf.beat_schedule["check-finished-guardrail"] = {
-    "task": "app.tasks.live_tasks.check_finished_without_timestamp",
-    "schedule": crontab(minute="*/10"),
-}
-
 celery_app.conf.beat_schedule["fetch-weather-every-3h"] = {
     "task": "app.tasks.weather_tasks.fetch_weather",
     "schedule": crontab(minute="30", hour="*/3"),
@@ -91,7 +85,7 @@ if settings.fcms_enabled:
     }
     celery_app.conf.beat_schedule["sync-fcms-rosters-daily"] = {
         "task": "app.tasks.fcms_tasks.sync_fcms_rosters",
-        "schedule": crontab(minute="0", hour="6"),
+        "schedule": crontab(minute="0", hour="10,17"),
     }
 
 if settings.youtube_auto_link_enabled:

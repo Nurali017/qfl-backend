@@ -9,7 +9,6 @@ Tasks:
 - sync_post_match_protocol: Re-sync events & stats for recently finished games
 - post_finish_followup: Post-match pipeline (resync, tour check, extended stats)
 - sync_extended_stats_for_game: Game-scoped extended stats sync
-- check_finished_without_timestamp: Guardrail — alert on broken finished games
 """
 import logging
 import time
@@ -613,47 +612,6 @@ async def _sync_extended_aggregates_for_season(
     }
 
 
-async def _check_finished_without_timestamp():
-    """Guardrail: auto-repair games with status=finished but finished_at=NULL.
-
-    Uses GameLifecycleService.finish_live() repair-tail path.
-    Sends a Telegram notification with results.
-    """
-    from app.services.game_lifecycle import GameLifecycleService
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Game.id).where(
-                Game.status == GameStatus.finished,
-                Game.finished_at.is_(None),
-            )
-        )
-        broken_ids = list(result.scalars().all())
-
-        if not broken_ids:
-            return {"broken": 0}
-
-        repaired, failed = [], []
-        for gid in broken_ids:
-            try:
-                service = GameLifecycleService(db)
-                await service.finish_live(gid)
-                repaired.append(gid)
-            except Exception:
-                logger.exception("Auto-repair failed for game %s", gid)
-                failed.append(gid)
-
-        if repaired or failed:
-            msg_parts = [f"🔧 Auto-repaired {len(repaired)} game(s) with broken finished_at."]
-            if repaired:
-                msg_parts.append("Repaired: " + ", ".join(f"#{gid}" for gid in repaired[:20]))
-            if failed:
-                msg_parts.append(f"{len(failed)} failed: " + ", ".join(f"#{gid}" for gid in failed[:20]))
-            await send_telegram_message("\n".join(msg_parts))
-
-        return {"broken": len(broken_ids), "repaired": len(repaired), "failed": len(failed)}
-
-
 @celery_app.task(name="app.tasks.live_tasks.post_finish_followup")
 def post_finish_followup(game_id: int):
     """Celery task: Post-match pipeline for a single game."""
@@ -664,9 +622,3 @@ def post_finish_followup(game_id: int):
 def sync_extended_stats_for_game(game_id: int):
     """Celery task: Sync extended stats for a single game."""
     return run_async(_sync_extended_stats_for_game(game_id))
-
-
-@celery_app.task(name="app.tasks.live_tasks.check_finished_without_timestamp")
-def check_finished_without_timestamp():
-    """Celery task: Guardrail — alert on broken finished games. Runs every 10 min."""
-    return run_async(_check_finished_without_timestamp())

@@ -76,11 +76,11 @@ class LiveSyncService:
         return list(result.scalars().all())
 
     async def get_games_for_pregame_lineup(self) -> list[Game]:
-        """Get games starting within 30 minutes that don't have lineup yet."""
+        """Get games starting within 40 minutes that need positions/formations from SOTA."""
         now = datetime.now(ZoneInfo("Asia/Almaty"))
         today = now.date()
         current_time = now.time()
-        latest_time = (now + timedelta(minutes=30)).time()
+        latest_time = (now + timedelta(minutes=40)).time()
 
         result = await self.db.execute(
             select(Game).where(
@@ -93,9 +93,8 @@ class LiveSyncService:
                     Game.sota_id.isnot(None),
                     Game.sync_disabled == False,
                     Game.is_schedule_tentative == False,
-                    Game.has_lineup == False,
-                    # Skip games where FCMS already fetched lineup
-                    or_(Game.lineup_source != "fcms", Game.lineup_source.is_(None)),
+                    # Skip games where SOTA already synced positions
+                    Game.lineup_source != "sota_live",
                 )
             )
         )
