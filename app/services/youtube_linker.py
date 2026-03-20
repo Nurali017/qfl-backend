@@ -493,8 +493,8 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
             if broadcaster_id is not None:
                 await _ensure_broadcaster_linked(db, game.id, broadcaster_id)
 
-            # Add to media videos (replays and reviews)
-            if video_type in ("replay", "review"):
+            # Add reviews to media gallery
+            if video_type == "review":
                 await _ensure_media_video(db, vid, title)
 
             # Mark as processed
