@@ -233,13 +233,13 @@ class FcmsRosterSyncService:
                 )
                 if match:
                     pt_m, lp_m = match
+                    matched_player_ids.add(lp_m.id)
                     if not pt_m.is_hidden:
                         pt_m.is_hidden = True
-                        matched_player_ids.add(lp_m.id)
-                changes["deregistered"].append({
-                    "name": fcms_name,
-                    "person_id": person_id,
-                })
+                        changes["deregistered"].append({
+                            "name": fcms_name,
+                            "person_id": person_id,
+                        })
                 continue
 
             # Step 1: find in current team roster
