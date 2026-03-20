@@ -52,10 +52,6 @@ if settings.sota_enabled:
             "task": "app.tasks.sync_tasks.sync_extended_stats",
             "schedule": crontab(minute="15", hour="*/6"),
         },
-        "check-tour-completion-every-30min": {
-            "task": "app.tasks.sync_tasks.check_tour_completion",
-            "schedule": crontab(minute="*/30"),
-        },
     }
 else:
     celery_app.conf.beat_schedule = {}
