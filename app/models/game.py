@@ -101,6 +101,10 @@ class Game(Base):
     half1_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     half2_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # FCMS integration
+    fcms_match_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
+    fcms_protocol_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     # When match was marked as finished (for post-match protocol sync window)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
 

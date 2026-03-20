@@ -12,6 +12,7 @@ from app.schemas.admin.broadcasters import AdminGameBroadcasterItem
 class AdminGameResponse(BaseModel):
     id: int
     sota_id: Optional[UUID] = None
+    fcms_match_id: Optional[int] = None
     date: dt.date
     time: Optional[dt.time] = None
     tour: Optional[int] = None
@@ -56,6 +57,7 @@ class AdminGameResponse(BaseModel):
 
 class AdminGameUpdateRequest(BaseModel):
     sota_id: Optional[UUID] = None
+    fcms_match_id: Optional[int] = None
     date: Optional[dt.date] = None
     time: Optional[dt.time] = None
     tour: Optional[int] = None

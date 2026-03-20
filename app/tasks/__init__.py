@@ -10,7 +10,7 @@ celery_app = Celery(
     "qfl_tasks",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks"],
+    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks", "app.tasks.fcms_tasks"],
 )
 
 celery_app.conf.update(
@@ -75,6 +75,20 @@ celery_app.conf.beat_schedule["search-tickets-every-3h"] = {
     "task": "app.tasks.ticket_tasks.search_tickets",
     "schedule": crontab(minute="0", hour="*/3"),
 }
+
+if settings.fcms_enabled:
+    celery_app.conf.beat_schedule["fetch-fcms-pregame-lineups"] = {
+        "task": "app.tasks.fcms_tasks.fetch_fcms_pregame_lineups",
+        "schedule": crontab(minute="*/20"),
+    }
+    celery_app.conf.beat_schedule["sync-fcms-post-match-protocol"] = {
+        "task": "app.tasks.fcms_tasks.sync_fcms_post_match_protocol",
+        "schedule": crontab(minute="*/15"),
+    }
+    celery_app.conf.beat_schedule["fcms-bulk-import-daily"] = {
+        "task": "app.tasks.fcms_tasks.fcms_bulk_import",
+        "schedule": crontab(minute="0", hour="11,18"),
+    }
 
 @worker_shutdown.connect
 def on_worker_shutdown(**kwargs):
