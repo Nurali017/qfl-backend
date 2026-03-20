@@ -9,10 +9,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Game, GameLineup, GameStatus, LineupType, Player, PlayerTeam
+from app.models import Game, GameLineup, GameStatus, LineupType, Player, PlayerTeam, Team
 from app.services.fcms_client import FcmsClient
 from app.services.file_storage import FileStorageService
-from app.services.telegram import send_telegram_message
+from app.services.telegram import send_telegram_document, send_telegram_message
 from app.utils.fcms_pdf_parser import parse_pre_match_lineup, extract_attendance_from_match_report
 from app.utils.timestamps import utcnow
 
@@ -32,13 +32,13 @@ class FcmsSyncService:
     # ── Query helpers ────────────────────────────────────────────────
 
     async def get_games_for_fcms_lineup(self) -> list[Game]:
-        """Games starting within 90 min that have fcms_match_id but no FCMS lineup yet."""
+        """Games starting within 60 min that have fcms_match_id but no FCMS lineup yet."""
         from datetime import datetime
 
         now = datetime.now(ALMATY_TZ)
         today = now.date()
         current_time = now.time()
-        latest_time = (now + timedelta(minutes=90)).time()
+        latest_time = (now + timedelta(minutes=60)).time()
 
         result = await self.db.execute(
             select(Game).where(
@@ -159,6 +159,18 @@ class FcmsSyncService:
             "FCMS lineup synced for game %d: %d players (home=%d, away=%d)",
             game_id, total_lineup, home_count, away_count,
         )
+
+        # Send PDF to Telegram
+        try:
+            home_team = await self.db.get(Team, game.home_team_id) if game.home_team_id else None
+            away_team = await self.db.get(Team, game.away_team_id) if game.away_team_id else None
+            home_name = home_team.name if home_team else "?"
+            away_name = away_team.name if away_team else "?"
+            caption = f"📋 Предматчевый PDF\n{home_name} vs {away_name}\n{game.date} {game.time or ''}"
+            filename = f"prematch_{home_name}_vs_{away_name}_{game.date}.pdf"
+            await send_telegram_document(pdf_bytes, filename, caption)
+        except Exception:
+            logger.exception("Failed to send pre-match PDF to Telegram for game %d", game_id)
 
         return {
             "game_id": game_id,
