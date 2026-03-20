@@ -10,7 +10,7 @@ celery_app = Celery(
     "qfl_tasks",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks", "app.tasks.fcms_tasks"],
+    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks", "app.tasks.fcms_tasks", "app.tasks.youtube_tasks"],
 )
 
 celery_app.conf.update(
