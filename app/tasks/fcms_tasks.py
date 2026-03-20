@@ -1,4 +1,4 @@
-"""Celery tasks for FCMS integration: bulk import, pre-match lineups, post-match protocols."""
+"""Celery tasks for FCMS integration: bulk import, pre-match lineups, post-match protocols, roster sync."""
 
 import logging
 
@@ -6,6 +6,9 @@ from app.tasks import celery_app
 from app.utils.async_celery import run_async
 
 logger = logging.getLogger(__name__)
+
+_ROSTER_LOCK_KEY = "qfl:fcms-roster-sync"
+_ROSTER_LOCK_TTL = 600  # 10 min — sync takes ~30-60s for 30 teams
 
 
 @celery_app.task(name="app.tasks.fcms_tasks.fcms_bulk_import")
@@ -78,3 +81,33 @@ async def _sync_fcms_post_match_protocol() -> dict:
                 logger.exception("Failed to sync FCMS protocol for game %d", game.id)
 
         return {"games_found": len(games), "results": results}
+
+
+@celery_app.task(name="app.tasks.fcms_tasks.sync_fcms_rosters")
+def sync_fcms_rosters(triggered_by: str = "celery_beat"):
+    """Sync player rosters from FCMS. Daily at 06:00 + manual trigger."""
+    return run_async(_sync_fcms_rosters(triggered_by))
+
+
+async def _sync_fcms_rosters(triggered_by: str) -> dict:
+    from app.database import AsyncSessionLocal
+    from app.services.fcms_client import FcmsClient
+    from app.services.fcms_roster_sync import FcmsRosterSyncService
+    from app.utils.redis_lock import acquire_token_lock, release_token_lock
+
+    token = await acquire_token_lock(_ROSTER_LOCK_KEY, _ROSTER_LOCK_TTL)
+    if token is None:
+        logger.info("FCMS roster sync already running, skipping")
+        return {"status": "already_running"}
+
+    try:
+        client = FcmsClient()
+        try:
+            async with AsyncSessionLocal() as db:
+                service = FcmsRosterSyncService(db, client)
+                results = await service.sync_all_competitions(triggered_by)
+                return {"status": "done", "results": results}
+        finally:
+            await client.close()
+    finally:
+        await release_token_lock(_ROSTER_LOCK_KEY, token)

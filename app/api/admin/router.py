@@ -24,6 +24,7 @@ from app.api.admin.broadcasters import router as broadcasters_router
 from app.api.admin.stadiums import router as stadiums_router
 from app.api.admin.teams import router as teams_router
 from app.api.admin.media_videos import router as media_videos_router
+from app.api.admin.fcms_roster import router as fcms_roster_router
 
 router = APIRouter(prefix="/admin")
 router.include_router(auth_router)
@@ -50,3 +51,4 @@ router.include_router(broadcasters_router)
 router.include_router(stadiums_router)
 router.include_router(teams_router)
 router.include_router(media_videos_router)
+router.include_router(fcms_roster_router)

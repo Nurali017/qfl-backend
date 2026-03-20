@@ -3,11 +3,13 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.api.deps import get_db
+from app.utils.cache import cache_get, cache_set
 from app.models import (
     Game, GameStatus, Player, PlayerTeam, GameLineup, GameReferee, Season,
 )
@@ -51,6 +53,11 @@ async def get_game_lineup(
     Get pre-game lineup data for a game.
     Includes referees, coaches for both teams, and player lineups.
     """
+    cache_key = f"game_lineup:{game_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     # Get game to know home/away team IDs
     game_result = await db.execute(
         select(Game)
@@ -292,7 +299,7 @@ async def get_game_lineup(
 
     source = normalize_lineup_source(game.lineup_source, has_lineup_data)
 
-    return GameLineupResponse(
+    response = GameLineupResponse(
         game_id=game_id,
         has_lineup=has_lineup_data,
         rendering=LineupRendering(
@@ -311,3 +318,7 @@ async def get_game_lineup(
             away_team=away_lineup,
         ),
     )
+    json_bytes = response.model_dump_json().encode()
+    ttl = 30 if game.is_live else 60
+    cache_set(cache_key, json_bytes, ttl)
+    return Response(content=json_bytes, media_type="application/json")

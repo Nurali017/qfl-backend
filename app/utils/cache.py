@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 _cache: dict[str, tuple[float, bytes]] = {}
 _lock = threading.Lock()
-_MAX_SIZE = 256
+_MAX_SIZE = 512
 
 
 def cache_get(key: str) -> bytes | None:
