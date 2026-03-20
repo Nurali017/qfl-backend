@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.models.game import Game
 from app.models.game_broadcaster import GameBroadcaster
 from app.models.broadcaster import Broadcaster
+from app.models.media_video import MediaVideo
 from app.services.season_visibility import get_current_season_id
 from app.models import Season
 from app.utils.live_flag import get_redis
@@ -351,6 +352,22 @@ async def _ensure_broadcaster_linked(
         db.add(GameBroadcaster(game_id=game_id, broadcaster_id=broadcaster_id))
 
 
+async def _ensure_media_video(db: AsyncSession, video_id: str, title: str) -> None:
+    """Add MediaVideo row if youtube_id not already present."""
+    existing = await db.execute(
+        select(MediaVideo.id).where(MediaVideo.youtube_id == video_id)
+    )
+    if existing.scalar_one_or_none():
+        return
+    # Get lowest sort_order to place new video on top
+    min_order = await db.execute(
+        select(MediaVideo.sort_order).order_by(MediaVideo.sort_order).limit(1)
+    )
+    top_order = (min_order.scalar() or 0) - 1
+    db.add(MediaVideo(title=title, youtube_id=video_id, sort_order=top_order))
+    logger.info("Added MediaVideo: %s (%s)", title, video_id)
+
+
 async def _get_kff_broadcaster_id(db: AsyncSession) -> int | None:
     """Find the KFF League YouTube broadcaster."""
     result = await db.execute(
@@ -475,6 +492,10 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
             # Link broadcaster
             if broadcaster_id is not None:
                 await _ensure_broadcaster_linked(db, game.id, broadcaster_id)
+
+            # Add to media videos (replays and reviews)
+            if video_type in ("replay", "review"):
+                await _ensure_media_video(db, vid, title)
 
             # Mark as processed
             await redis.set(f"yt:linked:{vid}", "1", ex=7 * 86400)
