@@ -143,10 +143,11 @@ class FcmsRosterSyncService:
         log.completed_at = datetime.now(timezone.utc)
         await self.db.commit()
 
-        # Telegram report
+        # Telegram report (split into chunks to avoid 4096 char limit)
         try:
-            report = self._format_telegram_report(all_changes, log.competition_name)
-            await send_telegram_message(report)
+            chunks = self._format_telegram_report_chunks(all_changes, log.competition_name)
+            for chunk in chunks:
+                await send_telegram_message(chunk)
         except Exception:
             logger.exception("Failed to send Telegram report")
 
@@ -428,16 +429,17 @@ class FcmsRosterSyncService:
 
         return None, None
 
-    def _format_telegram_report(self, all_changes: list[dict], comp_name: str) -> str:
-        """Format all changes into Telegram message (HTML)."""
-        has_any = False
-        lines = [f"<b>📋 FCMS Roster Sync — {comp_name}</b>\n"]
+    def _format_telegram_report_chunks(self, all_changes: list[dict], comp_name: str) -> list[str]:
+        """Format all changes into Telegram messages, split by team to stay under 4096 chars."""
+        MAX_LEN = 4000
+        header = f"<b>📋 FCMS Roster Sync — {comp_name}</b>\n"
+        team_blocks: list[str] = []
 
+        has_any = False
         for ch in all_changes:
             if "error" in ch:
                 has_any = True
-                lines.append(f"<b>{ch['team_name']}</b> ⚠️ ОШИБКА: {ch['error']}")
-                lines.append("")
+                team_blocks.append(f"<b>{ch['team_name']}</b> ⚠️ ОШИБКА: {ch['error']}\n")
                 continue
 
             team_lines = []
@@ -464,14 +466,25 @@ class FcmsRosterSyncService:
                     team_lines.append(f"  ⏸ {p['name']} — отзаявлен")
 
             if team_lines:
-                lines.append(f"<b>{ch['team_name']}</b> ({ch['matched']}/{ch['fcms_active']} заявленных)")
-                lines.extend(team_lines)
-                lines.append("")
+                block = f"<b>{ch['team_name']}</b> ({ch['matched']}/{ch['fcms_active']} заявленных)\n"
+                block += "\n".join(team_lines) + "\n"
+                team_blocks.append(block)
 
         if not has_any:
-            lines.append("Изменений нет — все заявки актуальны ✅")
+            return [header + "Изменений нет — все заявки актуальны ✅"]
 
-        return "\n".join(lines)
+        # Split into chunks
+        chunks: list[str] = []
+        current = header
+        for block in team_blocks:
+            if len(current) + len(block) > MAX_LEN:
+                chunks.append(current.rstrip())
+                current = f"<b>📋 {comp_name} (продолжение)</b>\n\n"
+            current += "\n" + block
+        if current.strip():
+            chunks.append(current.rstrip())
+
+        return chunks
 
     @staticmethod
     def _parse_competition_map(raw: str) -> list[tuple[int, int]]:
