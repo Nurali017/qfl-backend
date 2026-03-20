@@ -6,7 +6,7 @@ Player profiles (top_role) are managed locally — no longer synced from SOTA.
 """
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
@@ -109,6 +109,13 @@ class PlayerSyncService(BaseSyncService):
                     entry["dry_match_rank"] = rank
                 except (ValueError, TypeError):
                     pass
+        # Reset stale ranks before re-populating from SOTA
+        await self.db.execute(
+            update(PlayerSeasonStats)
+            .where(PlayerSeasonStats.season_id == season_id)
+            .values(goal_rank=None, goal_pass_rank=None, dry_match_rank=None)
+        )
+
         count = 0
         now = utcnow()
         for sota_id_str, metrics in combined.items():
