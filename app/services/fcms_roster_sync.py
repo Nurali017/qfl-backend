@@ -219,8 +219,17 @@ class FcmsRosterSyncService:
             club_name = club_info.get("title") or club_info.get("internationalTitle") or ""
             fcms_name = f"{fn_ru} {ln_ru}".strip() or f"{fn_en} {ln_en}".strip()
 
-            # Step 0: no jersey number = deregistered
+            # Step 0: no jersey number = deregistered → hide from roster
             if num is None:
+                match, method = self._find_in_roster(
+                    fn_ru, ln_ru, fn_en, ln_en, person_id, None,
+                    local_by_fcms, local_by_name, {},
+                )
+                if match:
+                    pt_m, lp_m = match
+                    if not pt_m.is_hidden:
+                        pt_m.is_hidden = True
+                        matched_player_ids.add(lp_m.id)
                 changes["deregistered"].append({
                     "name": fcms_name,
                     "person_id": person_id,
