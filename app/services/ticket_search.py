@@ -4,8 +4,10 @@ import asyncio
 import logging
 import re
 from datetime import date, datetime, timedelta
+from typing import NamedTuple
 from urllib.parse import urlparse, unquote
 
+import anthropic
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from sqlalchemy import select
@@ -27,6 +29,7 @@ TICKET_DOMAINS = [
     "iticket.kz",
     "zakazbiletov.kz",
     "kino.kz",
+    "afisha.yandex.kz",
 ]
 
 # Generic paths that don't point to a specific event — reject these
@@ -148,6 +151,10 @@ def _detect_free_entry(organic_results: list[dict], home_name: str) -> bool:
             continue
         for phrase in _FREE_ENTRY_PHRASES:
             if phrase in text:
+                logger.info(
+                    "Detected free entry phrase '%s' in: %s",
+                    phrase, snippet[:120] or title[:120],
+                )
                 return True
     return False
 
@@ -175,11 +182,29 @@ async def _check_team_website_free_entry(
     return False
 
 
+def _snippet_has_wrong_year(snippet: str, title: str, game_year: int) -> bool:
+    """Reject if snippet/title mentions a specific year that doesn't match the game year."""
+    text = f"{title} {snippet}"
+    # Find all 4-digit years (2020-2030 range)
+    years_found = re.findall(r'\b(20[2-3]\d)\b', text)
+    if not years_found:
+        return False  # No year mentioned — can't reject
+    # If ANY mentioned year matches game year, accept
+    return all(int(y) != game_year for y in years_found)
+
+
+class TicketMatch(NamedTuple):
+    url: str
+    title: str
+    snippet: str
+
+
 def _extract_ticket_url(
     organic_results: list[dict],
     home_name: str,
     away_name: str,
-) -> str | None:
+    game_date: date | None = None,
+) -> TicketMatch | None:
     """Extract the first ticket URL matching allowed domains + team names."""
     for result in organic_results:
         link = result.get("link", "")
@@ -224,15 +249,73 @@ def _extract_ticket_url(
             if not domain_ok:
                 continue
             # Verify BOTH teams appear in URL/title/snippet
-            match_text = unquote(link) + " " + result.get("title", "") + " " + result.get("snippet", "")
+            snippet = result.get("snippet", "")
+            title = result.get("title", "")
+            match_text = unquote(link) + " " + title + " " + snippet
             if not _team_matches_text(home_name, match_text):
                 continue
             if not _team_matches_text(away_name, match_text):
                 continue
-            return link
+            # Reject results mentioning a different year than the game
+            if game_date and _snippet_has_wrong_year(snippet, title, game_date.year):
+                logger.info(
+                    "Rejected ticket URL (wrong year in snippet): %s — %s",
+                    link, snippet[:120],
+                )
+                continue
+            logger.info("Matched ticket URL: %s (title: %s)", link, title[:100])
+            return TicketMatch(url=link, title=title, snippet=snippet)
         except Exception:
             continue
     return None
+
+
+async def _ai_validate_ticket_url(
+    url: str,
+    title: str,
+    snippet: str,
+    home_name: str,
+    away_name: str,
+    game_date: date,
+) -> bool:
+    """Use Claude Haiku to validate whether a ticket URL is for this specific match."""
+    from app.config import get_settings
+    settings = get_settings()
+
+    if not settings.anthropic_api_key:
+        return True  # Skip AI validation if no API key
+
+    date_str = _format_date_ru(game_date)
+    prompt = (
+        f"Это ссылка на билеты именно на матч {home_name} — {away_name}, "
+        f"который состоится {date_str} {game_date.year} года?\n\n"
+        f"URL: {url}\n"
+        f"Заголовок: {title}\n"
+        f"Описание: {snippet}\n\n"
+        "Ответь только 'да' или 'нет'."
+    )
+
+    try:
+        client = anthropic.AsyncAnthropic(
+            api_key=settings.anthropic_api_key,
+            max_retries=1,
+            timeout=10,
+        )
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=8,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = response.content[0].text.strip().lower()
+        is_valid = answer.startswith("да") or answer.startswith("yes")
+        logger.info(
+            "AI validation for game ticket (%s vs %s): %s → %s",
+            home_name, away_name, url, "accepted" if is_valid else "rejected",
+        )
+        return is_valid
+    except Exception:
+        logger.warning("AI ticket validation failed, accepting URL as fallback", exc_info=True)
+        return True
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -345,19 +428,31 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                         f"\U0001f4c5 Дата: {game.date}"
                     )
                 else:
-                    ticket_url = _extract_ticket_url(all_organic, home_team.name, away_team.name)
-                    if ticket_url:
-                        game.ticket_url = ticket_url
+                    match = _extract_ticket_url(all_organic, home_team.name, away_team.name, game.date)
+                    if match:
+                        # AI validation — reject if AI says it's not for this match
+                        is_valid = await _ai_validate_ticket_url(
+                            match.url, match.title, match.snippet,
+                            home_team.name, away_team.name, game.date,
+                        )
+                        if not is_valid:
+                            logger.info(
+                                "AI rejected ticket URL for game %s: %s",
+                                game.id, match.url,
+                            )
+                            match = None
+                    if match:
+                        game.ticket_url = match.url
                         updated += 1
                         logger.info(
                             "Found ticket URL for game %s (%s vs %s): %s",
-                            game.id, home_team.name, away_team.name, ticket_url,
+                            game.id, home_team.name, away_team.name, match.url,
                         )
                         await send_telegram_message(
                             "\U0001f3df Билеты найдены\n\n"
                             f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
                             f"\U0001f4c5 Дата: {game.date}\n"
-                            f'\U0001f517 Ссылка: <a href="{ticket_url}">Купить билеты</a>'
+                            f'\U0001f517 Ссылка: <a href="{match.url}">Купить билеты</a>'
                         )
 
                 game.ticket_url_fetched_at = utcnow()
