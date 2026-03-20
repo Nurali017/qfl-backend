@@ -94,6 +94,8 @@ class LiveSyncService:
                     Game.sync_disabled == False,
                     Game.is_schedule_tentative == False,
                     Game.has_lineup == False,
+                    # Skip games where FCMS already fetched lineup
+                    or_(Game.lineup_source != "fcms", Game.lineup_source.is_(None)),
                 )
             )
         )

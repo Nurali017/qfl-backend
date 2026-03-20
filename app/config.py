@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     serper_api_key: str = ""
     ticket_search_enabled: bool = False
 
+    # FCMS (FIFA CMS) API
+    fcms_enabled: bool = False
+    fcms_base_url: str = "https://api-standard.fcms.ma.services"
+    fcms_auth_url: str = "https://auth-standard.fcms.ma.services/auth/signin"
+    fcms_email: str = ""
+    fcms_password: str = ""
+    fcms_customer_code: str = "kaz"
+
     # Frontend revalidation
     revalidation_secret: str = ""
     frontend_internal_url: str = "http://qfl-frontend:3000"
