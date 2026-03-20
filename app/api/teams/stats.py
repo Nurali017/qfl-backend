@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.utils.cache import cache_get, cache_set
 from app.models import (
     Game,
     TeamSeasonStats,
@@ -23,6 +25,11 @@ async def get_team_stats(
 ):
     """Get team statistics for a season from local DB."""
     season_id = await resolve_visible_season_id(db, season_id)
+
+    cache_key = f"team_stats:{team_id}:{season_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
 
     # Fetch from team_season_stats table
     result = await db.execute(
@@ -63,7 +70,7 @@ async def get_team_stats(
         """Convert Decimal to float."""
         return float(val) if val is not None else None
 
-    return TeamSeasonStatsResponse(
+    response = TeamSeasonStatsResponse(
         team_id=stats.team_id,
         season_id=stats.season_id,
         games_played=stats.games_played,
@@ -135,3 +142,6 @@ async def get_team_stats(
         clean_sheets=clean_sheets,
         extra_stats=stats.extra_stats,
     )
+    json_bytes = response.model_dump_json().encode()
+    cache_set(cache_key, json_bytes, 60)
+    return Response(content=json_bytes, media_type="application/json")

@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
+from app.utils.cache import cache_get, cache_set
 from app.models import (
     Game,
     Player,
@@ -53,6 +55,11 @@ async def get_team_overview(
 ):
     """Get aggregated team overview data for the team page."""
     season_id = await resolve_visible_season_id(db, season_id)
+
+    cache_key = f"team_overview:{team_id}:{season_id}:{lang}:{fixtures_limit}:{leaders_limit}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
 
     team_result = await db.execute(
         select(Team)
@@ -460,7 +467,7 @@ async def get_team_overview(
         ) if season else None
     )
 
-    return TeamOverviewResponse(
+    response = TeamOverviewResponse(
         team=overview_team,
         season=overview_season,
         summary=summary,
@@ -471,3 +478,6 @@ async def get_team_overview(
         leaders=leaders,
         staff_preview=staff_preview,
     )
+    json_bytes = response.model_dump_json().encode()
+    cache_set(cache_key, json_bytes, 30)
+    return Response(content=json_bytes, media_type="application/json")

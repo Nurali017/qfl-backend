@@ -10,7 +10,7 @@ celery_app = Celery(
     "qfl_tasks",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks", "app.tasks.fcms_tasks"],
+    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks", "app.tasks.fcms_tasks", "app.tasks.youtube_tasks"],
 )
 
 celery_app.conf.update(
@@ -88,6 +88,16 @@ if settings.fcms_enabled:
     celery_app.conf.beat_schedule["fcms-bulk-import-daily"] = {
         "task": "app.tasks.fcms_tasks.fcms_bulk_import",
         "schedule": crontab(minute="0", hour="11,18"),
+    }
+    celery_app.conf.beat_schedule["sync-fcms-rosters-daily"] = {
+        "task": "app.tasks.fcms_tasks.sync_fcms_rosters",
+        "schedule": crontab(minute="0", hour="6"),
+    }
+
+if settings.youtube_auto_link_enabled:
+    celery_app.conf.beat_schedule["link-youtube-videos-every-30min"] = {
+        "task": "app.tasks.youtube_tasks.link_youtube_videos",
+        "schedule": crontab(minute="*/30"),
     }
 
 @worker_shutdown.connect

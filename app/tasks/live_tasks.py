@@ -13,7 +13,6 @@ Tasks:
 """
 import logging
 import time
-import uuid
 from datetime import timedelta
 
 from sqlalchemy import select, func, case
@@ -34,39 +33,9 @@ logger = logging.getLogger(__name__)
 _LOCK_KEY_PREFIX = "qfl:live-sync:game"
 _LOCK_TTL = 90
 
-# Lua script: delete key only if its value matches our token.
-# Prevents a late-finishing worker from deleting a lock that was
-# already re-acquired by a newer dispatch cycle.
-_CAS_DELETE_SCRIPT = """
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-    return redis.call("DEL", KEYS[1])
-else
-    return 0
-end
-"""
-
-
-async def _acquire_token_lock(key: str, ttl: int) -> str | None:
-    """SET key <token> NX EX ttl.  Returns token on success, None if held."""
-    token = uuid.uuid4().hex
-    try:
-        from app.utils.live_flag import get_redis
-        r = await get_redis()
-        ok = await r.set(key, token, nx=True, ex=ttl)
-        return token if ok else None
-    except Exception:
-        # Fail open — return a token so the task proceeds
-        return token
-
-
-async def _release_token_lock(key: str, token: str) -> None:
-    """Compare-and-delete: remove key only if it still holds our token."""
-    try:
-        from app.utils.live_flag import get_redis
-        r = await get_redis()
-        await r.eval(_CAS_DELETE_SCRIPT, 1, key, token)
-    except Exception:
-        pass
+# Re-export from shared module for backward compat within this file
+from app.utils.redis_lock import acquire_token_lock as _acquire_token_lock
+from app.utils.redis_lock import release_token_lock as _release_token_lock
 
 
 async def _sync_single_game_impl(game_id: int, token: str):

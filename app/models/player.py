@@ -16,6 +16,7 @@ class Player(Base):
     id: Mapped[int] = mapped_column(PLAYER_ID_SQL_TYPE, primary_key=True, autoincrement=True)
     legacy_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
     sota_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), unique=True, index=True)
+    fcms_person_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
     first_name: Mapped[str | None] = mapped_column(String(100))  # Russian (default)
     first_name_kz: Mapped[str | None] = mapped_column(String(100))
     first_name_en: Mapped[str | None] = mapped_column(String(100))

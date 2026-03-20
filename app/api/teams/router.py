@@ -1,9 +1,13 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
+from app.utils.cache import cache_get, cache_set
 from app.models import (
     Game,
     Language,
@@ -239,6 +243,11 @@ async def get_team_games(
     """Get games for a team."""
     season_id = await resolve_visible_season_id(db, season_id)
 
+    cache_key = f"team_games:{team_id}:{season_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     query = (
         select(Game)
         .where(
@@ -309,7 +318,10 @@ async def get_team_games(
             season_name=get_localized_name(g.season, lang) if g.season else None,
         ))
 
-    return {"items": items, "total": len(items)}
+    result_dict = {"items": [item.model_dump(mode="json") for item in items], "total": len(items)}
+    json_bytes = json.dumps(result_dict, default=str, ensure_ascii=False).encode()
+    cache_set(cache_key, json_bytes, 30)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{team_id}/coaches")

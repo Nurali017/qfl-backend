@@ -1,6 +1,7 @@
 """Game statistics endpoint."""
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -13,6 +14,7 @@ from app.schemas.game_stats import (
     GameStatsResponse, GameStatsTeamEntry, GameStatsPlayerEntry,
     GameStatsEventEntry, StatsCountryBrief,
 )
+from app.utils.cache import cache_get, cache_set
 from app.utils.numbers import to_finite_float
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.game_grouping import get_player_names_fallback
@@ -23,13 +25,19 @@ router = APIRouter(prefix="/games", tags=["games"])
 @router.get("/{game_id}/stats", response_model=GameStatsResponse)
 async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
     """Get statistics for a game."""
+    cache_key = f"game_stats:{game_id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     # Early return for technical wins — no real stats exist
     tech_result = await db.execute(
-        select(Game.status).where(Game.id == game_id)
+        select(Game.status, Game.is_live).where(Game.id == game_id)
     )
-    game_status = tech_result.scalar()
-    if game_status is None:
+    row = tech_result.one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="Game not found")
+    game_status, is_live = row
     if game_status == GameStatus.technical_defeat:
         return GameStatsResponse(game_id=game_id, is_technical=True)
 
@@ -194,10 +202,14 @@ async def get_game_stats(game_id: int, db: AsyncSession = Depends(get_db)):
             player2_number=e.player2_number,
         ))
 
-    return GameStatsResponse(
+    response = GameStatsResponse(
         game_id=game_id,
         is_technical=False,
         team_stats=team_stats_response,
         player_stats=player_stats_response,
         events=events_response,
     )
+    json_bytes = response.model_dump_json().encode()
+    ttl = 10 if is_live else 60
+    cache_set(cache_key, json_bytes, ttl)
+    return Response(content=json_bytes, media_type="application/json")
