@@ -1,9 +1,9 @@
 """Helpers for season-scoped statistics windows."""
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Season, TourSyncStatus
+from app.models import Game, Season, TourSyncStatus
 
 
 async def compute_season_stats_scope(
@@ -14,16 +14,71 @@ async def compute_season_stats_scope(
 ) -> tuple[int | None, int | None]:
     """Return ``(max_completed_round, effective_max_round)`` for season stats.
 
-    ``effective_max_round`` caps round-robin stats to the highest completed tour.
+    ``max_completed_round`` is the highest consecutive tour where **all** games
+    have scores AND aggregate stats have been synced (``TourSyncStatus``).
+
+    ``effective_max_round`` caps round-robin stats to that value.
     For knockout seasons the scope stays uncapped unless ``max_round`` is passed.
     """
-    completed_round_query = (
-        select(TourSyncStatus.tour)
-        .where(TourSyncStatus.season_id == season_id)
-        .order_by(TourSyncStatus.tour.desc())
-        .limit(1)
-    )
-    max_completed_round = (await db.execute(completed_round_query)).scalar()
+
+    # 1. First incomplete tour: min tour where not all games have both scores.
+    incomplete_sq = (
+        select(Game.tour)
+        .where(
+            Game.season_id == season_id,
+            Game.tour.isnot(None),
+        )
+        .group_by(Game.tour)
+        .having(
+            func.count()
+            != func.count(
+                case(
+                    (
+                        Game.home_score.isnot(None) & Game.away_score.isnot(None),
+                        1,
+                    )
+                )
+            )
+        )
+    ).subquery()
+
+    first_incomplete_tour: int | None = (
+        await db.execute(select(func.min(incomplete_sq.c.tour)))
+    ).scalar()
+
+    # 2. Highest existing tour (for the case when every tour is fully scored).
+    max_existing_tour: int | None = (
+        await db.execute(
+            select(func.max(Game.tour)).where(
+                Game.season_id == season_id,
+                Game.tour.isnot(None),
+            )
+        )
+    ).scalar()
+
+    # 3. Derive last_consecutive_complete_round from game scores.
+    if first_incomplete_tour is not None:
+        last_consecutive_complete = (
+            first_incomplete_tour - 1 if first_incomplete_tour > 1 else None
+        )
+    else:
+        # All existing tours are fully scored.
+        last_consecutive_complete = max_existing_tour
+
+    # 4. Highest tour with synced aggregates (TourSyncStatus gate).
+    max_synced_round: int | None = (
+        await db.execute(
+            select(func.max(TourSyncStatus.tour)).where(
+                TourSyncStatus.season_id == season_id,
+            )
+        )
+    ).scalar()
+
+    # 5. Final max_completed_round = min(score-complete, sync-complete).
+    if last_consecutive_complete is not None and max_synced_round is not None:
+        max_completed_round = min(last_consecutive_complete, max_synced_round)
+    else:
+        max_completed_round = None
 
     is_round_robin = season.tournament_format == "round_robin" or (
         season.tournament_format is None and season.has_table
