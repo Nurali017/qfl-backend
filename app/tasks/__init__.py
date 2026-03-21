@@ -48,6 +48,10 @@ if settings.sota_enabled:
             "task": "app.tasks.live_tasks.fetch_pregame_lineups",
             "schedule": crontab(minute="*/3"),
         },
+        "process-lineup-embargo": {
+            "task": "app.tasks.live_tasks.process_lineup_embargo",
+            "schedule": crontab(minute="*/2"),
+        },
         "sync-extended-stats-every-6h": {
             "task": "app.tasks.sync_tasks.sync_extended_stats",
             "schedule": crontab(minute="15", hour="*/6"),
