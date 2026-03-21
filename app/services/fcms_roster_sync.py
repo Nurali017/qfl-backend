@@ -506,7 +506,7 @@ class FcmsRosterSyncService:
                 team_blocks.append(block)
 
         if not has_any:
-            return [header + "Изменений нет — все заявки актуальны ✅"]
+            return []
 
         # Split into chunks
         chunks: list[str] = []
