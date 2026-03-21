@@ -79,6 +79,10 @@ class Game(Base):
     lineup_render_mode: Mapped[str | None] = mapped_column(String(16))  # field, list, hidden
     lineup_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Lineup embargo: Telegram notification tracking
+    lineup_telegram_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lineup_telegram_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     # Stadium FK
     stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"), index=True)
 

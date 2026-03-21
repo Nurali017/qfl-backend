@@ -55,6 +55,7 @@ class LineupRendering(BaseModel):
     source: str | None = None
     field_allowed_by_rules: bool = False
     field_data_valid: bool = False
+    embargo: bool = False
 
 
 class LineupCoaches(BaseModel):

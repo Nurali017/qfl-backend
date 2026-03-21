@@ -318,7 +318,20 @@ async def get_game_lineup(
             away_team=away_lineup,
         ),
     )
+
+    # Embargo: hide player data for created games >60 min before kickoff
+    from app.services.lineup_embargo import is_lineup_embargoed
+    embargoed = is_lineup_embargoed(game)
+    if embargoed:
+        response.rendering.embargo = True
+        response.rendering.mode = "hidden"
+        response.lineups.home_team.starters = []
+        response.lineups.home_team.substitutes = []
+        response.lineups.away_team.starters = []
+        response.lineups.away_team.substitutes = []
+
     json_bytes = response.model_dump_json().encode()
-    ttl = 30 if game.is_live else 60
+    # Embargoed: 5s TTL for fast unlock; live: 30s; other: 60s
+    ttl = 5 if embargoed else (30 if game.is_live else 60)
     cache_set(cache_key, json_bytes, ttl)
     return Response(content=json_bytes, media_type="application/json")

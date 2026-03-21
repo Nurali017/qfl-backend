@@ -383,6 +383,33 @@ def fetch_pregame_lineups():
     return run_async(_fetch_pregame_lineups())
 
 
+# ==================== Lineup embargo (Telegram + public API) ====================
+
+_EMBARGO_LOCK_KEY = "qfl:lineup-embargo:lock"
+_EMBARGO_LOCK_TTL = 120
+
+
+async def _process_lineup_embargo():
+    """Send lineup to Telegram 90 min before kickoff. Redis lock prevents duplicate sends."""
+    from app.services.lineup_embargo import process_lineup_embargo
+
+    token = await _acquire_token_lock(_EMBARGO_LOCK_KEY, _EMBARGO_LOCK_TTL)
+    if token is None:
+        logger.debug("Lineup embargo task already running, skipping")
+        return {"skipped": True, "reason": "already_running"}
+    try:
+        async with AsyncSessionLocal() as db:
+            return await process_lineup_embargo(db)
+    finally:
+        await _release_token_lock(_EMBARGO_LOCK_KEY, token)
+
+
+@celery_app.task(name="app.tasks.live_tasks.process_lineup_embargo")
+def process_lineup_embargo():
+    """Celery task: Send lineup to Telegram + manage embargo. Runs every 2 minutes."""
+    return run_async(_process_lineup_embargo())
+
+
 # ==================== Post-finish follow-up ====================
 
 
