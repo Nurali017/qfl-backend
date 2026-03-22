@@ -9,6 +9,8 @@ from app.models import Championship, Game, Season
 from app.models.tour_sync_status import TourSyncStatus
 from app.services.season_scope import compute_season_stats_scope
 
+EXT_SYNCED = datetime(2026, 3, 10, 12, 0, 0)
+
 
 def _make_game(
     *,
@@ -16,6 +18,7 @@ def _make_game(
     tour: int,
     home_score: int | None = None,
     away_score: int | None = None,
+    extended_stats_synced_at: datetime | None = None,
 ) -> Game:
     return Game(
         sota_id=uuid4(),
@@ -27,6 +30,7 @@ def _make_game(
         away_team_id=13,
         home_score=home_score,
         away_score=away_score,
+        extended_stats_synced_at=extended_stats_synced_at,
     )
 
 
@@ -44,7 +48,10 @@ async def test_no_synced_tours_round_robin(test_session, sample_season, sample_t
     sample_season.has_table = True
     sample_season.tournament_format = "round_robin"
     test_session.add(
-        _make_game(season_id=sample_season.id, tour=1, home_score=2, away_score=1)
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        )
     )
     await test_session.commit()
 
@@ -54,13 +61,19 @@ async def test_no_synced_tours_round_robin(test_session, sample_season, sample_t
 
 @pytest.mark.asyncio
 async def test_all_tours_scored_but_sync_lags(test_session, sample_season, sample_teams):
-    """All tours scored, but TourSyncStatus only up to tour 1 → cap by max_synced."""
+    """All tours scored + ext stats, but TourSyncStatus only up to tour 1 → cap by max_synced."""
     sample_season.has_table = True
     sample_season.tournament_format = "round_robin"
 
     test_session.add_all([
-        _make_game(season_id=sample_season.id, tour=1, home_score=2, away_score=1),
-        _make_game(season_id=sample_season.id, tour=2, home_score=0, away_score=0),
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=2,
+            home_score=0, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+        ),
         _make_tss(sample_season.id, 1),
     ])
     await test_session.commit()
@@ -77,7 +90,10 @@ async def test_first_tour_incomplete(test_session, sample_season, sample_teams):
     sample_season.tournament_format = "round_robin"
 
     test_session.add_all([
-        _make_game(season_id=sample_season.id, tour=1, home_score=2, away_score=1),
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
         _make_game(season_id=sample_season.id, tour=1, home_score=None, away_score=None),
         _make_tss(sample_season.id, 1),
     ])
@@ -95,7 +111,10 @@ async def test_max_round_overrides_effective_only(test_session, sample_season, s
     sample_season.tournament_format = "round_robin"
 
     test_session.add_all([
-        _make_game(season_id=sample_season.id, tour=1, home_score=2, away_score=1),
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
         _make_tss(sample_season.id, 1),
     ])
     await test_session.commit()
@@ -114,15 +133,30 @@ async def test_tour2_incomplete_tour3_synced(test_session, sample_season, sample
     sample_season.tournament_format = "round_robin"
 
     test_session.add_all([
-        # Tour 1: complete
-        _make_game(season_id=sample_season.id, tour=1, home_score=2, away_score=1),
-        _make_game(season_id=sample_season.id, tour=1, home_score=0, away_score=0),
+        # Tour 1: complete (scores + ext stats)
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=0, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+        ),
         # Tour 2: incomplete (one game unscored)
-        _make_game(season_id=sample_season.id, tour=2, home_score=3, away_score=1),
+        _make_game(
+            season_id=sample_season.id, tour=2,
+            home_score=3, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
         _make_game(season_id=sample_season.id, tour=2, home_score=None, away_score=None),
         # Tour 3: complete
-        _make_game(season_id=sample_season.id, tour=3, home_score=1, away_score=1),
-        _make_game(season_id=sample_season.id, tour=3, home_score=2, away_score=0),
+        _make_game(
+            season_id=sample_season.id, tour=3,
+            home_score=1, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=3,
+            home_score=2, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+        ),
         # TourSyncStatus: tours 1 and 3 synced
         _make_tss(sample_season.id, 1),
         _make_tss(sample_season.id, 3),
@@ -135,13 +169,48 @@ async def test_tour2_incomplete_tour3_synced(test_session, sample_season, sample
 
 
 @pytest.mark.asyncio
+async def test_scores_present_but_ext_stats_missing(test_session, sample_season, sample_teams):
+    """Tour has scores but no extended_stats_synced_at → not complete."""
+    sample_season.has_table = True
+    sample_season.tournament_format = "round_robin"
+
+    test_session.add_all([
+        # Tour 1: complete (scores + ext stats)
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
+        # Tour 2: scores present but ext stats missing on one game
+        _make_game(
+            season_id=sample_season.id, tour=2,
+            home_score=3, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=2,
+            home_score=0, away_score=0, extended_stats_synced_at=None,
+        ),
+        _make_tss(sample_season.id, 1),
+        _make_tss(sample_season.id, 2),
+    ])
+    await test_session.commit()
+
+    mcr, emr = await compute_season_stats_scope(test_session, sample_season.id, sample_season)
+    # Tour 2 has scores but missing ext stats → incomplete → max_completed = 1
+    assert mcr == 1
+    assert emr == 1
+
+
+@pytest.mark.asyncio
 async def test_knockout_uncapped(test_session, sample_season, sample_teams):
     """Knockout season → effective_max_round is None (uncapped)."""
     sample_season.has_table = False
     sample_season.tournament_format = "knockout"
 
     test_session.add_all([
-        _make_game(season_id=sample_season.id, tour=1, home_score=2, away_score=1),
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+        ),
         _make_tss(sample_season.id, 1),
     ])
     await test_session.commit()

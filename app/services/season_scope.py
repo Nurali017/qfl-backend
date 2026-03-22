@@ -21,7 +21,9 @@ async def compute_season_stats_scope(
     For knockout seasons the scope stays uncapped unless ``max_round`` is passed.
     """
 
-    # 1. First incomplete tour: min tour where not all games have both scores.
+    # 1. First incomplete tour: min tour where not all games have scores
+    #    AND extended_stats_synced_at.  This ensures matches_played in the
+    #    statistics response always equals the expected total for tours 1..N.
     incomplete_sq = (
         select(Game.tour)
         .where(
@@ -34,7 +36,9 @@ async def compute_season_stats_scope(
             != func.count(
                 case(
                     (
-                        Game.home_score.isnot(None) & Game.away_score.isnot(None),
+                        Game.home_score.isnot(None)
+                        & Game.away_score.isnot(None)
+                        & Game.extended_stats_synced_at.isnot(None),
                         1,
                     )
                 )
