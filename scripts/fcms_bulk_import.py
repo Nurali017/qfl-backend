@@ -272,10 +272,25 @@ async def bulk_import():
                 home_name = fm.get("homeCompetitorTitle") or ""
                 away_name = fm.get("awayCompetitorTitle") or ""
 
-                # Try to find existing game by date + teams
+                # Try to find existing game by date + teams (name match OR fcms_team_id match)
+                home_fcms_team_id = fm.get("homeCompetitorTeamId")
+                away_fcms_team_id = fm.get("awayCompetitorTeamId")
                 candidates = games_by_date.get(match_date.isoformat(), [])
                 found_game = None
                 for game in candidates:
+                    # Match by fcms_team_id (most reliable)
+                    home_match = (
+                        (game.home_team and game.home_team.fcms_team_id == home_fcms_team_id)
+                        if home_fcms_team_id else False
+                    )
+                    away_match = (
+                        (game.away_team and game.away_team.fcms_team_id == away_fcms_team_id)
+                        if away_fcms_team_id else False
+                    )
+                    if home_match and away_match:
+                        found_game = game
+                        break
+                    # Fallback: match by name
                     if (team_names_match(home_name, game.home_team)
                             and team_names_match(away_name, game.away_team)):
                         found_game = game
