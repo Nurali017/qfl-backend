@@ -517,3 +517,124 @@ async def test_sync_pre_game_lineup_sets_formation(
     await test_session.refresh(game)
     assert game.home_formation == "4-4-2"
     assert game.away_formation == "3-5-2"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _ensure_player_exists — backfill & deduplication
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_player_exists_backfills_empty_first_name(
+    test_session: AsyncSession, db_setup,
+):
+    """Player found by sota_id with empty first_name gets backfilled."""
+    from app.services.sync.lineup_sync import LineupSyncService
+
+    sota_id = uuid4()
+    player = Player(sota_id=sota_id, first_name="", last_name="Петрович")
+    test_session.add(player)
+    await test_session.flush()
+
+    client = DummyLineupClient()
+    service = LineupSyncService(test_session, client)
+    result_id = await service._ensure_player_exists({
+        "id": str(sota_id),
+        "first_name": "Богдан",
+        "last_name": "Петрович",
+    })
+
+    assert result_id == player.id
+    await test_session.refresh(player)
+    assert player.first_name == "Богдан"
+    assert player.last_name == "Петрович"
+
+
+@pytest.mark.asyncio
+async def test_ensure_player_exists_does_not_overwrite_existing_name(
+    test_session: AsyncSession, db_setup,
+):
+    """Player found by sota_id with existing first_name should NOT be overwritten."""
+    from app.services.sync.lineup_sync import LineupSyncService
+
+    sota_id = uuid4()
+    player = Player(sota_id=sota_id, first_name="Иван", last_name="Петров")
+    test_session.add(player)
+    await test_session.flush()
+
+    client = DummyLineupClient()
+    service = LineupSyncService(test_session, client)
+    result_id = await service._ensure_player_exists({
+        "id": str(sota_id),
+        "first_name": "Другое",
+        "last_name": "Другое",
+    })
+
+    assert result_id == player.id
+    await test_session.refresh(player)
+    assert player.first_name == "Иван"
+    assert player.last_name == "Петров"
+
+
+@pytest.mark.asyncio
+async def test_ensure_player_exists_links_sota_id_to_fcms_player(
+    test_session: AsyncSession, db_setup,
+):
+    """Player created by FCMS (no sota_id) should get sota_id linked instead of creating duplicate."""
+    from app.services.sync.lineup_sync import LineupSyncService
+
+    # FCMS-created player with no sota_id
+    fcms_player = Player(
+        first_name="Богдан", last_name="Петрович",
+        fcms_person_id=12345,
+    )
+    test_session.add(fcms_player)
+    await test_session.flush()
+
+    new_sota_id = uuid4()
+    client = DummyLineupClient()
+    service = LineupSyncService(test_session, client)
+    result_id = await service._ensure_player_exists({
+        "id": str(new_sota_id),
+        "first_name": "Богдан",
+        "last_name": "Петрович",
+    })
+
+    # Should link to existing player, NOT create a new one
+    assert result_id == fcms_player.id
+    await test_session.refresh(fcms_player)
+    assert fcms_player.sota_id == new_sota_id
+
+    # Verify no duplicate was created
+    all_players = (await test_session.execute(
+        select(Player).where(Player.last_name == "Петрович")
+    )).scalars().all()
+    assert len(all_players) == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_player_exists_ambiguous_name_creates_new(
+    test_session: AsyncSession, db_setup,
+):
+    """When multiple players share the same name, create a new one (safe fallback)."""
+    from app.services.sync.lineup_sync import LineupSyncService
+
+    # Two players with same name, no sota_id
+    p1 = Player(first_name="Алексей", last_name="Иванов")
+    p2 = Player(first_name="Алексей", last_name="Иванов")
+    test_session.add_all([p1, p2])
+    await test_session.flush()
+
+    new_sota_id = uuid4()
+    client = DummyLineupClient()
+    service = LineupSyncService(test_session, client)
+    result_id = await service._ensure_player_exists({
+        "id": str(new_sota_id),
+        "first_name": "Алексей",
+        "last_name": "Иванов",
+    })
+
+    # Should create a new player (ambiguous match)
+    assert result_id is not None
+    assert result_id != p1.id
+    assert result_id != p2.id

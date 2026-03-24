@@ -18,6 +18,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import MultipleResultsFound
 
 from app.models import (
     Game,
@@ -54,6 +55,16 @@ HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class LineupSyncService(BaseSyncService):
+    @staticmethod
+    def _extract_name_from_data(player_data: dict) -> tuple[str, str]:
+        first_name = player_data.get("first_name", "") or ""
+        last_name_raw = player_data.get("last_name", [])
+        if isinstance(last_name_raw, list):
+            last_name = last_name_raw[0] if last_name_raw else ""
+        else:
+            last_name = str(last_name_raw) if last_name_raw else ""
+        return first_name, last_name
+
     async def _ensure_player_exists(self, player_data: dict) -> int | None:
         pid_str = player_data.get("id")
         if not pid_str:
@@ -63,18 +74,51 @@ class LineupSyncService(BaseSyncService):
         except (ValueError, TypeError):
             return None
 
+        first_name, last_name = self._extract_name_from_data(player_data)
+
+        # Step 1: find by sota_id
         exists = await self.db.execute(select(Player).where(Player.sota_id == sota_id))
         existing_player = exists.scalar_one_or_none()
         if existing_player is not None:
+            # Backfill empty names from SOTA data
+            changed = False
+            if not existing_player.first_name and first_name:
+                existing_player.first_name = first_name
+                changed = True
+            if not existing_player.last_name and last_name:
+                existing_player.last_name = last_name
+                changed = True
+            if changed:
+                existing_player.updated_at = utcnow()
+                await self.db.flush()
             return existing_player.id
 
-        first_name = player_data.get("first_name", "") or ""
-        last_name_raw = player_data.get("last_name", [])
-        if isinstance(last_name_raw, list):
-            last_name = last_name_raw[0] if last_name_raw else ""
-        else:
-            last_name = str(last_name_raw) if last_name_raw else ""
+        # Step 2: before creating, try to find by name (prevents duplicates
+        # when FCMS already created the player without sota_id)
+        if last_name:
+            name_filters = [Player.last_name == last_name, Player.sota_id.is_(None)]
+            if first_name:
+                name_filters.append(Player.first_name == first_name)
+            try:
+                name_result = await self.db.execute(
+                    select(Player).where(and_(*name_filters))
+                )
+                name_match = name_result.scalar_one_or_none()
+            except MultipleResultsFound:
+                name_match = None
+            if name_match is not None:
+                name_match.sota_id = sota_id
+                if not name_match.first_name and first_name:
+                    name_match.first_name = first_name
+                name_match.updated_at = utcnow()
+                await self.db.flush()
+                logger.info(
+                    "Linked sota_id %s to existing player %s (%s %s)",
+                    sota_id, name_match.id, name_match.first_name, name_match.last_name,
+                )
+                return name_match.id
 
+        # Step 3: create new player
         new_player = Player(
             sota_id=sota_id,
             first_name=first_name,
