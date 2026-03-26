@@ -29,6 +29,7 @@ class NewsLike(Base):
 class ArticleType(str, enum.Enum):
     NEWS = "NEWS"
     ANALYTICS = "ANALYTICS"
+    INTERVIEW = "INTERVIEW"
 
 
 class News(Base):
