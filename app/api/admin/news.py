@@ -60,9 +60,9 @@ def _article_type_from_str(
         return ArticleType(normalized)
     except ValueError as exc:
         if allow_unclassified:
-            message = "article_type must be NEWS, ANALYTICS, or UNCLASSIFIED"
+            message = "article_type must be NEWS, ANALYTICS, INTERVIEW, or UNCLASSIFIED"
         else:
-            message = "article_type must be NEWS or ANALYTICS"
+            message = "article_type must be NEWS, ANALYTICS, or INTERVIEW"
         raise HTTPException(status_code=400, detail=message) from exc
 
 
@@ -154,7 +154,7 @@ async def _apply_payload(
     if should_update("article_type"):
         parsed_article_type = _article_type_from_str(payload.article_type)
         if parsed_article_type == "UNCLASSIFIED":
-            raise HTTPException(status_code=400, detail="article_type must be NEWS or ANALYTICS")
+            raise HTTPException(status_code=400, detail="article_type must be NEWS, ANALYTICS, or INTERVIEW")
         item.article_type = parsed_article_type
 
     if should_update("excerpt"):
@@ -510,7 +510,7 @@ async def set_material_article_type(
 ):
     normalized = _article_type_from_str(payload.article_type)
     if normalized == "UNCLASSIFIED":
-        raise HTTPException(status_code=400, detail="article_type must be NEWS or ANALYTICS")
+        raise HTTPException(status_code=400, detail="article_type must be NEWS, ANALYTICS, or INTERVIEW")
     result = await db.execute(select(News).where(News.translation_group_id == group_id))
     rows = result.scalars().all()
     if not rows:

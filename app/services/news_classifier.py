@@ -1,4 +1,4 @@
-"""Rule-based + AI-powered service for classifying news as NEWS/ANALYTICS."""
+"""Rule-based + AI-powered service for classifying news as NEWS/ANALYTICS/INTERVIEW."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class ClassificationDecision:
 
 
 class NewsClassifierService:
-    """Classifies news articles into NEWS/ANALYTICS with confidence gating."""
+    """Classifies news articles into NEWS/ANALYTICS/INTERVIEW with confidence gating."""
 
     _RULE_SHORT_CIRCUIT_CONFIDENCE = 0.85
     _DEFAULT_CONFIDENCE = 0.70
@@ -69,7 +69,6 @@ class NewsClassifierService:
         r"\bподпис\w*",
         r"\bрезультат\w*",
         r"\bрасписан\w*",
-        r"\bинтервью\b",
         r"\bofficial\b",
         r"\bannouncement\b",
         r"\btransfer\b",
@@ -77,6 +76,13 @@ class NewsClassifierService:
         r"\bmatchday\b",
         r"\bжаңалық\w*",
         r"\bресми\w*",
+    )
+    _INTERVIEW_PATTERNS = (
+        r"\bинтервью\b",
+        r"\binterview\b",
+        r"\bсұхбат\w*",
+        r"\bбеседа\b",
+        r"\bэксклюзив\w*",
     )
 
     def __init__(self):
@@ -93,6 +99,7 @@ class NewsClassifierService:
 
         self._analytics_regex = [re.compile(pattern, flags=re.IGNORECASE) for pattern in self._ANALYTICS_PATTERNS]
         self._news_regex = [re.compile(pattern, flags=re.IGNORECASE) for pattern in self._NEWS_PATTERNS]
+        self._interview_regex = [re.compile(pattern, flags=re.IGNORECASE) for pattern in self._INTERVIEW_PATTERNS]
 
     async def classify_article(
         self,
@@ -214,19 +221,22 @@ class NewsClassifierService:
 
         analytics_score = self._score_text(title_text, content_text, self._analytics_regex)
         news_score = self._score_text(title_text, content_text, self._news_regex)
-        if analytics_score == 0 and news_score == 0:
+        interview_score = self._score_text(title_text, content_text, self._interview_regex)
+        scores = {"NEWS": news_score, "ANALYTICS": analytics_score, "INTERVIEW": interview_score}
+        max_score = max(scores.values())
+        if max_score == 0:
             return ClassificationDecision(None, 0.0, "rules", "no_rule_match")
 
-        diff = abs(analytics_score - news_score)
-        total = analytics_score + news_score
+        total = sum(scores.values())
+        second_score = sorted(scores.values(), reverse=True)[1]
+        diff = max_score - second_score
         confidence = min(0.95, 0.55 + (diff / max(total, 1)) * 0.35 + min(total, 5) * 0.02)
 
         if diff <= 1:
             return ClassificationDecision(None, min(confidence, 0.69), "rules", "ambiguous_rule_match")
 
-        article_type = (
-            ArticleType.ANALYTICS if analytics_score > news_score else ArticleType.NEWS
-        )
+        winner = max(scores, key=scores.get)  # type: ignore[arg-type]
+        article_type = ArticleType(winner)
         return ClassificationDecision(article_type, confidence, "rules")
 
     async def _classify_with_ai(
@@ -245,10 +255,11 @@ class NewsClassifierService:
                     {
                         "role": "system",
                         "content": (
-                            "You classify football website articles into NEWS or ANALYTICS. "
+                            "You classify football website articles into NEWS, ANALYTICS, or INTERVIEW. "
                             "NEWS: factual event reporting. ANALYTICS: tactical/statistical/opinion analysis. "
+                            "INTERVIEW: Q&A or conversation with a person (player, coach, official). "
                             "Return a strict JSON object: "
-                            "{\"type\":\"NEWS|ANALYTICS|UNCLASSIFIED\",\"confidence\":0..1,\"reason\":\"short reason\"}."
+                            "{\"type\":\"NEWS|ANALYTICS|INTERVIEW|UNCLASSIFIED\",\"confidence\":0..1,\"reason\":\"short reason\"}."
                         ),
                     },
                     {
@@ -292,13 +303,15 @@ class NewsClassifierService:
             raw_reason = str(raw.get("reason", "")).strip() or None
         except Exception:
             normalized = payload.strip().upper()
+            if "INTERVIEW" in normalized:
+                return {"type": "INTERVIEW", "confidence": 0.65, "reason": "ai_text_fallback"}
             if "ANALYTICS" in normalized:
                 return {"type": "ANALYTICS", "confidence": 0.65, "reason": "ai_text_fallback"}
             if "NEWS" in normalized:
                 return {"type": "NEWS", "confidence": 0.65, "reason": "ai_text_fallback"}
             return {"type": "UNCLASSIFIED", "confidence": 0.0, "reason": "ai_parse_failed"}
 
-        if raw_type not in {"NEWS", "ANALYTICS", "UNCLASSIFIED"}:
+        if raw_type not in {"NEWS", "ANALYTICS", "INTERVIEW", "UNCLASSIFIED"}:
             raw_type = "UNCLASSIFIED"
         confidence = min(max(raw_confidence, 0.0), 1.0)
         return {"type": raw_type, "confidence": confidence, "reason": raw_reason}

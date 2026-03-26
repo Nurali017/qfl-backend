@@ -44,7 +44,9 @@ def _article_type_from_query(value: str | None) -> ArticleType | None:
         return ArticleType.NEWS
     if normalized == "ANALYTICS":
         return ArticleType.ANALYTICS
-    raise HTTPException(status_code=400, detail="article_type must be news or analytics")
+    if normalized == "INTERVIEW":
+        return ArticleType.INTERVIEW
+    raise HTTPException(status_code=400, detail="article_type must be news, analytics, or interview")
 
 
 async def _resolve_news_by_id_and_lang(
