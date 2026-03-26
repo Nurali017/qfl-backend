@@ -285,16 +285,21 @@ class FcmsRosterSyncService:
                             "method": method,
                             "details": [f"привязан к {team.name} (id={lp.id}, {method})"],
                         })
-                    elif not pt.is_active:
-                        pt.is_active = True
+                    elif not pt.is_active or pt.is_hidden:
+                        details = []
+                        if not pt.is_active:
+                            pt.is_active = True
+                            pt.left_at = None
+                            details.append("реактивирован")
+                        if pt.is_hidden:
+                            details.append("снят is_hidden")
                         pt.is_hidden = False
-                        pt.left_at = None
                         pt.number = num
                         changes["auto_updates"].append({
                             "name": fcms_name,
                             "num": num_str,
                             "method": method,
-                            "details": [f"реактивирован в {team.name} (id={lp.id})"],
+                            "details": [f"{', '.join(details)} в {team.name} (id={lp.id})"],
                         })
 
             if lp and pt:
