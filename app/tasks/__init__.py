@@ -52,6 +52,10 @@ if settings.sota_enabled:
             "task": "app.tasks.sync_tasks.sync_extended_stats",
             "schedule": crontab(minute="15", hour="*/6"),
         },
+        "retry-missing-team-of-week-every-6h": {
+            "task": "app.tasks.sync_tasks.retry_missing_team_of_week",
+            "schedule": crontab(minute="45", hour="*/6"),
+        },
     }
 else:
     celery_app.conf.beat_schedule = {}

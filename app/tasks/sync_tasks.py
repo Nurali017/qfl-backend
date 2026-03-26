@@ -9,6 +9,7 @@ from app.tasks import celery_app
 from app.database import AsyncSessionLocal
 from app.services.sync import SyncOrchestrator
 from app.models import Game, GameStatus, GameTeamStats, GamePlayerStats
+from app.models.team_of_week import TeamOfWeek
 from app.config import get_settings
 from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
@@ -565,3 +566,73 @@ async def _backfill_player_tour_stats(season_id: int, max_tour: int):
 def backfill_player_tour_stats_task(season_id: int, max_tour: int):
     """Celery task: Backfill player tour stats for a season."""
     return run_async(_backfill_player_tour_stats(season_id, max_tour))
+
+
+async def _retry_missing_team_of_week():
+    """Retry team-of-week sync for completed tours that are still missing data.
+
+    Finds tours where all games finished within the last 48 hours but
+    team-of-week hasn't been synced (for either locale). Dispatches
+    sync_team_of_week_for_tour for each missing tour.
+    """
+    TERMINAL = {GameStatus.finished, GameStatus.technical_defeat}
+    cutoff = utcnow() - timedelta(hours=48)
+    dispatched = []
+
+    async with AsyncSessionLocal() as db:
+        for season_id in settings.sync_season_ids:
+            # Find tours with all games finished, where the latest finish is within 48h
+            tour_query = await db.execute(
+                select(
+                    Game.tour,
+                    func.count().label("total"),
+                    func.count(case(
+                        (Game.status.in_(TERMINAL) & Game.home_score.isnot(None) & Game.away_score.isnot(None), 1),
+                    )).label("completed"),
+                    func.max(Game.finished_at).label("last_finished"),
+                ).where(
+                    Game.season_id == season_id,
+                    Game.tour.isnot(None),
+                ).group_by(Game.tour)
+            )
+
+            for row in tour_query.all():
+                if row.total == 0 or row.completed != row.total:
+                    continue
+                if row.last_finished is None or row.last_finished < cutoff:
+                    continue
+
+                tour_key = f"tour_{row.tour}"
+
+                # Check if both locales exist in team_of_week
+                tow_count = await db.execute(
+                    select(func.count()).select_from(TeamOfWeek).where(
+                        TeamOfWeek.season_id == season_id,
+                        TeamOfWeek.tour_key == tour_key,
+                    )
+                )
+                existing = tow_count.scalar()
+                if existing >= 2:  # ru + kz
+                    continue
+
+                # Missing — dispatch sync
+                sync_team_of_week_for_tour.delay(season_id, row.tour)
+                dispatched.append({"season_id": season_id, "tour": row.tour, "existing": existing})
+                logger.info(
+                    "Retry missing team-of-week: season=%s tour=%s (existing=%d/2)",
+                    season_id, row.tour, existing,
+                )
+
+    if dispatched:
+        await send_telegram_message(
+            f"🔄 Team-of-week retry: dispatched {len(dispatched)} tour(s)\n"
+            + "\n".join(f"  season {d['season_id']} tour {d['tour']}" for d in dispatched)
+        )
+
+    return {"dispatched": dispatched}
+
+
+@celery_app.task(name="app.tasks.sync_tasks.retry_missing_team_of_week")
+def retry_missing_team_of_week():
+    """Celery task: Retry team-of-week for completed tours missing data (within 48h)."""
+    return run_async(_retry_missing_team_of_week())
