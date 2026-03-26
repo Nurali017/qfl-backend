@@ -1,7 +1,10 @@
 from datetime import date, datetime
 from datetime import time as time_type
-from typing import Literal, Optional
-from pydantic import BaseModel
+from typing import Annotated, Literal, Optional
+from pydantic import BaseModel, PlainSerializer
+
+# Serialize time as "HH:MM" (no seconds)
+ShortTime = Annotated[time_type, PlainSerializer(lambda v: v.strftime("%H:%M"), return_type=str)]
 
 from app.schemas.team import TeamInGame, TeamStadiumInfo, TeamWithScore
 
@@ -24,7 +27,7 @@ LivePhase = Literal["in_progress", "halftime"]
 class GameBase(BaseModel):
     id: int
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tour: int | None = None
     season_id: int | None = None
     stage_id: int | None = None
@@ -69,7 +72,7 @@ class HomeAwayTeamFromSOTA(BaseModel):
 class GameFromSOTA(BaseModel):
     id: str
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tournament_id: int | None = None
     tournament_name: str | None = None
     home_team: HomeAwayTeamFromSOTA | None = None
@@ -117,7 +120,7 @@ class MatchCenterGame(BaseModel):
     """Match information for match center display."""
     id: int
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tour: int | None = None
     season_id: int | None = None
 
@@ -197,7 +200,7 @@ class GameListItem(BaseModel):
     """Game item in /games standard list response."""
     id: int
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tour: int | None = None
     season_id: int | None = None
     stage_id: int | None = None
@@ -236,7 +239,7 @@ class GameDetailItem(BaseModel):
     """Game detail response for /games/{id}."""
     id: int
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tour: int | None = None
     season_id: int | None = None
     stage_id: int | None = None
@@ -280,7 +283,7 @@ class SeasonGameItem(BaseModel):
     """Game item for /seasons/{id}/games."""
     id: int
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tour: int | None = None
     season_id: int | None = None
     home_score: int | None = None
@@ -308,7 +311,7 @@ class StageGameItem(BaseModel):
     """Game item for /seasons/{id}/stages/{stage_id}/games."""
     id: int
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tour: int | None = None
     season_id: int | None = None
     stage_id: int | None = None
@@ -350,7 +353,7 @@ class TeamGameItem(BaseModel):
     """Game item for /teams/{id}/games."""
     id: int
     date: date
-    time: time_type | None = None
+    time: ShortTime | None = None
     tour: int | None = None
     season_id: int | None = None
     home_score: int | None = None
