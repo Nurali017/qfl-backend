@@ -147,9 +147,15 @@ async def bulk_import():
             )
             season_rows = result.all()
 
-        group_ids = [r[1] for r in season_rows]
-        group_to_season: dict[int, int] = {r[1]: r[0] for r in season_rows}
-        group_to_season_name: dict[int, str] = {r[1]: r[2] for r in season_rows}
+        group_ids: list[int] = []
+        group_to_season: dict[int, int] = {}
+        group_to_season_name: dict[int, str] = {}
+        for season_id, group_id_str, season_name in season_rows:
+            for gid_s in group_id_str.split(","):
+                gid = int(gid_s.strip())
+                group_ids.append(gid)
+                group_to_season[gid] = season_id
+                group_to_season_name[gid] = season_name
 
         if not group_ids:
             logger.warning("No seasons with fcms_group_id set, nothing to import")

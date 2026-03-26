@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     fcms_email: str = ""
     fcms_password: str = ""
     fcms_customer_code: str = "kaz"
-    fcms_competition_season_map: str = "3517:200,3585:204"
+    fcms_competition_season_map: str = "3517:200,3585:204,3596:203,3597:203"
 
     # YouTube auto-link
     youtube_api_key: str = ""
