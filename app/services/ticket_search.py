@@ -386,7 +386,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
         return {"skipped": True, "reason": "serper_api_key not set"}
 
     today = date.today()
-    cutoff = today + timedelta(days=14)
+    cutoff = today + timedelta(days=10)
     three_hours_ago = utcnow() - timedelta(hours=3)
 
     result = await db.execute(
