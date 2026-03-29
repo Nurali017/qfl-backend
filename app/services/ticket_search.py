@@ -15,8 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Game, GameStatus, Team
+from app.models.season import Season
 from app.services.telegram import send_telegram_message
 from app.utils.timestamps import ensure_utc, utcnow
+
+# Only search tickets for these championships (Premier League, First League, Cup)
+_TICKET_CHAMPIONSHIP_IDS = {1, 2, 3}
 
 logger = logging.getLogger(__name__)
 
@@ -296,16 +300,17 @@ async def _ai_validate_ticket_url(
         f"{away_name} = {', '.join(away_slugs)}"
     )
     prompt = (
-        f"Это ссылка на билеты на ФУТБОЛЬНЫЙ матч {home_name} — {away_name}, "
-        f"который состоится {date_str} {game_date.year} года?\n\n"
+        f"Это ссылка на билеты на ФУТБОЛЬНЫЙ матч где {home_name} играет ДОМА против {away_name}, "
+        f"дата: {date_str} {game_date.year}?\n\n"
         f"URL: {url}\n"
         f"Заголовок: {title}\n"
         f"Описание: {snippet}\n"
         f"{slug_hint}\n\n"
         "Правила:\n"
-        "- Если в URL или заголовке есть оба названия команд (в любой транслитерации) и дата совпадает — ДА\n"
-        "- Если это билеты на ФУТЗАЛ, не на футбол — НЕТ\n"
-        "- Если это билеты на матч других команд — НЕТ\n\n"
+        "- Оба названия команд должны быть в URL/заголовке (в любой транслитерации) — иначе НЕТ\n"
+        f"- Хозяин поля должен быть {home_name}. Если в ссылке хозяин другая команда — НЕТ\n"
+        "- Если это ФУТЗАЛ/мини-футбол — НЕТ\n"
+        "- Если дата не совпадает — НЕТ\n\n"
         "Ответь только 'да' или 'нет'."
     )
 
@@ -386,6 +391,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
 
     result = await db.execute(
         select(Game)
+        .join(Season, Game.season_id == Season.id)
         .options(selectinload(Game.home_team), selectinload(Game.away_team))
         .where(
             Game.date >= today,
@@ -393,6 +399,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
             Game.status == GameStatus.created,
             Game.ticket_url.is_(None),
             Game.is_free_entry.is_(False),
+            Season.championship_id.in_(_TICKET_CHAMPIONSHIP_IDS),
         )
     )
     games = result.scalars().all()
