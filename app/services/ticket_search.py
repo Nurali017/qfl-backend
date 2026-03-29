@@ -164,9 +164,13 @@ def _detect_free_entry(organic_results: list[dict], home_name: str) -> bool:
 
 
 async def _check_team_website_free_entry(
-    website: str, home_name: str, client: httpx.AsyncClient
+    website: str, home_name: str, away_name: str, client: httpx.AsyncClient
 ) -> bool:
-    """Fetch home team's website and check for free entry phrases."""
+    """Fetch home team's website and check for free entry phrases.
+
+    Requires BOTH team names to appear near the free entry phrase
+    to avoid false positives from old news on the homepage.
+    """
     # Normalize to root URL (some DB entries have /kk/ or /ru/ paths that 404)
     parsed = urlparse(website)
     root_url = f"{parsed.scheme}://{parsed.hostname}"
@@ -177,6 +181,8 @@ async def _check_team_website_free_entry(
                 continue
             text = resp.text.lower()
             if not _team_matches_text(home_name, text):
+                continue
+            if not _team_matches_text(away_name, text):
                 continue
             for phrase in _FREE_ENTRY_PHRASES:
                 if phrase in text:
@@ -442,7 +448,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                 # If search didn't detect free entry, check home team's website
                 if not is_free and home_team.website:
                     is_free = await _check_team_website_free_entry(
-                        home_team.website, home_team.name, client,
+                        home_team.website, home_team.name, away_team.name, client,
                     )
 
                 if is_free:
