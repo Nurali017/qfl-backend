@@ -286,12 +286,26 @@ async def _ai_validate_ticket_url(
         return True  # Skip AI validation if no API key
 
     date_str = _format_date_ru(game_date)
+    # Build transliteration hints so AI can match Cyrillic team names in Latin URLs
+    home_lower = home_name.lower()
+    away_lower = away_name.lower()
+    home_slugs = _TEAM_SLUG_OVERRIDES.get(home_lower, [_transliterate(home_lower)])
+    away_slugs = _TEAM_SLUG_OVERRIDES.get(away_lower, [_transliterate(away_lower)])
+    slug_hint = (
+        f"Транслитерация: {home_name} = {', '.join(home_slugs)}; "
+        f"{away_name} = {', '.join(away_slugs)}"
+    )
     prompt = (
-        f"Это ссылка на билеты именно на матч {home_name} — {away_name}, "
+        f"Это ссылка на билеты на ФУТБОЛЬНЫЙ матч {home_name} — {away_name}, "
         f"который состоится {date_str} {game_date.year} года?\n\n"
         f"URL: {url}\n"
         f"Заголовок: {title}\n"
-        f"Описание: {snippet}\n\n"
+        f"Описание: {snippet}\n"
+        f"{slug_hint}\n\n"
+        "Правила:\n"
+        "- Если в URL или заголовке есть оба названия команд (в любой транслитерации) и дата совпадает — ДА\n"
+        "- Если это билеты на ФУТЗАЛ, не на футбол — НЕТ\n"
+        "- Если это билеты на матч других команд — НЕТ\n\n"
         "Ответь только 'да' или 'нет'."
     )
 
@@ -326,6 +340,11 @@ def _is_retryable(exc: BaseException) -> bool:
     return False
 
 
+class SerperAuthError(Exception):
+    """Raised when Serper API returns 401/403 — API key invalid or expired."""
+    pass
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -341,6 +360,10 @@ async def _search_serper(
         headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
         json={"q": query, "gl": "kz", "hl": "ru", "num": 10},
     )
+    if resp.status_code in (401, 403):
+        body = resp.text[:200]
+        logger.error("Serper API auth failed (%s): %s", resp.status_code, body)
+        raise SerperAuthError(f"Serper API {resp.status_code}: {body}")
     resp.raise_for_status()
     data = resp.json()
     return data.get("organic", [])
@@ -440,6 +463,13 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                                 "AI rejected ticket URL for game %s: %s",
                                 game.id, match.url,
                             )
+                            await send_telegram_message(
+                                "\u274c <b>AI отверг билет</b>\n\n"
+                                f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
+                                f"\U0001f4c5 Дата: {game.date}\n"
+                                f"\U0001f517 URL: {match.url}\n"
+                                f"\U0001f4dd {match.title}"
+                            )
                             match = None
                     if match:
                         game.ticket_url = match.url
@@ -461,6 +491,17 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                 # Rate limit: Serper allows ~1 req/sec
                 await asyncio.sleep(1.0)
 
+            except SerperAuthError as e:
+                logger.error(
+                    "Serper API key invalid — aborting ticket search for all remaining games"
+                )
+                await send_telegram_message(
+                    "\u26a0\ufe0f <b>Serper API сломан</b>\n\n"
+                    f"Ошибка: {e}\n"
+                    "Поиск билетов остановлен. Нужно обновить API ключ."
+                )
+                errors += len(games) - searched - skipped
+                break
             except Exception:
                 logger.warning(
                     "Ticket search failed for game %s (%s vs %s)",
