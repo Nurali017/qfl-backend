@@ -292,6 +292,7 @@ async def get_games(
             ticket_url=getattr(g, "ticket_url", None),
             is_free_entry=g.is_free_entry,
             video_url=g.video_url,
+            youtube_live_url=g.youtube_live_url,
             protocol_url=g.protocol_url,
             where_broadcast=g.where_broadcast,
             video_review_url=g.video_review_url,

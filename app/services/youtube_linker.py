@@ -85,7 +85,7 @@ async def _get_uploads_playlist_id(channel_id: str, api_key: str) -> str:
 
 
 async def _fetch_recent_videos(
-    playlist_id: str, api_key: str, max_results: int = 20
+    playlist_id: str, api_key: str, max_results: int = 50
 ) -> list[dict]:
     """Fetch recent video IDs and titles from uploads playlist."""
     async with httpx.AsyncClient(timeout=10) as client:
