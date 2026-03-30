@@ -476,13 +476,15 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                                 "AI rejected ticket URL for game %s: %s",
                                 game.id, match.url,
                             )
-                            await send_telegram_message(
-                                "\u274c <b>AI отверг билет</b>\n\n"
-                                f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
-                                f"\U0001f4c5 Дата: {game.date}\n"
-                                f"\U0001f517 URL: {match.url}\n"
-                                f"\U0001f4dd {match.title}"
-                            )
+                            # Only notify on first search (avoid spam every 3h)
+                            if not game.ticket_url_fetched_at:
+                                await send_telegram_message(
+                                    "\u274c <b>AI отверг билет</b>\n\n"
+                                    f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
+                                    f"\U0001f4c5 Дата: {game.date}\n"
+                                    f"\U0001f517 URL: {match.url}\n"
+                                    f"\U0001f4dd {match.title}"
+                                )
                             match = None
                     if match:
                         game.ticket_url = match.url
