@@ -67,6 +67,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
     return AdminGameResponse(
         id=game.id,
         sota_id=game.sota_id,
+        fcms_match_id=game.fcms_match_id,
         date=game.date,
         time=game.time,
         tour=game.tour,
