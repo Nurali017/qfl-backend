@@ -908,12 +908,15 @@ class LineupSyncService(BaseSyncService):
 
         # /em/ feed — единственный источник: добавляет игроков
         # с правильной классификацией ОСНОВНЫЕ/ЗАПАСНЫЕ
+        # If FCMS set the lineup, don't insert new players — only update positions
+        fcms_protected = game.lineup_source == "fcms"
         live_result = await self.sync_live_positions_and_kits(
             game_id,
             mode="finished_repair",
             auto_commit=False,
             touch_live_sync_timestamp=False,
             sota_only=sota_only,
+            allow_insert_override=False if fcms_protected else None,
         )
         result["positions_updated"] += int(live_result.get("positions_updated", 0))
         result["players_added"] += int(live_result.get("players_added", 0))
@@ -921,34 +924,38 @@ class LineupSyncService(BaseSyncService):
         result["formations_updated"] += int(live_result.get("formations_updated", 0))
         result["kit_colors_updated"] += int(live_result.get("kit_colors_updated", 0))
 
-        # Обновить has_lineup если появились игроки
+        # Обновить has_lineup если появились игроки (don't overwrite FCMS source)
         if result["players_added"] > 0 or live_result.get("status") == "updated":
-            await self.db.execute(
-                Game.__table__.update()
-                .where(Game.id == game_id)
-                .values(
-                    has_lineup=True,
-                    lineup_source="sota_live",
-                    updated_at=utcnow(),
+            if game.lineup_source != "fcms":
+                await self.db.execute(
+                    Game.__table__.update()
+                    .where(Game.id == game_id)
+                    .values(
+                        has_lineup=True,
+                        lineup_source="sota_live",
+                        updated_at=utcnow(),
+                    )
                 )
-            )
 
         # Сузить до матчевого дня и удалить лишних
-        for side, team_id in (("home", game.home_team_id), ("away", game.away_team_id)):
-            if not team_id:
-                continue
-            matchday_ids = await self._get_matchday_player_ids(
-                sota_uuid=sota_uuid,
-                side=side,
-                vsporte_id=None if sota_only else game.vsporte_id,
-            )
-            if matchday_ids:
-                deleted = await self._delete_stale_lineup_players(
-                    game_id=game_id,
-                    team_id=team_id,
-                    keep_player_ids=matchday_ids,
+        # Skip deletion if lineup was set by FCMS (authoritative pre-match protocol)
+        await self.db.refresh(game)
+        if game.lineup_source != "fcms":
+            for side, team_id in (("home", game.home_team_id), ("away", game.away_team_id)):
+                if not team_id:
+                    continue
+                matchday_ids = await self._get_matchday_player_ids(
+                    sota_uuid=sota_uuid,
+                    side=side,
+                    vsporte_id=None if sota_only else game.vsporte_id,
                 )
-                result["players_deleted"] += deleted
+                if matchday_ids:
+                    deleted = await self._delete_stale_lineup_players(
+                        game_id=game_id,
+                        team_id=team_id,
+                        keep_player_ids=matchday_ids,
+                    )
+                    result["players_deleted"] += deleted
 
         await self.db.commit()
         return result

@@ -201,11 +201,15 @@ class LiveSyncService:
         Unlike sync_pregame_lineup which uses /pre_game_lineup/ (flat list),
         this uses the /em/ live feed which has explicit ОСНОВНЫЕ/ЗАПАСНЫЕ markers
         for accurate starter/substitute classification.
+
+        If lineup_source is "fcms", only updates formations/positions on existing
+        records — does not add or delete lineup entries.
         """
         game = await self.db.get(Game, game_id)
         if not game or not game.sota_id:
             return {"error": f"Game {game_id} not found or no sota_id"}
 
+        fcms_protected = game.lineup_source == "fcms"
         sota_uuid = str(game.sota_id)
         total_lineup = 0
         synced_player_ids: dict[int, set[int]] = {}
@@ -223,7 +227,7 @@ class LiveSyncService:
             if not isinstance(live_data, list) or not live_data:
                 continue
 
-            # Extract formation
+            # Extract formation — always update
             formation = self._extract_formation(live_data)
             if formation:
                 if side == "home":
@@ -234,37 +238,44 @@ class LiveSyncService:
             # Extract starters and substitutes using ОСНОВНЫЕ/ЗАПАСНЫЕ markers
             starters, substitutes = self._extract_players(live_data)
 
-            team_players: set[int] = set()
-            for player_data in starters:
-                pid = await self._save_player_lineup(
-                    game_id, team_id, player_data, LineupType.starter,
-                    season_id=game.season_id,
-                )
-                if pid:
-                    team_players.add(pid)
-                    total_lineup += 1
-            for player_data in substitutes:
-                pid = await self._save_player_lineup(
-                    game_id, team_id, player_data, LineupType.substitute,
-                    season_id=game.season_id,
-                )
-                if pid:
-                    team_players.add(pid)
-                    total_lineup += 1
-            synced_player_ids[team_id] = team_players
-
-        # Reconciliation: remove players no longer in SOTA lineup
-        for team_id, player_ids in synced_player_ids.items():
-            if player_ids:  # only if SOTA returned data for this team
-                await self.db.execute(
-                    delete(GameLineup).where(
-                        GameLineup.game_id == game_id,
-                        GameLineup.team_id == team_id,
-                        GameLineup.player_id.notin_(player_ids),
+            if fcms_protected:
+                # FCMS lineup is authoritative — only enrich existing records
+                for player_data in starters + substitutes:
+                    await self._enrich_fcms_lineup_from_sota(
+                        game_id, team_id, player_data, game.season_id,
                     )
-                )
+            else:
+                team_players: set[int] = set()
+                for player_data in starters:
+                    pid = await self._save_player_lineup(
+                        game_id, team_id, player_data, LineupType.starter,
+                        season_id=game.season_id,
+                    )
+                    if pid:
+                        team_players.add(pid)
+                        total_lineup += 1
+                for player_data in substitutes:
+                    pid = await self._save_player_lineup(
+                        game_id, team_id, player_data, LineupType.substitute,
+                        season_id=game.season_id,
+                    )
+                    if pid:
+                        team_players.add(pid)
+                        total_lineup += 1
+                synced_player_ids[team_id] = team_players
 
-        game.lineup_source = "sota_live"
+        if not fcms_protected:
+            # Reconciliation: remove players no longer in SOTA lineup
+            for team_id, player_ids in synced_player_ids.items():
+                if player_ids:  # only if SOTA returned data for this team
+                    await self.db.execute(
+                        delete(GameLineup).where(
+                            GameLineup.game_id == game_id,
+                            GameLineup.team_id == team_id,
+                            GameLineup.player_id.notin_(player_ids),
+                        )
+                    )
+            game.lineup_source = "sota_live"
         await self.db.commit()
 
         return {
@@ -273,6 +284,72 @@ class LiveSyncService:
             "away_formation": game.away_formation,
             "lineup_count": total_lineup,
         }
+
+    async def _enrich_fcms_lineup_from_sota(
+        self,
+        game_id: int,
+        team_id: int,
+        player_data: dict,
+        season_id: int | None,
+    ) -> None:
+        """Update field_position/amplua on existing FCMS lineup record and backfill sota_id.
+
+        Matches by team + shirt_number (primary) or team + name (fallback).
+        Does NOT insert or delete lineup records.
+        """
+        shirt_number = player_data.get("number")
+        if isinstance(shirt_number, str):
+            try:
+                shirt_number = int(shirt_number)
+            except ValueError:
+                shirt_number = None
+
+        amplua = player_data.get("amplua") or None
+        field_position = player_data.get("position") or None
+        sota_id_raw = player_data.get("id")
+
+        if not shirt_number:
+            return
+
+        # Find existing lineup record by shirt_number + team
+        result = await self.db.execute(
+            select(GameLineup)
+            .where(
+                GameLineup.game_id == game_id,
+                GameLineup.team_id == team_id,
+                GameLineup.shirt_number == shirt_number,
+            )
+            .limit(1)
+        )
+        lineup_row = result.scalar_one_or_none()
+        if not lineup_row:
+            return
+
+        # Update field_position / amplua if SOTA provides them
+        if amplua and not lineup_row.amplua:
+            lineup_row.amplua = amplua
+        if field_position and not lineup_row.field_position:
+            lineup_row.field_position = field_position
+
+        # Backfill sota_id on the Player record (only if not already set on another player)
+        if sota_id_raw and lineup_row.player_id:
+            try:
+                sota_id = UUID(str(sota_id_raw))
+            except (ValueError, TypeError):
+                return
+            # Check sota_id isn't already used by another player
+            existing = await self.db.execute(
+                select(Player.id).where(Player.sota_id == sota_id)
+            )
+            if existing.scalar_one_or_none() is not None:
+                return
+            player = await self.db.get(Player, lineup_row.player_id)
+            if player and not player.sota_id:
+                player.sota_id = sota_id
+                logger.info(
+                    "Backfilled sota_id for player %s %s (id=%d) from FCMS lineup",
+                    player.first_name, player.last_name, player.id,
+                )
 
     async def _save_player_lineup(
         self,
