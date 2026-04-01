@@ -179,7 +179,7 @@ class BaseSyncService:
         self._team_stadium_cache: dict[int, int] | None = None
 
     async def get_sota_season_id(self, local_season_id: int) -> int:
-        """Resolve SOTA season ID for a given local season ID.
+        """Resolve primary SOTA season ID for a given local season ID.
 
         Falls back to local ID if no mapping exists.
         """
@@ -188,6 +188,27 @@ class BaseSyncService:
         )
         sota_id = result.scalar_one_or_none()
         return sota_id if sota_id is not None else local_season_id
+
+    async def get_all_sota_season_ids(self, local_season_id: int) -> list[int]:
+        """Resolve ALL SOTA season IDs for a local season.
+
+        Parses semicolon-separated ``sota_season_ids`` field (e.g. "181;182").
+        Falls back to ``sota_season_id``, then to ``local_season_id``.
+        """
+        result = await self.db.execute(
+            select(Season.sota_season_ids, Season.sota_season_id)
+            .where(Season.id == local_season_id)
+        )
+        row = result.one_or_none()
+        if row is None:
+            return [local_season_id]
+
+        ids_str, single_id = row
+        if ids_str:
+            return [int(x.strip()) for x in ids_str.split(";") if x.strip().isdigit()]
+        if single_id is not None:
+            return [single_id]
+        return [local_season_id]
 
     async def _get_country_cache(self) -> dict[str, int]:
         """
