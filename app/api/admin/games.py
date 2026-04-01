@@ -764,6 +764,39 @@ async def import_prematch_lineup(
     )
 
 
+# --- FCMS lineup sync endpoint ---
+
+@router.post("/{game_id}/sync-fcms-lineup")
+async def sync_fcms_lineup(
+    game_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger FCMS pre-match lineup sync for a game.
+
+    Downloads pre-match PDF from FCMS, parses lineups, upserts into DB,
+    and sends the PDF to Telegram.
+    """
+    game = await db.get(Game, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if not game.fcms_match_id:
+        raise HTTPException(status_code=400, detail="Game has no fcms_match_id")
+
+    from app.services.fcms_client import get_fcms_client
+    from app.services.fcms_sync_service import FcmsSyncService
+
+    client = get_fcms_client()
+    try:
+        service = FcmsSyncService(db, client)
+        result = await service.sync_fcms_lineup(game_id)
+    finally:
+        await client.close()
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 # --- Events endpoints ---
 
 @router.get("/{game_id}/events", response_model=list[AdminEventItem])
