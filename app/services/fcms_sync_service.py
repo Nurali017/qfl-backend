@@ -32,13 +32,13 @@ class FcmsSyncService:
     # ── Query helpers ────────────────────────────────────────────────
 
     async def get_games_for_fcms_lineup(self) -> list[Game]:
-        """Games starting within 60 min that have fcms_match_id but no FCMS lineup yet."""
+        """Games starting within 90 min that have fcms_match_id but no FCMS lineup yet."""
         from datetime import datetime
 
         now = datetime.now(ALMATY_TZ)
         today = now.date()
         current_time = now.time()
-        latest_time = (now + timedelta(minutes=60)).time()
+        latest_time = (now + timedelta(minutes=90)).time()
 
         result = await self.db.execute(
             select(Game).where(
