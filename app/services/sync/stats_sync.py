@@ -69,14 +69,18 @@ class StatsSyncService(BaseSyncService):
         if not team_ids:
             return 0
 
-        # Resolve SOTA season ID for API calls (once, outside loop)
-        sota_season_id = await self.get_sota_season_id(season_id)
+        # Resolve all SOTA season IDs (usually 1, but 2L has SW+NE)
+        sota_season_ids = await self.get_all_sota_season_ids(season_id)
 
         count = 0
         for team_id in sorted(team_ids):
             try:
-                # Get all metrics from SOTA v2 API
-                stats = await self.client.get_team_season_stats_v2(team_id, sota_season_id)
+                # Try each SOTA season ID (team belongs to one conference)
+                stats = {}
+                for sid in sota_season_ids:
+                    stats = await self.client.get_team_season_stats_v2(team_id, sid)
+                    if stats and stats.get("games_played"):
+                        break
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in TEAM_SEASON_STATS_FIELDS}

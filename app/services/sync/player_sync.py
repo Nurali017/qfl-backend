@@ -35,26 +35,28 @@ class PlayerSyncService(BaseSyncService):
         Returns:
             Number of player stats rows upserted
         """
-        sota_season_id = await self.get_sota_season_id(season_id)
+        sota_season_ids = await self.get_all_sota_season_ids(season_id)
 
-        # Fetch top scorers, assisters, and clean sheets in three API calls
-        try:
-            scorers = await self.client.get_best_players(sota_season_id, metric="goal")
-        except Exception as e:
-            logger.warning("Failed to fetch best scorers for season %d: %s", season_id, e)
-            scorers = []
+        # Fetch top scorers, assisters, and clean sheets across all SOTA seasons
+        scorers: list = []
+        assisters: list = []
+        keepers: list = []
 
-        try:
-            assisters = await self.client.get_best_players(sota_season_id, metric="goal_pass")
-        except Exception as e:
-            logger.warning("Failed to fetch best assisters for season %d: %s", season_id, e)
-            assisters = []
+        for sota_season_id in sota_season_ids:
+            try:
+                scorers.extend(await self.client.get_best_players(sota_season_id, metric="goal"))
+            except Exception as e:
+                logger.warning("Failed to fetch best scorers for season %d (sota %d): %s", season_id, sota_season_id, e)
 
-        try:
-            keepers = await self.client.get_best_players(sota_season_id, metric="dry_match")
-        except Exception as e:
-            logger.warning("Failed to fetch best keepers for season %d: %s", season_id, e)
-            keepers = []
+            try:
+                assisters.extend(await self.client.get_best_players(sota_season_id, metric="goal_pass"))
+            except Exception as e:
+                logger.warning("Failed to fetch best assisters for season %d (sota %d): %s", season_id, sota_season_id, e)
+
+            try:
+                keepers.extend(await self.client.get_best_players(sota_season_id, metric="dry_match"))
+            except Exception as e:
+                logger.warning("Failed to fetch best keepers for season %d (sota %d): %s", season_id, sota_season_id, e)
 
         if not scorers and not assisters and not keepers:
             logger.info("No best_players data for season %d, skipping", season_id)
@@ -179,14 +181,18 @@ class PlayerSyncService(BaseSyncService):
         if not player_teams:
             return 0
 
-        # Resolve SOTA season ID for API calls (once, outside loop)
-        sota_season_id = await self.get_sota_season_id(season_id)
+        # Resolve all SOTA season IDs (usually 1, but 2L has SW+NE)
+        sota_season_ids = await self.get_all_sota_season_ids(season_id)
 
         count = 0
         for player_id, team_id, sota_id in player_teams:
             try:
-                # Get all metrics from SOTA v2 API
-                stats = await self.client.get_player_season_stats(str(sota_id), sota_season_id)
+                # Try each SOTA season ID until we get stats (player belongs to one conference)
+                stats = {}
+                for sid in sota_season_ids:
+                    stats = await self.client.get_player_season_stats(str(sota_id), sid)
+                    if stats and stats.get("games_played"):
+                        break
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}

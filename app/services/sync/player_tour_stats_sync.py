@@ -51,14 +51,19 @@ class PlayerTourStatsSyncService(BaseSyncService):
             logger.info("No players with sota_id for season %d", season_id)
             return 0
 
-        sota_season_id = await self.get_sota_season_id(season_id)
+        sota_season_ids = await self.get_all_sota_season_ids(season_id)
 
         count = 0
         for player_id, team_id, sota_id in player_teams:
             try:
-                stats = await self.client.get_player_game_stats_v2_by_tour(
-                    str(sota_id), sota_season_id, tour
-                )
+                # Try each SOTA season ID (player belongs to one conference)
+                stats = {}
+                for sid in sota_season_ids:
+                    stats = await self.client.get_player_game_stats_v2_by_tour(
+                        str(sota_id), sid, tour
+                    )
+                    if stats and stats.get("games_played"):
+                        break
 
                 if not stats:
                     continue

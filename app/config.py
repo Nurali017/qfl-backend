@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     current_season_id: int = 200
 
     # Local season IDs to sync automatically (Celery tasks)
-    sync_season_ids: list[int] = [61, 85, 71, 80, 84, 200]
+    sync_season_ids: list[int] = [61, 85, 71, 80, 84, 200, 203, 204]
 
     # CORS
     allowed_origins: str = "*"  # Comma-separated origins, e.g. "https://kffleague.kz"
