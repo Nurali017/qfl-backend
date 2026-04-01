@@ -493,10 +493,6 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
             if broadcaster_id is not None:
                 await _ensure_broadcaster_linked(db, game.id, broadcaster_id)
 
-            # Add reviews to media gallery
-            if video_type == "review":
-                await _ensure_media_video(db, vid, title)
-
             # Mark as processed
             await redis.set(f"yt:linked:{vid}", "1", ex=7 * 86400)
             stats["linked"] += 1
