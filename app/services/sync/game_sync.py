@@ -20,6 +20,7 @@ from app.services.sync.base import (
     GAME_PLAYER_STATS_FIELDS, GAME_TEAM_STATS_FIELDS,
 )
 from app.services.season_visibility import get_current_season_id
+from app.utils.team_name_matcher import TeamNameMatcher
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
@@ -586,6 +587,11 @@ class GameSyncService(BaseSyncService):
             result = await self.db.execute(select(Team).where(Team.id == game.away_team_id))
             away_team = result.scalar_one_or_none()
 
+        # Attach teams to game for TeamNameMatcher
+        game.home_team = home_team
+        game.away_team = away_team
+        matcher = TeamNameMatcher.from_game(game)
+
         # Load all existing events
         result = await self.db.execute(
             select(GameEvent).where(GameEvent.game_id == game_id)
@@ -650,16 +656,15 @@ class GameSyncService(BaseSyncService):
             player_name = f"{first_name1} {last_name1}".strip()
 
             team_name = event_data.get("team1", "")
-            team_name_normalized = team_name.strip().lower() if team_name else ""
-            team_id = None
-            if home_team and home_team.name and home_team.name.strip().lower() == team_name_normalized:
-                team_id = game.home_team_id
-            elif away_team and away_team.name and away_team.name.strip().lower() == team_name_normalized:
-                team_id = game.away_team_id
+            team_id = matcher.match(team_name)
 
             player_id = await self._find_player_id_from_lineup(
                 game_id, first_name1, last_name1, team_id
             )
+
+            # Fallback: infer team from player's lineup entry
+            if team_id is None and player_id:
+                team_id = await self._infer_team_id_from_lineup(game_id, player_id)
 
             # Collect assists into map
             if event_type == GameEventType.assist:
@@ -674,13 +679,7 @@ class GameSyncService(BaseSyncService):
             first_name2 = event_data.get("first_name2", "")
             last_name2 = event_data.get("last_name2", "")
             team2_name = event_data.get("team2", "")
-            team2_id = None
-            if team2_name:
-                team2_normalized = team2_name.strip().lower()
-                if home_team and home_team.name and home_team.name.strip().lower() == team2_normalized:
-                    team2_id = game.home_team_id
-                elif away_team and away_team.name and away_team.name.strip().lower() == team2_normalized:
-                    team2_id = game.away_team_id
+            team2_id = matcher.match(team2_name) if team2_name else None
             player2_id = await self._find_player_id_from_lineup(
                 game_id, first_name2, last_name2, team2_id
             )
@@ -793,6 +792,17 @@ class GameSyncService(BaseSyncService):
 
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
+
+    async def _infer_team_id_from_lineup(self, game_id: int, player_id: int) -> int | None:
+        """Infer event team_id by player lineup entry in this game."""
+        result = await self.db.execute(
+            select(GameLineup.team_id).where(
+                GameLineup.game_id == game_id,
+                GameLineup.player_id == player_id,
+            )
+        )
+        team_id = result.scalar_one_or_none()
+        return team_id
 
     def _parse_number(self, value) -> int | None:
         """Parse player number from various formats."""
