@@ -22,12 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 def _pdf_text_hash(pdf_bytes: bytes) -> str:
-    """SHA-256 of extracted PDF text (ignores metadata/timestamps)."""
-    import fitz
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    text = "".join(page.get_text() for page in doc)
-    doc.close()
-    return hashlib.sha256(text.encode()).hexdigest()
+    """SHA-256 of extracted PDF text (ignores metadata/timestamps).
+
+    Falls back to raw byte hash if text extraction fails.
+    """
+    try:
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = "".join(page.get_text() for page in doc)
+        doc.close()
+        return hashlib.sha256(text.encode()).hexdigest()
+    except Exception:
+        logger.warning("PDF text extraction failed, falling back to raw byte hash")
+        return hashlib.sha256(pdf_bytes).hexdigest()
 
 ALMATY_TZ = ZoneInfo("Asia/Almaty")
 
