@@ -150,6 +150,16 @@ _FREE_ENTRY_PHRASES = [
     "free admission",
 ]
 
+# Words indicating partial free entry (only for specific groups, not general)
+_FREE_ENTRY_EXCEPTIONS = [
+    "детям",
+    "до 14",
+    "пенсионер",
+    "инвалид",
+    "балалар",      # Kazakh: children
+    "зейнеткер",    # Kazakh: pensioner
+]
+
 
 def _detect_free_entry(organic_results: list[dict], home_name: str) -> bool:
     """Check if search results indicate free entry for the home team's match."""
@@ -162,6 +172,13 @@ def _detect_free_entry(organic_results: list[dict], home_name: str) -> bool:
             continue
         for phrase in _FREE_ENTRY_PHRASES:
             if phrase in text:
+                # Skip if free entry only applies to specific groups
+                if any(exc in text for exc in _FREE_ENTRY_EXCEPTIONS):
+                    logger.info(
+                        "Skipped partial free entry '%s' (exception word found) in: %s",
+                        phrase, snippet[:120] or title[:120],
+                    )
+                    continue
                 logger.info(
                     "Detected free entry phrase '%s' in: %s",
                     phrase, snippet[:120] or title[:120],
@@ -242,7 +259,7 @@ def _extract_ticket_url(
             # ticketon.kz: only accept /event/* links with both teams in URL
             is_ticketon = hostname == "ticketon.kz" or hostname.endswith(".ticketon.kz")
             if is_ticketon:
-                if not path.startswith("/event/"):
+                if not ("/event/" in path or path.startswith("/show/")):
                     continue
                 # Reject old events with 6-digit date suffix (e.g. -300918 = 30.09.2018)
                 slug = path.rsplit("/", 1)[-1]
