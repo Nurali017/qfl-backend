@@ -360,22 +360,23 @@ class LiveSyncService:
         season_id: int | None = None,
     ) -> int | None:
         """Save a single player lineup entry. Returns player_id or None."""
-        player_internal_id = await self._get_or_create_player_by_sota(
-            player_data.get("id"),
-            player_data.get("first_name"),
-            player_data.get("last_name"),
-            team_id=team_id,
-            season_id=season_id,
-        )
-        if player_internal_id is None:
-            return None
-
         shirt_number = player_data.get("number")
         if isinstance(shirt_number, str):
             try:
                 shirt_number = int(shirt_number)
             except ValueError:
                 shirt_number = None
+
+        player_internal_id = await self._get_or_create_player_by_sota(
+            player_data.get("id"),
+            player_data.get("first_name"),
+            player_data.get("last_name"),
+            team_id=team_id,
+            season_id=season_id,
+            shirt_number=shirt_number,
+        )
+        if player_internal_id is None:
+            return None
 
         is_captain = player_data.get("capitan", False)
         if is_captain == "":
@@ -414,6 +415,7 @@ class LiveSyncService:
         last_name: str | None,
         team_id: int | None = None,
         season_id: int | None = None,
+        shirt_number: int | None = None,
     ) -> int | None:
         if not sota_id_raw:
             return None
@@ -423,13 +425,14 @@ class LiveSyncService:
         except (ValueError, TypeError):
             return None
 
+        # Step 1: поиск по sota_id
         result = await self.db.execute(select(Player).where(Player.sota_id == sota_id))
         player = result.scalar_one_or_none()
 
         if player is not None:
             return player.id
 
-        # Fallback: поиск по имени в составе команды/сезона.
+        # Step 2: поиск по имени в составе команды/сезона.
         # Если игрок создан вручную без sota_id — привязываем его sota_id вместо создания дубля.
         if team_id and season_id and (first_name or last_name):
             result = await self.db.execute(
@@ -447,7 +450,31 @@ class LiveSyncService:
             if existing is not None:
                 existing.sota_id = sota_id
                 await self.db.flush()
-                logger.info("Linked sota_id to existing player %s (id=%s)", f"{first_name} {last_name}", existing.id)
+                logger.info("Linked sota_id to existing player %s (id=%s) by name", f"{first_name} {last_name}", existing.id)
+                return existing.id
+
+        # Step 3: поиск по номеру футболки + команда + сезон.
+        # Номер уникален в рамках команды/сезона — самый надёжный фоллбэк
+        # когда имена не совпадают (разная транслитерация FCMS vs SOTA).
+        if shirt_number and team_id and season_id:
+            result = await self.db.execute(
+                select(Player)
+                .join(PlayerTeam, PlayerTeam.player_id == Player.id)
+                .where(
+                    PlayerTeam.team_id == team_id,
+                    PlayerTeam.season_id == season_id,
+                    PlayerTeam.number == shirt_number,
+                    Player.sota_id.is_(None),
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing is not None:
+                existing.sota_id = sota_id
+                await self.db.flush()
+                logger.info(
+                    "Linked sota_id to existing player %s (id=%s) by shirt number %s",
+                    f"{existing.first_name} {existing.last_name}", existing.id, shirt_number,
+                )
                 return existing.id
 
         # Unknown player — notify via Telegram (deduplicated by Redis)
@@ -463,12 +490,13 @@ class LiveSyncService:
                     f"👤 {first_name} {last_name}\n"
                     f"🆔 SOTA ID: {sota_id}\n"
                     f"🏟 Team ID: {team_id}\n"
-                    f"📅 Season ID: {season_id}\n\n"
+                    f"📅 Season ID: {season_id}\n"
+                    f"👕 Номер: {shirt_number}\n\n"
                     f"Игрок не найден в БД. Добавьте вручную."
                 )
         except Exception:
             logger.exception("Failed to send unknown player notification")
-        logger.warning("Unknown player in SOTA: %s %s (sota_id=%s)", first_name, last_name, sota_id)
+        logger.warning("Unknown player in SOTA: %s %s (sota_id=%s, number=%s)", first_name, last_name, sota_id, shirt_number)
         return None
 
     async def sync_live_time(self, game_id: int) -> dict:
@@ -757,12 +785,20 @@ class LiveSyncService:
                 if not sota_id_raw:
                     continue
 
+                ep_number = ep.get("number")
+                if isinstance(ep_number, str):
+                    try:
+                        ep_number = int(ep_number)
+                    except ValueError:
+                        ep_number = None
+
                 player_id = await self._get_or_create_player_by_sota(
                     sota_id_raw,
                     ep.get("first_name"),
                     ep.get("last_name"),
                     team_id=team_id,
                     season_id=game.season_id,
+                    shirt_number=ep_number,
                 )
                 if player_id is None:
                     continue
