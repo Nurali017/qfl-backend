@@ -1,5 +1,6 @@
 """FCMS sync service: pre-match lineup fetch (PDF) and post-match protocol PDF download."""
 
+import hashlib
 import logging
 from datetime import timedelta
 from zoneinfo import ZoneInfo
@@ -58,17 +59,22 @@ class FcmsSyncService:
         return list(result.scalars().all())
 
     async def get_games_for_fcms_protocol(self) -> list[Game]:
-        """Finished games within 24h that have fcms_match_id but no protocol yet."""
-        cutoff = utcnow() - timedelta(hours=24)
+        """Finished games 3-24h ago that have fcms_match_id.
+
+        Waits at least 3h after match end (FCMS needs time to generate PDF),
+        then keeps checking for updates up to 24h (PDF may be revised).
+        """
+        now = utcnow()
+        cutoff_24h = now - timedelta(hours=24)
+        cutoff_3h = now - timedelta(hours=3)
 
         result = await self.db.execute(
             select(Game).where(
                 and_(
                     Game.status == GameStatus.finished,
-                    Game.finished_at >= cutoff,
+                    Game.finished_at >= cutoff_24h,
+                    Game.finished_at <= cutoff_3h,
                     Game.fcms_match_id.isnot(None),
-                    Game.protocol_url.is_(None),
-                    Game.fcms_protocol_synced_at.is_(None),
                     Game.sync_disabled == False,
                 )
             )
@@ -276,7 +282,32 @@ class FcmsSyncService:
         if pdf_bytes is None:
             return {"status": "pdf_not_available_yet"}
 
-        # Upload to MinIO
+        # Check if PDF changed since last sync
+        pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
+
+        # For legacy rows without hash, compute hash from stored MinIO object to compare fairly
+        if game.protocol_url and not game.protocol_pdf_hash:
+            try:
+                from app.utils.file_urls import to_object_name
+                result = await FileStorageService.get_file(to_object_name(game.protocol_url))
+                if result is None:
+                    raise FileNotFoundError("Stored protocol not found in MinIO")
+                stored_bytes, _ = result
+                game.protocol_pdf_hash = hashlib.sha256(stored_bytes).hexdigest()
+                logger.info("Backfilled protocol hash for game %d from stored object", game_id)
+            except Exception:
+                logger.warning("Could not read stored protocol for game %d, will re-upload", game_id, exc_info=True)
+
+        if game.protocol_pdf_hash == pdf_hash:
+            game.fcms_protocol_synced_at = utcnow()
+            await self.db.commit()
+            logger.debug("FCMS protocol unchanged for game %d (hash=%s)", game_id, pdf_hash[:12])
+            return {"status": "unchanged"}
+
+        is_update = game.protocol_url is not None
+        old_object_name = game.protocol_url
+
+        # Upload new PDF first (ensure replacement is durable before deleting old)
         filename = f"protocol_game_{game_id}.pdf"
         upload_result = await FileStorageService.upload_file(
             pdf_bytes,
@@ -287,6 +318,7 @@ class FcmsSyncService:
         object_name = upload_result["object_name"]
 
         game.protocol_url = object_name
+        game.protocol_pdf_hash = pdf_hash
         game.fcms_protocol_synced_at = utcnow()
 
         # Extract attendance directly from PDF bytes (no need to re-download from MinIO)
@@ -300,10 +332,19 @@ class FcmsSyncService:
 
         await self.db.commit()
 
+        # Best-effort cleanup of old object after DB commit
+        if old_object_name and old_object_name != object_name:
+            try:
+                from app.utils.file_urls import to_object_name
+                await FileStorageService.delete_file(to_object_name(old_object_name))
+            except Exception:
+                logger.warning("Failed to delete old protocol for game %d: %s", game_id, old_object_name, exc_info=True)
+
         # Send Telegram notification
+        action = "обновлён" if is_update else "загружен"
         try:
             await send_telegram_message(
-                f"📋 Протокол матча загружен\n\n"
+                f"📋 Протокол матча {action}\n\n"
                 f"🆔 Game #{game_id}\n"
                 f"📄 {object_name}\n"
                 f"👥 Посещаемость: {game.visitors or 'N/A'}"
@@ -311,5 +352,5 @@ class FcmsSyncService:
         except Exception:
             logger.warning("Failed to send protocol notification for game %d", game_id, exc_info=True)
 
-        logger.info("FCMS protocol PDF uploaded for game %d: %s", game_id, object_name)
-        return {"status": "uploaded", "object_name": object_name}
+        logger.info("FCMS protocol PDF %s for game %d: %s", action, game_id, object_name)
+        return {"status": "updated" if is_update else "uploaded", "object_name": object_name}

@@ -95,6 +95,7 @@ class Game(Base):
     video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
     youtube_live_url: Mapped[str | None] = mapped_column(String(500))  # YouTube live stream URL
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
+    protocol_pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # SHA-256 for change detection
 
     # Live minute/half from SOTA time endpoint
     live_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
