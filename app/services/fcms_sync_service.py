@@ -24,13 +24,17 @@ logger = logging.getLogger(__name__)
 def _pdf_text_hash(pdf_bytes: bytes) -> str:
     """SHA-256 of extracted PDF text (ignores metadata/timestamps).
 
+    Strips 'Report Date: ...' lines since FCMS embeds current timestamp
+    in the PDF text on every download.
     Falls back to raw byte hash if text extraction fails.
     """
     try:
+        import re
         import fitz
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         text = "".join(page.get_text() for page in doc)
         doc.close()
+        text = re.sub(r"Report Date:.*", "", text)
         return hashlib.sha256(text.encode()).hexdigest()
     except Exception:
         logger.warning("PDF text extraction failed, falling back to raw byte hash")
