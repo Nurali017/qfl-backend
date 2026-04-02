@@ -109,7 +109,7 @@ class FcmsSyncService:
             ]:
                 lineup_type = LineupType.starter if lineup_type_str == "starter" else LineupType.substitute
 
-                for p in players:
+                for idx, p in enumerate(players):
                     shirt_number = p["shirt_number"]
                     name = p["name"]
 
@@ -123,13 +123,18 @@ class FcmsSyncService:
                         )
                         continue
 
+                    # FCMS protocol: first starter is always GK, second is captain
+                    if lineup_type_str == "starter" and idx == 0:
+                        amplua = "Gk"
+                    is_captain = lineup_type_str == "starter" and idx == 1
+
                     stmt = insert(GameLineup).values(
                         game_id=game_id,
                         team_id=team_id,
                         player_id=player_id,
                         lineup_type=lineup_type,
                         shirt_number=shirt_number,
-                        is_captain=False,
+                        is_captain=is_captain,
                         amplua=amplua,
                     )
                     stmt = stmt.on_conflict_do_update(
@@ -137,6 +142,7 @@ class FcmsSyncService:
                         set_={
                             "lineup_type": lineup_type,
                             "shirt_number": shirt_number,
+                            "is_captain": is_captain,
                             "amplua": amplua,
                         },
                     )
