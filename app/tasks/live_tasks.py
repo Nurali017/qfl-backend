@@ -122,11 +122,12 @@ async def _sync_live_game_events():
     compare-and-delete to avoid leaving an orphaned reservation.
     If the task is lost (ack failure, broker crash), the TTL auto-expires.
     """
-    from app.utils.live_flag import has_live_games, set_live_flag, clear_live_flag
+    from app.utils.live_flag import set_live_flag, clear_live_flag
 
-    if not await has_live_games():
-        return {"active_games": 0, "total_new_events": 0, "results": [], "skipped": True}
-
+    # Always query DB directly — no Redis gate.
+    # The old has_live_games() Redis check caused a chicken-and-egg deadlock:
+    # if the flag expired while games were live, sync would never run again
+    # and the flag would never be refreshed (2026-04-02 incident, 4 matches stuck at HT).
     async with AsyncSessionLocal() as db:
         try:
             client = get_sota_client()

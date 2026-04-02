@@ -1,7 +1,8 @@
-"""Redis flag to skip live-game polling when no games are live.
+"""Redis flag indicating live games are active.
 
-When no flag is set, the 5-second Celery task returns instantly
-without opening a DB session — zero disk I/O.
+Advisory only — the sync dispatcher always queries DB directly.
+The flag is maintained for other consumers (e.g. frontend polling hints)
+but must NOT be used as a hard gate for sync operations.
 """
 
 from redis import asyncio as aioredis
