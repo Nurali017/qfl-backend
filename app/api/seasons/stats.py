@@ -113,6 +113,9 @@ async def get_player_stats_table(
             return PlayerStatsTableResponse(items=[], total=0)
 
     filters = [PlayerSeasonStats.season_id == season_id]
+    # For rank-based sorts (goal, goal_pass, dry_match), only show SOTA-ranked players
+    if use_rank_sort:
+        filters.append(sort_column.is_not(None))
     if team_id is not None:
         filters.append(PlayerSeasonStats.team_id == team_id)
     if group and group_team_ids:
