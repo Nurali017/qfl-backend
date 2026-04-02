@@ -20,6 +20,15 @@ from app.utils.timestamps import utcnow
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+
+def _pdf_text_hash(pdf_bytes: bytes) -> str:
+    """SHA-256 of extracted PDF text (ignores metadata/timestamps)."""
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    text = "".join(page.get_text() for page in doc)
+    doc.close()
+    return hashlib.sha256(text.encode()).hexdigest()
+
 ALMATY_TZ = ZoneInfo("Asia/Almaty")
 
 
@@ -283,7 +292,7 @@ class FcmsSyncService:
             return {"status": "pdf_not_available_yet"}
 
         # Check if PDF changed since last sync
-        pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
+        pdf_hash = _pdf_text_hash(pdf_bytes)
 
         # For legacy rows without hash, compute hash from stored MinIO object to compare fairly
         if game.protocol_url and not game.protocol_pdf_hash:
@@ -293,7 +302,7 @@ class FcmsSyncService:
                 if result is None:
                     raise FileNotFoundError("Stored protocol not found in MinIO")
                 stored_bytes, _ = result
-                game.protocol_pdf_hash = hashlib.sha256(stored_bytes).hexdigest()
+                game.protocol_pdf_hash = _pdf_text_hash(stored_bytes)
                 logger.info("Backfilled protocol hash for game %d from stored object", game_id)
             except Exception:
                 logger.warning("Could not read stored protocol for game %d, will re-upload", game_id, exc_info=True)
