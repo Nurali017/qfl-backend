@@ -42,6 +42,13 @@ _GENERIC_PATHS = {
     "/ru/page/bilety", "/kz/page/bilety",
 }
 
+# Futsal/mini-football keywords — reject these (we only want football tickets)
+_FUTSAL_KEYWORDS = [
+    "futzal", "futsal", "futbol-zal", "mini-football",
+    "мини-футбол", "футзал", "мини футбол",
+    "mfk-",  # МФК = мини-футбольный клуб (ticketon URL slug prefix)
+]
+
 SERPER_URL = "https://google.serper.dev/search"
 
 # Russian month names (genitive case) for query formatting
@@ -272,6 +279,11 @@ def _extract_ticket_url(
                     "Rejected ticket URL (wrong year in snippet): %s — %s",
                     link, snippet[:120],
                 )
+                continue
+            # Reject futsal/mini-football events
+            combined_lower = (link + " " + title + " " + snippet).lower()
+            if any(kw in combined_lower for kw in _FUTSAL_KEYWORDS):
+                logger.info("Rejected futsal ticket URL: %s — %s", link, title[:100])
                 continue
             logger.info("Matched ticket URL: %s (title: %s)", link, title[:100])
             return TicketMatch(url=link, title=title, snippet=snippet)
