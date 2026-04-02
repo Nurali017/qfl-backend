@@ -21,6 +21,7 @@ _TEAM_TRANSLATION_TABLE = str.maketrans(
         "һ": "х",
         "і": "и",
         "й": "и",
+        "i": "и",  # Latin i (YouTube titles mix Latin/Cyrillic)
     }
 )
 
