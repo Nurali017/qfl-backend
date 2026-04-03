@@ -115,6 +115,12 @@ class FcmsSyncService:
             logger.info("FCMS pre-match report not available yet for game %d (fcms=%d)", game_id, game.fcms_match_id)
             return {"status": "pdf_not_available_yet"}
 
+        # Deduplicate: skip if PDF unchanged since last sync
+        pdf_hash = _pdf_text_hash(pdf_bytes)
+        if game.prematch_pdf_hash == pdf_hash:
+            logger.debug("FCMS pre-match PDF unchanged for game %d (hash=%s)", game_id, pdf_hash[:12])
+            return {"status": "unchanged"}
+
         # Parse lineup from PDF
         lineup_data = parse_pre_match_lineup(pdf_bytes)
 
@@ -185,6 +191,7 @@ class FcmsSyncService:
             game.has_lineup = True
             game.lineup_source = "fcms"
 
+        game.prematch_pdf_hash = pdf_hash
         await self.db.commit()
 
         logger.info(
