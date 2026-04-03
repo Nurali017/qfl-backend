@@ -26,6 +26,7 @@ from app.services.lineup import (
     is_field_allowed_by_rules,
     team_has_valid_field_data,
     has_any_lineup_data,
+    has_original_field_data,
     normalize_lineup_source,
 )
 
@@ -183,7 +184,7 @@ async def get_game_lineup(
         team_name: str | None,
         formation: str | None,
         kit_color: str | None,
-    ) -> LineupTeam:
+    ) -> tuple[LineupTeam, bool]:
         lineup_result = await db.execute(
             select(GameLineup)
             .where(GameLineup.game_id == game_id, GameLineup.team_id == team_id)
@@ -197,6 +198,7 @@ async def get_game_lineup(
 
         starters = []
         substitutes = []
+        raw_starter_positions: list[tuple[str | None, str | None]] = []
 
         for entry in lineup_entries:
             player = entry.player
@@ -235,6 +237,7 @@ async def get_game_lineup(
 
             if entry.lineup_type.value == "starter":
                 starters.append((sort_order, player_model))
+                raw_starter_positions.append((entry.amplua, entry.field_position))
             else:
                 substitutes.append(player_model)
 
@@ -250,6 +253,8 @@ async def get_game_lineup(
             positions = [p.amplua for p in sorted_starters]
             final_formation = detect_formation(positions)
 
+        field_ok = has_original_field_data(raw_starter_positions)
+
         return LineupTeam(
             team_id=team_id,
             team_name=team_name,
@@ -257,7 +262,7 @@ async def get_game_lineup(
             kit_color=kit_color,
             starters=sorted_starters,
             substitutes=substitutes,
-        )
+        ), field_ok
 
     # Use formations from game (synced from SOTA) — fetch both in parallel
     home_lineup_coro = (
@@ -268,7 +273,7 @@ async def get_game_lineup(
             game.home_kit_color,
         )
         if game.home_team_id
-        else asyncio.sleep(0, result=empty_lineup)
+        else asyncio.sleep(0, result=(empty_lineup, False))
     )
     away_lineup_coro = (
         get_team_lineup(
@@ -278,9 +283,11 @@ async def get_game_lineup(
             game.away_kit_color,
         )
         if game.away_team_id
-        else asyncio.sleep(0, result=empty_lineup)
+        else asyncio.sleep(0, result=(empty_lineup, False))
     )
-    home_lineup, away_lineup = await asyncio.gather(home_lineup_coro, away_lineup_coro)
+    (home_lineup, home_field_ok), (away_lineup, away_field_ok) = await asyncio.gather(
+        home_lineup_coro, away_lineup_coro,
+    )
 
     # Convert to dicts for lineup utility checks
     home_lineup_dict = home_lineup.model_dump()
@@ -288,7 +295,12 @@ async def get_game_lineup(
 
     has_lineup_data = has_any_lineup_data(home_lineup_dict, away_lineup_dict)
     field_allowed = is_field_allowed_by_rules(game)
-    field_data_valid = team_has_valid_field_data(home_lineup_dict) and team_has_valid_field_data(away_lineup_dict)
+    field_data_valid = (
+        team_has_valid_field_data(home_lineup_dict)
+        and team_has_valid_field_data(away_lineup_dict)
+        and home_field_ok
+        and away_field_ok
+    )
 
     if not has_lineup_data:
         rendering_mode = "hidden"
