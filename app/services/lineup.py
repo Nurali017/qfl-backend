@@ -14,7 +14,7 @@ VALID_AMPLUA_VALUES = {"Gk", "D", "DM", "M", "AM", "F"}
 VALID_FIELD_POSITION_VALUES = {"L", "LC", "C", "RC", "R"}
 LINEUP_FIELD_ALLOWED_CHAMPIONSHIPS = {1, 2, 3, 5}
 LINEUP_FIELD_CUTOFF_DATE = date_type(2025, 6, 1)
-VALID_LINEUP_SOURCES = {"team_squad", "sota_api", "vsporte_api", "matches_players", "prematch_report", "none"}
+VALID_LINEUP_SOURCES = {"team_squad", "sota_api", "vsporte_api", "matches_players", "prematch_report", "fcms", "none"}
 MAX_PLAYERS_PER_SLOT = 2
 
 POSITION_CODE_TO_AMPLUA = {
@@ -326,6 +326,18 @@ def team_has_valid_field_data(team_lineup: dict) -> bool:
     if any(count > MAX_PLAYERS_PER_SLOT for count in slot_counts.values()):
         return False
     return True
+
+
+def has_original_field_data(raw_starters: list[tuple[str | None, str | None]]) -> bool:
+    """Check if enough starters have original amplua from DB (not fallback).
+
+    At least 8 of 11 starters must have non-NULL amplua for the field view
+    to be reliable. Allows up to 3 players with inferred/fallback positions.
+    """
+    if len(raw_starters) < 11:
+        return False
+    starters_with_amplua = sum(1 for amplua, _ in raw_starters[:11] if amplua is not None)
+    return starters_with_amplua >= 8
 
 
 def has_any_lineup_data(home_lineup: dict, away_lineup: dict) -> bool:
