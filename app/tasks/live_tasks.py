@@ -613,13 +613,13 @@ async def _sync_extended_aggregates_for_season(
     }
 
 
-@celery_app.task(name="app.tasks.live_tasks.post_finish_followup")
+@celery_app.task(name="app.tasks.live_tasks.post_finish_followup", soft_time_limit=300, time_limit=360)
 def post_finish_followup(game_id: int):
     """Celery task: Post-match pipeline for a single game."""
     return run_async(_post_finish_followup(game_id))
 
 
-@celery_app.task(name="app.tasks.live_tasks.sync_extended_stats_for_game")
+@celery_app.task(name="app.tasks.live_tasks.sync_extended_stats_for_game", soft_time_limit=300, time_limit=360)
 def sync_extended_stats_for_game(game_id: int):
     """Celery task: Sync extended stats for a single game."""
     return run_async(_sync_extended_stats_for_game(game_id))

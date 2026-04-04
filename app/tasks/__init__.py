@@ -20,6 +20,15 @@ celery_app.conf.update(
     timezone="Asia/Almaty",
     enable_utc=True,
     task_ignore_result=True,
+    task_soft_time_limit=600,
+    task_time_limit=660,
+    task_routes={
+        "app.tasks.live_tasks.sync_live_game_events": {"queue": "live"},
+        "app.tasks.live_tasks.sync_single_game": {"queue": "live"},
+        "app.tasks.live_tasks.auto_start_live_games": {"queue": "live"},
+        "app.tasks.live_tasks.auto_end_finished_games": {"queue": "live"},
+        "app.tasks.live_tasks.fetch_pregame_lineups": {"queue": "live"},
+    },
 )
 
 if settings.sota_enabled:
@@ -48,9 +57,9 @@ if settings.sota_enabled:
             "task": "app.tasks.live_tasks.fetch_pregame_lineups",
             "schedule": crontab(minute="*/3"),
         },
-        "sync-extended-stats-every-6h": {
+        "sync-extended-stats-nightly": {
             "task": "app.tasks.sync_tasks.sync_extended_stats",
-            "schedule": crontab(minute="15", hour="*/6"),
+            "schedule": crontab(minute="15", hour="3"),
         },
         "retry-missing-team-of-week-every-6h": {
             "task": "app.tasks.sync_tasks.retry_missing_team_of_week",
