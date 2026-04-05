@@ -225,23 +225,17 @@ def detect_formation(positions: list[str | None]) -> str | None:
     if total_outfield < 10:
         return None
 
-    # Determine formation based on composition
-    total_mids = defensive_mids + central_mids + attacking_mids
+    # Build formation directly from non-zero amplua groups (defense → attack).
+    # This preserves the actual line structure rather than guessing a label.
+    parts: list[int] = []
+    for count in (defenders, defensive_mids, central_mids, attacking_mids, forwards):
+        if count > 0:
+            parts.append(count)
 
-    # 4-X-1 formations (4 defenders, 1 forward, varying midfield)
-    if defenders == 4 and forwards == 1 and total_mids == 5:
-        return "4-2-3-1"  # Standard modern formation
-    elif defenders == 4 and forwards == 2:
-        return "4-4-2"
-    elif defenders == 4 and forwards == 3:
-        return "4-3-3"
-    elif defenders == 3 and forwards == 2:
-        return "3-5-2"
-    elif defenders == 5 and forwards == 2:
-        return "5-3-2"
-    else:
-        # Fallback: simple D-M-F format
-        return f"{defenders}-{total_mids}-{forwards}"
+    if not parts:
+        return None
+
+    return "-".join(str(p) for p in parts)
 
 
 # Position order for sorting: line (GK→DEF→MID→FWD) + side (L→C→R)

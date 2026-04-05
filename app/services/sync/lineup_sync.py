@@ -939,6 +939,7 @@ class LineupSyncService(BaseSyncService):
 
         # Сузить до матчевого дня и удалить лишних
         # Skip deletion if lineup was set by FCMS (authoritative pre-match protocol)
+        await self.db.flush()
         await self.db.refresh(game)
         if game.lineup_source != "fcms":
             for side, team_id in (("home", game.home_team_id), ("away", game.away_team_id)):
