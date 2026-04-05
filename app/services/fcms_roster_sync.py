@@ -121,6 +121,15 @@ class FcmsRosterSyncService:
                 async with self.db.begin_nested():
                     fcms_players = await self.client.get_competitor_players(comp_id, team.fcms_team_id)
                     changes = await self.sync_team_roster(team, fcms_players, season_id)
+
+                    # Coach sync
+                    try:
+                        fcms_officials = await self.client.get_competitor_officials(comp_id, team.fcms_team_id)
+                        coach_changes = await self.sync_team_coaches(team, fcms_officials, season_id)
+                        changes["coach_updates"] = coach_changes
+                    except Exception:
+                        logger.exception("Failed to sync coaches for %s", team.name)
+
                     all_changes.append(changes)
                     teams_synced += 1
             except Exception as e:
@@ -236,6 +245,9 @@ class FcmsRosterSyncService:
                 if match:
                     pt_m, lp_m = match
                     matched_player_ids.add(lp_m.id)
+                    self._remove_from_indexes(
+                        lp_m.id, local_by_fcms, local_by_name, local_by_num
+                    )
                     if not pt_m.is_hidden:
                         pt_m.is_hidden = True
                         changes["deregistered"].append({
@@ -255,10 +267,21 @@ class FcmsRosterSyncService:
 
             if match:
                 pt, lp = match
+                # Remove matched player from all indexes to prevent
+                # double-matching via stale name/number keys
+                self._remove_from_indexes(
+                    lp.id, local_by_fcms, local_by_name, local_by_num
+                )
             else:
                 # Step 2: global search
                 lp, method = await self._find_globally(fn_ru, ln_ru, fn_en, ln_en, person_id, dob)
                 if lp:
+                    # Remove from local indexes — the player may already
+                    # have an active PlayerTeam for this team/season, so
+                    # they could still be present in local_by_* dicts.
+                    self._remove_from_indexes(
+                        lp.id, local_by_fcms, local_by_name, local_by_num
+                    )
                     # Step 3: ensure PlayerTeam
                     pt_result = await self.db.execute(
                         select(PlayerTeam).where(
@@ -308,9 +331,27 @@ class FcmsRosterSyncService:
                 player_updates = []
 
                 # Step 4: auto-update fields
-                if person_id and not lp.fcms_person_id:
+                # Only set/correct fcms_person_id on strong matches.
+                # Weak fallbacks (number) must not rewrite the unique identity.
+                _strong_methods = {"fcms_id", "name", "name_rev", "global_fcms_id", "global_name", "global_name_rev"}
+                if person_id and lp.fcms_person_id != person_id and method in _strong_methods:
+                    if lp.fcms_person_id:
+                        logger.warning(
+                            "fcms_person_id mismatch for player %s (%s %s): %s → %s (matched by %s)",
+                            lp.id, lp.first_name, lp.last_name,
+                            lp.fcms_person_id, person_id, method,
+                        )
+                        player_updates.append(f"fcms_id: {lp.fcms_person_id} → {person_id}")
+                    else:
+                        player_updates.append(f"fcms_id={person_id}")
                     lp.fcms_person_id = person_id
-                    player_updates.append(f"fcms_id={person_id}")
+                elif person_id and lp.fcms_person_id != person_id:
+                    logger.warning(
+                        "Skipping fcms_person_id update for player %s (%s %s): "
+                        "matched by weak method '%s', current=%s, fcms=%s",
+                        lp.id, lp.first_name, lp.last_name,
+                        method, lp.fcms_person_id, person_id,
+                    )
 
                 if fn_ru and lp.first_name != fn_ru:
                     player_updates.append(f"имя: {lp.first_name} → {fn_ru}")
@@ -388,6 +429,199 @@ class FcmsRosterSyncService:
                 })
 
         return changes
+
+    # ── Coach sync ──────────────────────────────────────────────────
+
+    _FCMS_ROLE_MAP: dict[str, tuple[str, str]] = {
+        "HDCH": ("Главный тренер", "Бас бапкер"),
+        "ASCH": ("Помощник тренера", "Бапкердің көмекшісі"),
+    }
+
+    async def sync_team_coaches(
+        self, team: Team, fcms_officials: list[dict], season_id: int,
+    ) -> list[dict]:
+        """Sync head coach and assistants from FCMS. Returns list of change dicts."""
+        changes: list[dict] = []
+
+        # Filter: only HDCH and ASCH
+        relevant = []
+        for o in fcms_officials:
+            role_obj = o.get("teamOfficialRole", {})
+            short = role_obj.get("shortName", "")
+            if short in self._FCMS_ROLE_MAP:
+                relevant.append(o)
+
+        # Load current coaches (role=2) for this team/season
+        result = await self.db.execute(
+            select(PlayerTeam, Player)
+            .join(Player, PlayerTeam.player_id == Player.id)
+            .where(
+                PlayerTeam.team_id == team.id,
+                PlayerTeam.season_id == season_id,
+                PlayerTeam.role == 2,
+                PlayerTeam.is_active == True,
+            )
+        )
+        local_coaches = result.all()
+        local_by_fcms: dict[int, tuple[PlayerTeam, Player]] = {}
+        local_by_name: dict[tuple, tuple[PlayerTeam, Player]] = {}
+        for pt, p in local_coaches:
+            if p.fcms_person_id:
+                local_by_fcms[p.fcms_person_id] = (pt, p)
+            key = _name_key(p.last_name, p.first_name)
+            if key:
+                local_by_name[key] = (pt, p)
+
+        matched_ids: set[int] = set()
+
+        for o in relevant:
+            to = o.get("teamOfficial", {})
+            role_obj = o.get("teamOfficialRole", {})
+            short = role_obj.get("shortName", "")
+            person_id = to.get("personId")
+            fn_ru = to.get("localFirstName") or ""
+            ln_ru = to.get("localFamilyName") or ""
+            fn_en = to.get("firstName") or ""
+            ln_en = to.get("familyName") or ""
+            position_ru, position_kz = self._FCMS_ROLE_MAP[short]
+
+            # Match: fcms_person_id → name → global
+            pt, lp, method = None, None, None
+            if person_id and person_id in local_by_fcms:
+                pt, lp = local_by_fcms[person_id]
+                method = "fcms_id"
+            else:
+                for ln, fn in [(ln_ru, fn_ru), (ln_en, fn_en)]:
+                    key = _name_key(ln, fn)
+                    if key and key in local_by_name:
+                        pt, lp = local_by_name[key]
+                        method = "name"
+                        break
+
+            if not lp:
+                # Global search by fcms_person_id
+                if person_id:
+                    r = await self.db.execute(
+                        select(Player).where(Player.fcms_person_id == person_id)
+                    )
+                    lp = r.scalars().first()
+                    if lp:
+                        method = "global_fcms_id"
+                # Global search by name
+                if not lp and ln_ru and fn_ru:
+                    r = await self.db.execute(
+                        select(Player).where(
+                            Player.last_name == ln_ru,
+                            Player.first_name == fn_ru,
+                        )
+                    )
+                    lp = r.scalars().first()
+                    if lp:
+                        method = "global_name"
+
+            details: list[str] = []
+
+            if not lp:
+                # Create new player for coach
+                lp = Player(
+                    first_name=fn_ru or fn_en,
+                    last_name=ln_ru or ln_en,
+                    first_name_en=fn_en or None,
+                    last_name_en=ln_en or None,
+                    fcms_person_id=person_id,
+                )
+                self.db.add(lp)
+                await self.db.flush()
+                method = "new"
+                details.append("создан")
+            else:
+                # Update existing
+                if person_id and not lp.fcms_person_id:
+                    lp.fcms_person_id = person_id
+                if fn_ru and lp.first_name != fn_ru:
+                    details.append(f"имя: {lp.first_name} → {fn_ru}")
+                    lp.first_name = fn_ru
+                if ln_ru and lp.last_name != ln_ru:
+                    details.append(f"фамилия: {lp.last_name} → {ln_ru}")
+                    lp.last_name = ln_ru
+                if fn_en and lp.first_name_en != fn_en:
+                    lp.first_name_en = fn_en
+                if ln_en and lp.last_name_en != ln_en:
+                    lp.last_name_en = ln_en
+
+            matched_ids.add(lp.id)
+
+            # Ensure PlayerTeam(role=2)
+            if not pt:
+                pt_result = await self.db.execute(
+                    select(PlayerTeam).where(
+                        PlayerTeam.player_id == lp.id,
+                        PlayerTeam.team_id == team.id,
+                        PlayerTeam.season_id == season_id,
+                        PlayerTeam.role == 2,
+                    )
+                )
+                pt = pt_result.scalars().first()
+
+            if not pt:
+                pt = PlayerTeam(
+                    player_id=lp.id,
+                    team_id=team.id,
+                    season_id=season_id,
+                    role=2,
+                    position_ru=position_ru,
+                    position_kz=position_kz,
+                    is_active=True,
+                    is_hidden=False,
+                )
+                self.db.add(pt)
+                await self.db.flush()
+                details.append(f"назначен {position_ru}")
+            else:
+                if not pt.is_active:
+                    pt.is_active = True
+                    details.append("реактивирован")
+                if pt.is_hidden:
+                    pt.is_hidden = False
+                if pt.position_ru != position_ru:
+                    details.append(f"роль: {pt.position_ru} → {position_ru}")
+                    pt.position_ru = position_ru
+                    pt.position_kz = position_kz
+
+            if details:
+                name = f"{fn_ru} {ln_ru}".strip() or f"{fn_en} {ln_en}".strip()
+                changes.append({
+                    "name": name,
+                    "position": position_ru,
+                    "method": method,
+                    "details": details,
+                })
+
+        # Deactivate coaches not in FCMS
+        for pt, p in local_coaches:
+            if p.id not in matched_ids:
+                pt.is_active = False
+                changes.append({
+                    "name": f"{p.first_name} {p.last_name}",
+                    "position": pt.position_ru or "тренер",
+                    "method": "deactivated",
+                    "details": ["деактивирован (нет в FCMS)"],
+                })
+
+        return changes
+
+    @staticmethod
+    def _remove_from_indexes(
+        player_id: int,
+        local_by_fcms: dict,
+        local_by_name: dict,
+        local_by_num: dict,
+    ) -> None:
+        """Remove a matched player from all lookup indexes to prevent double-matching."""
+        for idx in (local_by_fcms, local_by_name, local_by_num):
+            keys_to_remove = [k for k, v in idx.items() if v[1].id == player_id]
+            for k in keys_to_remove:
+                del idx[k]
 
     def _find_in_roster(self, fn_ru, ln_ru, fn_en, ln_en, person_id, num,
                         local_by_fcms, local_by_name, local_by_num):
@@ -506,6 +740,12 @@ class FcmsRosterSyncService:
             if ch.get("deregistered"):
                 for p in ch["deregistered"]:
                     team_lines.append(f"  ⏸ {p['name']} — отзаявлен")
+
+            if ch.get("coach_updates"):
+                has_any = True
+                for c in ch["coach_updates"]:
+                    details = ", ".join(c["details"])
+                    team_lines.append(f"  👔 {c['name']} — {c['position']}: {details}")
 
             if team_lines:
                 block = f"<b>{ch['team_name']}</b> ({ch['matched']}/{ch['fcms_active']} заявленных)\n"

@@ -138,6 +138,16 @@ class FcmsClient:
         data = resp.json()
         return data.get("_embedded", {}).get("competitorPlayers", [])
 
+    async def get_competitor_officials(self, competition_id: int, team_id: int) -> list[dict]:
+        """Get coaching staff for a team in a competition (тренерский штаб)."""
+        resp = await self._request(
+            "GET",
+            f"/v1/competitions/{competition_id}/competitors/{team_id}/teamOfficials",
+            params={"limit": 50},
+        )
+        data = resp.json()
+        return data.get("_embedded", {}).get("competitorTeamOfficials", [])
+
     async def get_pre_match_report_pdf(self, match_id: int) -> bytes | None:
         """Download pre-match report PDF (contains lineups).
 
