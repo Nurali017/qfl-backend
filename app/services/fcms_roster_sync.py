@@ -335,16 +335,25 @@ class FcmsRosterSyncService:
                 # Weak fallbacks (number) must not rewrite the unique identity.
                 _strong_methods = {"fcms_id", "name", "name_rev", "global_fcms_id", "global_name", "global_name_rev"}
                 if person_id and lp.fcms_person_id != person_id and method in _strong_methods:
-                    if lp.fcms_person_id:
+                    # Check uniqueness: another player may already own this person_id
+                    conflict = await self._fcms_person_id_taken(person_id, lp.id)
+                    if conflict:
+                        logger.warning(
+                            "Cannot set fcms_person_id=%s on player %s (%s %s): "
+                            "already owned by player %s",
+                            person_id, lp.id, lp.first_name, lp.last_name, conflict,
+                        )
+                    elif lp.fcms_person_id:
                         logger.warning(
                             "fcms_person_id mismatch for player %s (%s %s): %s → %s (matched by %s)",
                             lp.id, lp.first_name, lp.last_name,
                             lp.fcms_person_id, person_id, method,
                         )
                         player_updates.append(f"fcms_id: {lp.fcms_person_id} → {person_id}")
+                        lp.fcms_person_id = person_id
                     else:
                         player_updates.append(f"fcms_id={person_id}")
-                    lp.fcms_person_id = person_id
+                        lp.fcms_person_id = person_id
                 elif person_id and lp.fcms_person_id != person_id:
                     logger.warning(
                         "Skipping fcms_person_id update for player %s (%s %s): "
@@ -446,7 +455,7 @@ class FcmsRosterSyncService:
         # Filter: only HDCH and ASCH
         relevant = []
         for o in fcms_officials:
-            role_obj = o.get("teamOfficialRole", {})
+            role_obj = o.get("teamOfficialRole") or {}
             short = role_obj.get("shortName", "")
             if short in self._FCMS_ROLE_MAP:
                 relevant.append(o)
@@ -522,13 +531,21 @@ class FcmsRosterSyncService:
             details: list[str] = []
 
             if not lp:
-                # Create new player for coach
+                # Check uniqueness before creating with fcms_person_id
+                safe_pid = person_id
+                if person_id:
+                    existing = await self.db.execute(
+                        select(Player.id).where(Player.fcms_person_id == person_id)
+                    )
+                    if existing.scalar():
+                        logger.warning("Coach fcms_person_id=%s already taken, creating without it", person_id)
+                        safe_pid = None
                 lp = Player(
                     first_name=fn_ru or fn_en,
                     last_name=ln_ru or ln_en,
                     first_name_en=fn_en or None,
                     last_name_en=ln_en or None,
-                    fcms_person_id=person_id,
+                    fcms_person_id=safe_pid,
                 )
                 self.db.add(lp)
                 await self.db.flush()
@@ -537,7 +554,9 @@ class FcmsRosterSyncService:
             else:
                 # Update existing
                 if person_id and not lp.fcms_person_id:
-                    lp.fcms_person_id = person_id
+                    conflict = await self._fcms_person_id_taken(person_id, lp.id)
+                    if not conflict:
+                        lp.fcms_person_id = person_id
                 if fn_ru and lp.first_name != fn_ru:
                     details.append(f"имя: {lp.first_name} → {fn_ru}")
                     lp.first_name = fn_ru
@@ -609,6 +628,16 @@ class FcmsRosterSyncService:
                 })
 
         return changes
+
+    async def _fcms_person_id_taken(self, person_id: int, exclude_player_id: int) -> int | None:
+        """Check if fcms_person_id is already used by another player. Returns conflicting player_id or None."""
+        r = await self.db.execute(
+            select(Player.id).where(
+                Player.fcms_person_id == person_id,
+                Player.id != exclude_player_id,
+            )
+        )
+        return r.scalar()
 
     @staticmethod
     def _remove_from_indexes(
