@@ -337,6 +337,7 @@ async def _sync_extended_stats():
                 except Exception as e:
                     logger.warning("Extended game stats failed for game %s: %s", game.id, e)
                     game_errors.append(f"Game {game.id}: {e}")
+                    await db.rollback()
 
             await db.commit()
         except Exception as e:
@@ -414,6 +415,7 @@ async def _resync_extended_stats(game_ids: list[int]):
                 except Exception as e:
                     logger.warning("Resync failed for game %s: %s", game.id, e)
                     game_errors.append(f"Game {game.id}: {e}")
+                    await db.rollback()
 
             await db.commit()
         except Exception as e:
