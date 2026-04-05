@@ -405,22 +405,55 @@ class FcmsRosterSyncService:
                             "details": player_updates,
                         })
             elif not lp:
-                # Step 5: not found anywhere — new player
-                item_key = _make_item_key(person_id, fn_ru, ln_ru, dob)
+                # Step 5: not found anywhere — auto-create
+                safe_pid = person_id
+                if person_id:
+                    existing = await self.db.execute(
+                        select(Player.id).where(Player.fcms_person_id == person_id)
+                    )
+                    if existing.scalar():
+                        logger.warning("Player fcms_person_id=%s already taken, creating without it", person_id)
+                        safe_pid = None
+
+                dob_parsed = None
+                if dob:
+                    try:
+                        dob_parsed = date_type.fromisoformat(dob)
+                    except ValueError:
+                        pass
+
+                lp = Player(
+                    first_name=fn_ru or fn_en,
+                    last_name=ln_ru or ln_en,
+                    first_name_en=fn_en or None,
+                    last_name_en=ln_en or None,
+                    fcms_person_id=safe_pid,
+                    country_id=country_id,
+                    birthday=dob_parsed,
+                )
+                self.db.add(lp)
+                await self.db.flush()
+
+                pt = PlayerTeam(
+                    player_id=lp.id,
+                    team_id=team.id,
+                    season_id=season_id,
+                    number=num,
+                    role=1,
+                    is_active=True,
+                    is_hidden=False,
+                )
+                self.db.add(pt)
+                await self.db.flush()
+
+                matched_player_ids.add(lp.id)
                 changes["new_players"].append({
-                    "key": item_key,
-                    "first_name": fn_ru,
-                    "last_name": ln_ru,
-                    "first_name_en": fn_en,
-                    "last_name_en": ln_en,
+                    "key": _make_item_key(person_id, fn_ru, ln_ru, dob),
+                    "name": fcms_name,
                     "num": num_str,
-                    "dob": dob,
-                    "person_id": person_id,
-                    "club": club_name,
-                    "country_id": country_id,
-                    "country_iso2": country_iso2,
-                    "team_id": team.id,
-                    "season_id": season_id,
+                    "method": "auto_created",
+                    "player_id": lp.id,
+                    "details": [f"авто-создан (fcms_pid={safe_pid}, страна={country_iso2})"],
                 })
 
         # BL3: auto-deactivate missing players
@@ -494,6 +527,10 @@ class FcmsRosterSyncService:
             ln_en = to.get("familyName") or ""
             position_ru, position_kz = self._FCMS_ROLE_MAP[short]
 
+            citizenships = to.get("nationalCitizenships") or []
+            country_iso2 = citizenships[0].get("iso2") if citizenships else None
+            country_id = await self._resolve_country(country_iso2) if country_iso2 else None
+
             # Match: fcms_person_id → name → global
             pt, lp, method = None, None, None
             if person_id and person_id in local_by_fcms:
@@ -546,6 +583,7 @@ class FcmsRosterSyncService:
                     first_name_en=fn_en or None,
                     last_name_en=ln_en or None,
                     fcms_person_id=safe_pid,
+                    country_id=country_id,
                 )
                 self.db.add(lp)
                 await self.db.flush()
@@ -567,6 +605,9 @@ class FcmsRosterSyncService:
                     lp.first_name_en = fn_en
                 if ln_en and lp.last_name_en != ln_en:
                     lp.last_name_en = ln_en
+                if country_id and lp.country_id != country_id:
+                    details.append(f"страна: {lp.country_id} → {country_id}")
+                    lp.country_id = country_id
 
             matched_ids.add(lp.id)
 
@@ -758,8 +799,8 @@ class FcmsRosterSyncService:
             if ch.get("new_players"):
                 has_any = True
                 for p in ch["new_players"]:
-                    club = f", клуб: {p['club']}" if p.get("club") else ""
-                    team_lines.append(f"  🆕 #{p['num']} {p['last_name']} {p['first_name']} ({p['dob']}{club}) — НЕ НАЙДЕН")
+                    details = ", ".join(p.get("details", []))
+                    team_lines.append(f"  🆕 #{p['num']} {p['name']}: {details}")
 
             if ch.get("auto_deactivated"):
                 has_any = True
