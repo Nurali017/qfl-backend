@@ -20,7 +20,7 @@ from app.services.sync.base import (
     GAME_PLAYER_STATS_FIELDS, GAME_TEAM_STATS_FIELDS,
 )
 from app.services.season_visibility import get_current_season_id
-from app.utils.team_name_matcher import TeamNameMatcher
+from app.utils.team_name_matcher import TeamNameMatcher, normalize_team_name, _collect_team_names
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
@@ -120,15 +120,28 @@ class GameSyncService(BaseSyncService):
 
         stats_data = await self.client.get_game_stats(sota_uuid)
 
-        # Build team name to ID mapping from team stats
+        # Map SOTA team IDs → local team IDs (they differ for lower leagues)
+        sota_to_local = await self._build_sota_team_mapping(
+            game, stats_data.get("teams", [])
+        )
+
+        # Build team name → local ID mapping for player team resolution
         team_name_to_id = {}
         for ts in stats_data.get("teams", []):
-            if isinstance(ts, dict) and ts.get("id") and ts.get("name"):
-                team_name_to_id[ts["name"]] = ts["id"]
+            if isinstance(ts, dict) and ts.get("name"):
+                local_id = sota_to_local.get(ts.get("id"), ts.get("id"))
+                team_name_to_id[ts["name"]] = local_id
 
         # Sync team stats
         team_count = 0
         for ts in stats_data.get("teams", []):
+            local_team_id = sota_to_local.get(ts.get("id"))
+            if not local_team_id:
+                logger.warning(
+                    "Cannot map SOTA team %s (%s) to local team for game %s, skipping",
+                    ts.get("id"), ts.get("name"), game_id,
+                )
+                continue
             stats = ts.get("stats", {})
 
             # Extract extra stats (fields not in our known list)
@@ -136,7 +149,7 @@ class GameSyncService(BaseSyncService):
 
             stmt = insert(GameTeamStats).values(
                 game_id=game_id,
-                team_id=ts["id"],
+                team_id=local_team_id,
                 possession=stats.get("possession"),
                 possession_percent=stats.get("possession_percent"),
                 shots=stats.get("shot"),
@@ -235,8 +248,9 @@ class GameSyncService(BaseSyncService):
                 continue
             stats = ps.get("stats", {})
 
-            # Get team_id from mapping or directly from player stats
-            team_id = ps.get("team_id") or team_name_to_id.get(ps.get("team"))
+            # Get team_id: map SOTA ID → local, or match by name
+            raw_team_id = ps.get("team_id")
+            team_id = sota_to_local.get(raw_team_id, raw_team_id) or team_name_to_id.get(ps.get("team"))
             if not team_id:
                 continue  # Skip if we can't determine team
 
@@ -317,6 +331,44 @@ class GameSyncService(BaseSyncService):
             logger.error(f"v2 enrichment failed for game {game_id}: {e}")
 
         return {"teams": team_count, "players": player_count, "v2_enriched": v2_count}
+
+    async def _build_sota_team_mapping(
+        self, game: Game, sota_teams: list[dict]
+    ) -> dict[int, int]:
+        """Map SOTA team IDs to local team IDs for a game.
+
+        For Премьер-Лига, SOTA IDs match local IDs. For lower leagues they
+        diverge, so we fall back to team name matching against the game's
+        known home/away teams.
+        """
+        mapping: dict[int, int] = {}
+        game_team_ids = {game.home_team_id, game.away_team_id} - {None}
+
+        # Pre-load game teams and their normalized names
+        game_teams: dict[int, set[str]] = {}
+        for tid in game_team_ids:
+            team = await self.db.get(Team, tid)
+            if team:
+                game_teams[tid] = _collect_team_names(team)
+
+        for ts in sota_teams:
+            sota_id = ts.get("id")
+            if not sota_id:
+                continue
+            # Direct match: SOTA ID is one of the game's team IDs
+            if sota_id in game_team_ids:
+                mapping[sota_id] = sota_id
+                continue
+            # Name-based match
+            sota_name = normalize_team_name(ts.get("name"))
+            if not sota_name:
+                continue
+            for tid, names in game_teams.items():
+                if sota_name in names:
+                    mapping[sota_id] = tid
+                    break
+
+        return mapping
 
     async def _enrich_team_stats_from_live(self, game_id: int, sota_game_uuid: str) -> bool:
         """Enrich team stats with data from /em/{id}-stat.json (shots_on_bar, saves, etc.)."""
