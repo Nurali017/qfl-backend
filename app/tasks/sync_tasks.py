@@ -25,6 +25,13 @@ async def _sync_team_of_week_for_tour(season_id: int, tour: int) -> dict:
 
     Returns dict with 'needs_retry' flag based on sync completeness.
     """
+    if season_id not in settings.extended_stats_season_ids:
+        logger.info(
+            "Team-of-week sync skipped (no extended stats): season=%s tour=%s",
+            season_id, tour,
+        )
+        return {"needs_retry": False, "skipped": True}
+
     async with AsyncSessionLocal() as db:
         try:
             orchestrator = SyncOrchestrator(db)
@@ -311,7 +318,7 @@ async def _sync_extended_stats():
                     Game.sota_id.isnot(None),
                     Game.sync_disabled == False,
                     Game.extended_stats_synced_at.is_(None),
-                    Game.season_id.in_(settings.sync_season_ids),
+                    Game.season_id.in_(settings.extended_stats_season_ids),
                 )
             )
             games = list(result.scalars().all())
@@ -583,6 +590,8 @@ async def _retry_missing_team_of_week():
 
     async with AsyncSessionLocal() as db:
         for season_id in settings.sync_season_ids:
+            if season_id not in settings.extended_stats_season_ids:
+                continue
             # Find tours with all games finished, where the latest finish is within 48h
             tour_query = await db.execute(
                 select(

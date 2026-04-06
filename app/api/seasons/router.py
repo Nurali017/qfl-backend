@@ -30,6 +30,7 @@ _ensure_visible_season = ensure_visible_season_or_404
 
 def _build_season_response(s: Season, *, current_round: int | None = None) -> SeasonResponse:
     """Build a SeasonResponse from a Season ORM object (with championship loaded)."""
+    from app.config import get_settings
     return SeasonResponse(
         id=s.id,
         name=s.name,
@@ -51,6 +52,7 @@ def _build_season_response(s: Season, *, current_round: int | None = None) -> Se
         sort_order=s.sort_order,
         colors=s.colors,
         final_stage_ids=s.final_stage_ids,
+        has_extended_stats=s.id in get_settings().extended_stats_season_ids,
     )
 
 
