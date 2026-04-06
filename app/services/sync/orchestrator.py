@@ -164,6 +164,10 @@ class SyncOrchestrator:
         if not force and not await self.is_sync_enabled(season_id):
             logger.info(f"Season {season_id}: sync disabled, skipping team-of-week sync")
             return {"skipped": True, "reason": "sync disabled for season"}
+        from app.config import get_settings
+        if season_id not in get_settings().extended_stats_season_ids:
+            logger.info(f"Season {season_id}: no extended stats, skipping team-of-week sync")
+            return {"skipped": True, "reason": "no extended stats for season"}
         logger.info(f"Syncing team-of-week for season {season_id}")
         return await self.team_of_week.sync_team_of_week(season_id, tour_keys=tour_keys)
 

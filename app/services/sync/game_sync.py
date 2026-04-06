@@ -323,12 +323,15 @@ class GameSyncService(BaseSyncService):
             logger.warning(f"/em/ player stats enrichment failed for game {game_id}: {e}")
 
         # Enrich with v2 stats (after v1 commit — v1 data is never lost)
+        # Skip for seasons without extended stats (e.g. Вторая Лига)
         v2_count = 0
-        try:
-            v2_count = await self._enrich_with_v2_stats(game_id, sota_uuid)
-            logger.info(f"v2 enrichment: {v2_count} players for game {game_id}")
-        except Exception as e:
-            logger.error(f"v2 enrichment failed for game {game_id}: {e}")
+        from app.config import get_settings
+        if game.season_id in get_settings().extended_stats_season_ids:
+            try:
+                v2_count = await self._enrich_with_v2_stats(game_id, sota_uuid)
+                logger.info(f"v2 enrichment: {v2_count} players for game {game_id}")
+            except Exception as e:
+                logger.error(f"v2 enrichment failed for game {game_id}: {e}")
 
         return {"teams": team_count, "players": player_count, "v2_enriched": v2_count}
 

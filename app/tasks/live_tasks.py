@@ -456,8 +456,10 @@ async def _post_finish_followup(game_id: int):
                     logger.exception("Team-of-week immediate sync dispatch failed")
 
             # 3. Extended stats: immediate if 24h+ old, else schedule
+            # Skip for seasons without extended stats (e.g. Вторая Лига)
+            from app.config import get_settings
             finished_at = ensure_utc(game.finished_at)
-            if finished_at:
+            if finished_at and game.season_id in get_settings().extended_stats_season_ids:
                 now = utcnow()
                 if finished_at <= now - timedelta(hours=24):
                     try:

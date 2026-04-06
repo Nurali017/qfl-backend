@@ -30,6 +30,7 @@ class SeasonResponse(SeasonBase):
     colors: dict | None = None
     final_stage_ids: list[int] | None = None
     is_current: bool = False
+    has_extended_stats: bool = False
 
     class Config:
         from_attributes = True
