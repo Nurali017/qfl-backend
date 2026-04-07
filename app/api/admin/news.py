@@ -33,7 +33,7 @@ from app.services.news_translator import NewsTranslatorService
 
 router = APIRouter(prefix="/news", tags=["admin-news"])
 
-MAX_SLIDER_ITEMS = 10
+MAX_SLIDER_ITEMS = 5
 
 
 def _lang_from_str(lang: str) -> Language:
@@ -108,10 +108,27 @@ async def _apply_payload(
             )
             current_count = count_result.scalar_one()
             if current_count >= MAX_SLIDER_ITEMS:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Maximum {MAX_SLIDER_ITEMS} slider items per language",
-                )
+                # Auto-evict the lowest-priority slider item (highest slider_order)
+                oldest = (await db.execute(
+                    select(News)
+                    .where(News.is_slider == True, News.language == lang)
+                    .order_by(News.slider_order.desc())
+                    .limit(1)
+                )).scalar_one_or_none()
+                if oldest:
+                    old_order = oldest.slider_order
+                    oldest.is_slider = False
+                    oldest.slider_order = None
+                    if old_order is not None:
+                        await db.execute(
+                            update(News)
+                            .where(
+                                News.is_slider == True,
+                                News.language == lang,
+                                News.slider_order > old_order,
+                            )
+                            .values(slider_order=News.slider_order - 1)
+                        )
 
             # Transitioning to slider: auto-assign order if not explicitly provided
             if not should_update("slider_order") or payload.slider_order is None:
