@@ -826,3 +826,41 @@ async def apply_referees(
 
     await db.commit()
     return {"total_assignments": total, "matches_updated": len(payload.matches)}
+
+
+@router.post("/cup/backfill-advancement/{season_id}")
+async def backfill_cup_advancement(
+    season_id: int,
+    admin: AdminUser = Depends(require_roles("admin", "editor")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill cup bracket advancement for all finished games in a season."""
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(Game)
+        .where(
+            Game.season_id == season_id,
+            Game.status == GameStatus.finished,
+        )
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.stage),
+        )
+        .order_by(Game.date, Game.time)
+    )
+    games = list(result.scalars().all())
+
+    from app.services.cup_advancement import advance_cup_winner
+
+    advanced = []
+    for game in games:
+        try:
+            res = await advance_cup_winner(db, game)
+            if res.get("advanced") or res.get("loser_advanced"):
+                advanced.append(res)
+        except Exception as e:
+            advanced.append({"game_id": game.id, "error": str(e)})
+
+    return {"season_id": season_id, "total_games": len(games), "advanced": advanced}
