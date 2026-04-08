@@ -297,8 +297,15 @@ async def _find_matching_game(
         all_away |= {n.replace(" ", "") for n in all_away}
 
         # Match in either order (home-away or away-home)
+        # Also try word-set matching for reversed word order
+        # e.g. "онтустик академия" ↔ "академия онтустик"
         def _matches(a: str, ca: str, names: set[str]) -> bool:
-            return a in names or ca in names
+            if a in names or ca in names:
+                return True
+            a_words = frozenset(a.split())
+            if len(a_words) >= 2:
+                return any(frozenset(n.split()) == a_words for n in names)
+            return False
 
         match_forward = (_matches(norm_a, compact_a, all_home) and _matches(norm_b, compact_b, all_away))
         match_reverse = (_matches(norm_a, compact_a, all_away) and _matches(norm_b, compact_b, all_home))
