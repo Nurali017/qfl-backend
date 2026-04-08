@@ -417,6 +417,14 @@ async def _post_finish_followup(game_id: int):
                 except Exception:
                     logger.exception("Post-finish resync failed for game %s", game_id)
 
+            # 1b. Cup bracket advancement
+            if game.season_id:
+                try:
+                    from app.services.cup_advancement import advance_cup_winner
+                    await advance_cup_winner(db, game)
+                except Exception:
+                    logger.exception("Cup advancement failed for game %s", game_id)
+
             # 2. Tour completion check (deduped by season_id/tour)
             if game.season_id and game.tour is not None:
                 tour_key = f"qfl:post_finish_tour:{game.season_id}:{game.tour}"
