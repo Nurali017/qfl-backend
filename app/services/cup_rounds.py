@@ -21,6 +21,32 @@ logger = logging.getLogger(__name__)
 PLAYOFF_ROUND_ORDER = ["1_32", "1_16", "1_8", "1_4", "1_2", "3rd_place", "final"]
 
 
+def _compute_winner_team_id(game: Game) -> int | None:
+    """Return the winner's team_id for a finished game, or None."""
+    if compute_game_status(game) != "finished":
+        return None
+    if game.home_score is None or game.away_score is None:
+        return None
+    if not game.home_team_id or not game.away_team_id:
+        return None
+
+    if game.home_score > game.away_score:
+        return game.home_team_id
+    if game.away_score > game.home_score:
+        return game.away_team_id
+
+    # Draw — check penalties
+    hp = game.home_penalty_score
+    ap = game.away_penalty_score
+    if hp is not None and ap is not None:
+        if hp > ap:
+            return game.home_team_id
+        if ap > hp:
+            return game.away_team_id
+
+    return None
+
+
 def build_cup_game(game: Game, lang: str) -> CupGameBrief:
     """Build a CupGameBrief from a Game ORM object."""
     home_team = None
@@ -59,6 +85,7 @@ def build_cup_game(game: Game, lang: str) -> CupGameBrief:
         minute=game.live_minute,
         half=game.live_half,
         live_phase=game.live_phase,
+        winner_team_id=_compute_winner_team_id(game),
     )
 
 
@@ -253,6 +280,15 @@ def _build_bracket_game(game: CupGameBrief) -> BracketGameBrief:
             logo_url=resolve_team_logo_url(game.away_team),
         )
 
+    # Determine winner team for bracket display
+    winner_team_brief = None
+    winner_id = game.winner_team_id
+    if winner_id is not None:
+        if home_team and home_team.id == winner_id:
+            winner_team_brief = home_team
+        elif away_team and away_team.id == winner_id:
+            winner_team_brief = away_team
+
     return BracketGameBrief(
         id=game.id,
         date=game.date,
@@ -268,6 +304,7 @@ def _build_bracket_game(game: CupGameBrief) -> BracketGameBrief:
         minute=game.minute,
         half=game.half,
         live_phase=game.live_phase,
+        winner_team=winner_team_brief,
     )
 
 

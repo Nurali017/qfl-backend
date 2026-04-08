@@ -31,6 +31,7 @@ class BracketGameBrief(BaseModel):
     minute: Optional[int] = None
     half: Optional[int] = None
     live_phase: str | None = None
+    winner_team: 'BracketGameTeam | None' = None
 
     class Config:
         from_attributes = True
