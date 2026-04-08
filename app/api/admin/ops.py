@@ -831,7 +831,7 @@ async def apply_referees(
 @router.post("/cup/backfill-advancement/{season_id}")
 async def backfill_cup_advancement(
     season_id: int,
-    admin: AdminUser = Depends(require_roles("admin", "editor")),
+    admin: AdminUser = Depends(require_roles("superadmin", "admin", "editor")),
     db: AsyncSession = Depends(get_db),
 ):
     """Backfill cup bracket advancement for all finished games in a season."""
