@@ -1,6 +1,8 @@
 from datetime import date
 from datetime import time as time_type
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -25,6 +27,10 @@ class BracketGameBrief(BaseModel):
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
     status: str | None = None
+    is_live: bool = False
+    minute: Optional[int] = None
+    half: Optional[int] = None
+    live_phase: str | None = None
 
     class Config:
         from_attributes = True

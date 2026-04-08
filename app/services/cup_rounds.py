@@ -56,6 +56,9 @@ def build_cup_game(game: Game, lang: str) -> CupGameBrief:
         away_penalty_score=game.away_penalty_score,
         status=status,
         is_live=game.is_live,
+        minute=game.live_minute,
+        half=game.live_half,
+        live_phase=game.live_phase,
     )
 
 
@@ -261,6 +264,10 @@ def _build_bracket_game(game: CupGameBrief) -> BracketGameBrief:
         home_penalty_score=game.home_penalty_score,
         away_penalty_score=game.away_penalty_score,
         status=game.status,
+        is_live=game.is_live,
+        minute=game.minute,
+        half=game.half,
+        live_phase=game.live_phase,
     )
 
 
