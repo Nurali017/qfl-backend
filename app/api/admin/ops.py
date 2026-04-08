@@ -840,22 +840,43 @@ async def backfill_cup_advancement(
     from app.models import CupDraw
     from app.services.cup_advancement import ADVANCEMENT_MAP, advance_cup_winner
 
-    # Reset: delete auto-generated draws for next rounds
+    # Reset: clear auto-generated pairs from next rounds only
+    # Never delete draws for rounds that have actual games (source rounds)
     deleted_rounds = []
     if reset:
-        next_round_keys = set(ADVANCEMENT_MAP.values()) | {"3rd_place"}
-        result_draws = await db.execute(
-            select(CupDraw).where(
-                CupDraw.season_id == season_id,
-                CupDraw.round_key.in_(next_round_keys),
-                CupDraw.created_by.is_(None),  # auto-generated (no admin creator)
-            )
+        from sqlalchemy.orm import selectinload
+
+        # Find which round_keys have actual games
+        game_stages = await db.execute(
+            select(Game.stage_id)
+            .where(Game.season_id == season_id)
+            .distinct()
         )
-        for draw in result_draws.scalars().all():
-            deleted_rounds.append(draw.round_key)
-            await db.delete(draw)
-        if deleted_rounds:
-            await db.commit()
+        stage_ids_with_games = {r[0] for r in game_stages.all() if r[0]}
+
+        from app.models import Stage
+        from app.services.cup_rounds import infer_round_key
+        stages_result = await db.execute(
+            select(Stage).where(Stage.id.in_(stage_ids_with_games))
+        )
+        rounds_with_games = {infer_round_key(s) for s in stages_result.scalars().all()}
+
+        # Only delete draws for rounds that have NO games (purely auto-generated)
+        next_round_keys = set(ADVANCEMENT_MAP.values()) | {"3rd_place"}
+        deletable = next_round_keys - rounds_with_games
+
+        if deletable:
+            result_draws = await db.execute(
+                select(CupDraw).where(
+                    CupDraw.season_id == season_id,
+                    CupDraw.round_key.in_(deletable),
+                )
+            )
+            for draw in result_draws.scalars().all():
+                deleted_rounds.append(draw.round_key)
+                await db.delete(draw)
+            if deleted_rounds:
+                await db.commit()
 
     result = await db.execute(
         select(Game)
