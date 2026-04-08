@@ -69,8 +69,13 @@ def _insert_team_into_next_round(
     team_id: int,
     next_sort_order: int,
     next_side: str,
+    is_home: bool,
 ) -> bool:
-    """Insert team into the next round's draw pair. Returns True if changed."""
+    """Insert team into the next round's draw pair.
+
+    is_home=True → team1_id (home), is_home=False → team2_id (away).
+    Returns True if changed.
+    """
     pairs = draw.pairs or []
 
     # Find existing pair at this slot
@@ -80,28 +85,32 @@ def _insert_team_into_next_round(
             target = p
             break
 
+    slot_key = "team1_id" if is_home else "team2_id"
+
     if target:
         # Already has this team?
         if target.get("team1_id") == team_id or target.get("team2_id") == team_id:
             return False  # idempotent
 
-        # Fill empty slot
-        if target.get("team1_id") is None:
-            target["team1_id"] = team_id
-        elif target.get("team2_id") is None:
-            target["team2_id"] = team_id
+        # Fill the correct slot based on bracket position
+        if target.get(slot_key) is None:
+            target[slot_key] = team_id
         else:
-            # Both slots occupied — skip (should not happen in normal flow)
-            logger.warning(
-                "Next round pair already full: sort_order=%s side=%s draw_id=%s",
-                next_sort_order, next_side, draw.id,
-            )
-            return False
+            # Slot taken — try the other one
+            other_key = "team2_id" if is_home else "team1_id"
+            if target.get(other_key) is None:
+                target[other_key] = team_id
+            else:
+                logger.warning(
+                    "Next round pair already full: sort_order=%s side=%s draw_id=%s",
+                    next_sort_order, next_side, draw.id,
+                )
+                return False
     else:
-        # Create new pair with one team
+        # Create new pair with team in the correct slot
         pairs.append({
-            "team1_id": team_id,
-            "team2_id": None,
+            "team1_id": team_id if is_home else None,
+            "team2_id": None if is_home else team_id,
             "sort_order": next_sort_order,
             "side": next_side,
             "is_published": True,
@@ -165,10 +174,12 @@ async def advance_cup_winner(db: AsyncSession, game: Game) -> dict:
     if next_round_key:
         next_sort_order = ceil(current_sort_order / 2)
         next_side = current_side if next_round_key != "final" else "center"
+        # Odd sort_order → home (team1), even → away (team2)
+        is_home = current_sort_order % 2 == 1
 
         next_draw = await _get_or_create_draw(db, game.season_id, next_round_key)
         changed = _insert_team_into_next_round(
-            next_draw, winner_id, next_sort_order, next_side
+            next_draw, winner_id, next_sort_order, next_side, is_home
         )
         if changed:
             result["advanced"] = True
@@ -185,8 +196,9 @@ async def advance_cup_winner(db: AsyncSession, game: Game) -> dict:
         loser_side = "center"
 
         loser_draw = await _get_or_create_draw(db, game.season_id, losers_round_key)
+        loser_is_home = current_sort_order % 2 == 1
         loser_changed = _insert_team_into_next_round(
-            loser_draw, loser_id, loser_sort_order, loser_side
+            loser_draw, loser_id, loser_sort_order, loser_side, loser_is_home
         )
         if loser_changed:
             result["loser_advanced"] = True

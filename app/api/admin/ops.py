@@ -831,11 +831,31 @@ async def apply_referees(
 @router.post("/cup/backfill-advancement/{season_id}")
 async def backfill_cup_advancement(
     season_id: int,
+    reset: bool = Query(default=False, description="Delete auto-generated draws before re-running"),
     admin: AdminUser = Depends(require_roles("superadmin", "admin", "editor")),
     db: AsyncSession = Depends(get_db),
 ):
     """Backfill cup bracket advancement for all finished games in a season."""
     from sqlalchemy.orm import selectinload
+    from app.models import CupDraw
+    from app.services.cup_advancement import ADVANCEMENT_MAP, advance_cup_winner
+
+    # Reset: delete auto-generated draws for next rounds
+    deleted_rounds = []
+    if reset:
+        next_round_keys = set(ADVANCEMENT_MAP.values()) | {"3rd_place"}
+        result_draws = await db.execute(
+            select(CupDraw).where(
+                CupDraw.season_id == season_id,
+                CupDraw.round_key.in_(next_round_keys),
+                CupDraw.created_by.is_(None),  # auto-generated (no admin creator)
+            )
+        )
+        for draw in result_draws.scalars().all():
+            deleted_rounds.append(draw.round_key)
+            await db.delete(draw)
+        if deleted_rounds:
+            await db.commit()
 
     result = await db.execute(
         select(Game)
@@ -852,8 +872,6 @@ async def backfill_cup_advancement(
     )
     games = list(result.scalars().all())
 
-    from app.services.cup_advancement import advance_cup_winner
-
     advanced = []
     for game in games:
         try:
@@ -863,4 +881,4 @@ async def backfill_cup_advancement(
         except Exception as e:
             advanced.append({"game_id": game.id, "error": str(e)})
 
-    return {"season_id": season_id, "total_games": len(games), "advanced": advanced}
+    return {"season_id": season_id, "total_games": len(games), "deleted_rounds": deleted_rounds, "advanced": advanced}
