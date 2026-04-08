@@ -169,6 +169,20 @@ async def advance_cup_winner(db: AsyncSession, game: Game) -> dict:
         if pair:
             current_sort_order = pair.get("sort_order", 1)
             current_side = pair.get("side", "left")
+    elif game.stage_id:
+        # No draw — compute position from game order within stage
+        # Mirrors build_playoff_bracket_from_rounds logic
+        stage_games = await db.execute(
+            select(Game.id)
+            .where(Game.stage_id == game.stage_id)
+            .order_by(Game.date, Game.time, Game.id)
+        )
+        game_ids = [r[0] for r in stage_games.all()]
+        if game.id in game_ids:
+            index = game_ids.index(game.id)
+            current_side = "left" if index % 2 == 0 else "right"
+            side_index = index // 2 + 1  # 1-based within each side
+            current_sort_order = side_index
 
     # Advance winner to next round
     if next_round_key:
