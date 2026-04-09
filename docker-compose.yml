@@ -81,6 +81,7 @@ services:
       - DATABASE_POOL_CLASS=null
       - SERPER_API_KEY=${SERPER_API_KEY:-}
       - TICKET_SEARCH_ENABLED=${TICKET_SEARCH_ENABLED:-false}
+      - YOUTUBE_RESERVE_CHANNEL_IDS=${YOUTUBE_RESERVE_CHANNEL_IDS:-}
     depends_on:
       - db
       - redis
@@ -104,6 +105,7 @@ services:
       - DATABASE_POOL_CLASS=null
       - SERPER_API_KEY=${SERPER_API_KEY:-}
       - TICKET_SEARCH_ENABLED=${TICKET_SEARCH_ENABLED:-false}
+      - YOUTUBE_RESERVE_CHANNEL_IDS=${YOUTUBE_RESERVE_CHANNEL_IDS:-}
     depends_on:
       - db
       - redis

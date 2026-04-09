@@ -50,8 +50,8 @@ def _roman_to_int(s: str) -> int | None:
             result += val
     return result
 
-# Module-level cache for uploads playlist ID (never changes for a channel)
-_uploads_playlist_id: str | None = None
+# Module-level cache for uploads playlist ID per channel (never changes)
+_uploads_playlist_ids: dict[str, str] = {}
 
 
 @dataclass(slots=True)
@@ -62,10 +62,9 @@ class ParsedTitle:
 
 
 async def _get_uploads_playlist_id(channel_id: str, api_key: str) -> str:
-    """Get the uploads playlist ID for a channel (cached)."""
-    global _uploads_playlist_id
-    if _uploads_playlist_id is not None:
-        return _uploads_playlist_id
+    """Get the uploads playlist ID for a channel (cached per channel)."""
+    if channel_id in _uploads_playlist_ids:
+        return _uploads_playlist_ids[channel_id]
 
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
@@ -80,7 +79,7 @@ async def _get_uploads_playlist_id(channel_id: str, api_key: str) -> str:
         raise ValueError(f"YouTube channel {channel_id} not found")
 
     playlist_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
-    _uploads_playlist_id = playlist_id
+    _uploads_playlist_ids[channel_id] = playlist_id
     return playlist_id
 
 
@@ -386,8 +385,38 @@ async def _get_kff_broadcaster_id(db: AsyncSession) -> int | None:
     return result.scalar_one_or_none()
 
 
+async def _fetch_videos_from_channel(
+    channel_id: str, api_key: str, redis: object,
+) -> tuple[list[dict], dict]:
+    """Fetch new (unprocessed) videos from a single YouTube channel.
+
+    Returns (new_videos, skip_stats) where skip_stats has 'skipped' count.
+    """
+    skipped = 0
+    playlist_id = await _get_uploads_playlist_id(channel_id, api_key)
+    recent = await _fetch_recent_videos(playlist_id, api_key)
+    if not recent:
+        return [], {"skipped": 0}
+
+    new_videos = []
+    for v in recent:
+        vid = v["video_id"]
+        if await redis.exists(f"yt:linked:{vid}"):
+            skipped += 1
+            continue
+        if await redis.exists(f"yt:retry:{vid}"):
+            skipped += 1
+            continue
+        new_videos.append(v)
+
+    return new_videos, {"skipped": skipped}
+
+
 async def link_youtube_videos(db: AsyncSession) -> dict:
-    """Main orchestrator: fetch recent videos, classify, match, and link."""
+    """Main orchestrator: fetch recent videos, classify, match, and link.
+
+    Checks the primary channel first, then any reserve channels.
+    """
     settings = get_settings()
     api_key = settings.youtube_api_key
     channel_id = settings.youtube_channel_id
@@ -396,37 +425,17 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
         logger.warning("YouTube API key or channel ID not configured, skipping")
         return {"skipped": "not configured"}
 
+    # Build ordered channel list: primary first, then reserves
+    reserve_ids = [
+        cid.strip() for cid in settings.youtube_reserve_channel_ids.split(",")
+        if cid.strip() and cid.strip() != channel_id
+    ]
+    channel_ids = [channel_id] + reserve_ids
+
     redis = await get_redis()
-    stats = {"processed": 0, "linked": 0, "skipped": 0, "retry": 0, "errors": 0}
+    stats = {"processed": 0, "linked": 0, "skipped": 0, "retry": 0, "errors": 0, "channels_checked": 0}
 
     try:
-        # Step 1: Get uploads playlist ID
-        playlist_id = await _get_uploads_playlist_id(channel_id, api_key)
-
-        # Step 2: Fetch recent videos
-        recent = await _fetch_recent_videos(playlist_id, api_key)
-        if not recent:
-            return stats
-
-        # Filter out already-processed videos
-        new_videos = []
-        for v in recent:
-            vid = v["video_id"]
-            if await redis.exists(f"yt:linked:{vid}"):
-                stats["skipped"] += 1
-                continue
-            if await redis.exists(f"yt:retry:{vid}"):
-                stats["skipped"] += 1
-                continue
-            new_videos.append(v)
-
-        if not new_videos:
-            return stats
-
-        # Step 3: Enrich with liveStreamingDetails
-        video_ids = [v["video_id"] for v in new_videos]
-        enriched = await _enrich_videos(video_ids, api_key)
-
         # Get all current season IDs (multiple leagues can be active)
         season_result = await db.execute(
             select(Season.id).where(Season.is_current.is_(True))
@@ -438,71 +447,88 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
         # Get KFF broadcaster ID for linking
         broadcaster_id = await _get_kff_broadcaster_id(db)
 
-        # Step 4: Process each video
-        for v in new_videos:
-            vid = v["video_id"]
-            stats["processed"] += 1
-
-            info = enriched.get(vid)
-            if not info:
+        # Process each channel
+        for cid in channel_ids:
+            stats["channels_checked"] += 1
+            try:
+                new_videos, skip_stats = await _fetch_videos_from_channel(cid, api_key, redis)
+                stats["skipped"] += skip_stats["skipped"]
+            except Exception:
+                logger.exception("Error fetching videos from channel %s", cid)
+                stats["errors"] += 1
                 continue
 
-            snippet = info["snippet"]
-            lsd = info["live_streaming_details"]
-
-            # Classify
-            video_type = classify_video(snippet, lsd)
-            if video_type is None:
-                # Not a match video — mark as processed so we don't re-check
-                await redis.set(f"yt:linked:{vid}", "skip", ex=7 * 86400)
-                stats["skipped"] += 1
+            if not new_videos:
                 continue
 
-            # Parse title
-            title = snippet.get("title", "")
-            parsed = parse_video_title(title)
-            if parsed is None:
-                logger.debug("Could not parse title: %s", title)
-                await redis.set(f"yt:retry:{vid}", "1", ex=7200)
-                stats["retry"] += 1
-                continue
+            # Enrich with liveStreamingDetails
+            video_ids = [v["video_id"] for v in new_videos]
+            enriched = await _enrich_videos(video_ids, api_key)
 
-            # Get match date
-            match_date = _get_match_date(video_type, snippet, lsd)
-            if match_date is None:
-                logger.debug("Could not determine date for: %s", title)
-                await redis.set(f"yt:retry:{vid}", "1", ex=7200)
-                stats["retry"] += 1
-                continue
+            # Process each video
+            for v in new_videos:
+                vid = v["video_id"]
+                stats["processed"] += 1
 
-            # Find matching game
-            game = await _find_matching_game(parsed, match_date, video_type, db, season_ids)
-            if game is None:
-                logger.info("No match found for: %s (date=%s)", title, match_date)
-                await redis.set(f"yt:retry:{vid}", "1", ex=7200)
-                stats["retry"] += 1
-                continue
+                info = enriched.get(vid)
+                if not info:
+                    continue
 
-            # Set URL fields only if NULL
-            url_fields = _url_fields_for_type(video_type)
-            youtube_url = f"https://www.youtube.com/watch?v={vid}"
+                snippet = info["snippet"]
+                lsd = info["live_streaming_details"]
 
-            for url_field in url_fields:
-                current_value = getattr(game, url_field)
-                if current_value is None:
-                    setattr(game, url_field, youtube_url)
-                    logger.info(
-                        "Linked video %s → game %d (%s=%s)",
-                        vid, game.id, url_field, youtube_url,
-                    )
+                # Classify
+                video_type = classify_video(snippet, lsd)
+                if video_type is None:
+                    await redis.set(f"yt:linked:{vid}", "skip", ex=7 * 86400)
+                    stats["skipped"] += 1
+                    continue
 
-            # Link broadcaster
-            if broadcaster_id is not None:
-                await _ensure_broadcaster_linked(db, game.id, broadcaster_id)
+                # Parse title
+                title = snippet.get("title", "")
+                parsed = parse_video_title(title)
+                if parsed is None:
+                    logger.debug("Could not parse title: %s", title)
+                    await redis.set(f"yt:retry:{vid}", "1", ex=7200)
+                    stats["retry"] += 1
+                    continue
 
-            # Mark as processed
-            await redis.set(f"yt:linked:{vid}", "1", ex=7 * 86400)
-            stats["linked"] += 1
+                # Get match date
+                match_date = _get_match_date(video_type, snippet, lsd)
+                if match_date is None:
+                    logger.debug("Could not determine date for: %s", title)
+                    await redis.set(f"yt:retry:{vid}", "1", ex=7200)
+                    stats["retry"] += 1
+                    continue
+
+                # Find matching game
+                game = await _find_matching_game(parsed, match_date, video_type, db, season_ids)
+                if game is None:
+                    logger.info("No match found for: %s (date=%s)", title, match_date)
+                    await redis.set(f"yt:retry:{vid}", "1", ex=7200)
+                    stats["retry"] += 1
+                    continue
+
+                # Set URL fields only if NULL
+                url_fields = _url_fields_for_type(video_type)
+                youtube_url = f"https://www.youtube.com/watch?v={vid}"
+
+                for url_field in url_fields:
+                    current_value = getattr(game, url_field)
+                    if current_value is None:
+                        setattr(game, url_field, youtube_url)
+                        logger.info(
+                            "Linked video %s (channel=%s) → game %d (%s=%s)",
+                            vid, cid, game.id, url_field, youtube_url,
+                        )
+
+                # Link broadcaster
+                if broadcaster_id is not None:
+                    await _ensure_broadcaster_linked(db, game.id, broadcaster_id)
+
+                # Mark as processed
+                await redis.set(f"yt:linked:{vid}", "1", ex=7 * 86400)
+                stats["linked"] += 1
 
     except Exception:
         logger.exception("Error in link_youtube_videos")
