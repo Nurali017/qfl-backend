@@ -14,6 +14,29 @@ from app.utils.timestamps import ensure_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
+
+async def _revalidate_match_page(game_id: int) -> None:
+    """Invalidate ISR cache for a match detail page (both locales)."""
+    import httpx
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.revalidation_secret:
+        return
+
+    paths = [f"/kz/matches/{game_id}", f"/ru/matches/{game_id}"]
+    url = f"{settings.frontend_internal_url}/api/revalidate"
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(url, json={
+                "secret": settings.revalidation_secret,
+                "paths": paths,
+            })
+            resp.raise_for_status()
+            logger.info("ISR revalidated for game %s: %s", game_id, resp.json())
+    except Exception as e:
+        logger.warning("ISR revalidation failed for game %s: %s", game_id, e)
+
 # Allowed state transitions: current_status → {allowed targets}
 TRANSITIONS: dict[GameStatus, set[GameStatus]] = {
     GameStatus.created: {GameStatus.live, GameStatus.postponed, GameStatus.cancelled},
@@ -97,6 +120,7 @@ class GameLifecycleService:
         game.live_phase = "in_progress"
         await self.db.commit()  # releases FOR UPDATE lock
         await set_live_flag()
+        await _revalidate_match_page(game_id)
 
         # 2. Best-effort sync (outside lock — these have their own commits)
         if can_sync:
@@ -184,6 +208,7 @@ class GameLifecycleService:
             await clear_live_flag()
 
         self._enqueue_post_finish(game)
+        await _revalidate_match_page(game_id)
         return {"game_id": game_id, "action": "finish_live"}
 
     async def start_second_half(self, game_id: int) -> dict:
