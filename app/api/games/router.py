@@ -488,7 +488,7 @@ async def get_game(
 
     # Cache serialized JSON — TTL varies by game status
     json_bytes = detail.model_dump_json().encode()
-    ttl = 5 if game.is_live else (30 if game_status == "upcoming" else 60)
+    ttl = 5 if game.is_live or game_status == "upcoming" else 60
     cache_set(cache_key, json_bytes, ttl)
 
     return Response(content=json_bytes, media_type="application/json")
