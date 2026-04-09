@@ -132,10 +132,8 @@ async def advance_cup_winner(db: AsyncSession, game: Game) -> dict:
     if game.status.value != "finished" if hasattr(game.status, 'value') else game.status != "finished":
         return result
 
-    # Must have a stage
-    if not game.stage:
-        # Eagerly load stage if not loaded
-        await db.refresh(game, ["stage"])
+    # Eagerly load stage (lazy loading fails in async context)
+    await db.refresh(game, ["stage"])
     if not game.stage:
         return result
 
