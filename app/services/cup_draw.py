@@ -17,6 +17,7 @@ from app.schemas.playoff_bracket import (
     PlayoffRound,
 )
 from app.services.season_visibility import is_season_visible_clause
+from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.timestamps import utcnow
 
@@ -257,10 +258,10 @@ async def get_participant_teams(db: AsyncSession, season_id: int) -> list[dict]:
     return teams
 
 
-def _team_brief_from_team(team: Team) -> CupDrawTeamBrief:
+def _team_brief_from_team(team: Team, lang: str = "kz") -> CupDrawTeamBrief:
     return CupDrawTeamBrief(
         id=team.id,
-        name=team.name,
+        name=get_localized_field(team, "name", lang),
         logo_url=resolve_team_logo_url(team),
     )
 
@@ -285,6 +286,7 @@ def _normalize_pair(pair: dict, draw_status: str) -> dict:
 async def build_bracket_from_cup_draws(
     db: AsyncSession,
     season_id: int,
+    lang: str = "kz",
 ) -> PlayoffBracketResponse | None:
     """Build a PlayoffBracketResponse from active/completed/published CupDraw records."""
     result = await db.execute(
@@ -311,13 +313,14 @@ async def build_bracket_from_cup_draws(
 
     teams_by_id = await _load_teams_by_id(db, all_team_ids)
 
-    return _build_bracket_response(season_id, draws, teams_by_id)
+    return _build_bracket_response(season_id, draws, teams_by_id, lang)
 
 
 def _build_bracket_response(
     season_id: int,
     draws: list[CupDraw],
     teams_by_id: dict[int, Team],
+    lang: str = "kz",
 ) -> PlayoffBracketResponse | None:
     rounds_by_key: dict[str, list[PlayoffBracketEntry]] = {}
     synthetic_id = 1
@@ -337,10 +340,10 @@ def _build_bracket_response(
             team2 = teams_by_id.get(pair["team2_id"])
 
             home_team = BracketGameTeam(
-                id=team1.id, name=team1.name, logo_url=resolve_team_logo_url(team1)
+                id=team1.id, name=get_localized_field(team1, "name", lang), logo_url=resolve_team_logo_url(team1)
             ) if team1 else None
             away_team = BracketGameTeam(
-                id=team2.id, name=team2.name, logo_url=resolve_team_logo_url(team2)
+                id=team2.id, name=get_localized_field(team2, "name", lang), logo_url=resolve_team_logo_url(team2)
             ) if team2 else None
 
             # Use side from the pair JSON directly
