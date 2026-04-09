@@ -174,7 +174,7 @@ async def get_cup_overview(
 
     # 9. Bracket (merge game-based rounds with draw-based rounds)
     game_bracket = build_playoff_bracket_from_rounds(season_id, rounds_with_games)
-    draw_bracket = await build_bracket_from_cup_draws(db, season_id)
+    draw_bracket = await build_bracket_from_cup_draws(db, season_id, lang)
 
     if game_bracket and game_bracket.rounds and draw_bracket and draw_bracket.rounds:
         # Build draw lookup: round_key -> {frozenset(team_ids): entry}
