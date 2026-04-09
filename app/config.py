@@ -81,11 +81,12 @@ class Settings(BaseSettings):
     fcms_email: str = ""
     fcms_password: str = ""
     fcms_customer_code: str = "kaz"
-    fcms_competition_season_map: str = "3517:200,3585:204,3596:203,3597:203"
+    fcms_competition_season_map: str = "3517:200,3585:204,3596:203,3597:203,3598:202"
 
     # YouTube auto-link
     youtube_api_key: str = ""
     youtube_channel_id: str = ""
+    youtube_reserve_channel_ids: str = ""  # Comma-separated reserve channel IDs
     youtube_auto_link_enabled: bool = False
 
     # Frontend revalidation
