@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     current_season_id: int = 200
 
     # Local season IDs to sync automatically (Celery tasks)
-    sync_season_ids: list[int] = [61, 85, 71, 80, 84, 200, 203, 204]
+    sync_season_ids: list[int] = [61, 85, 71, 80, 84, 200, 202, 203, 204]
 
     # Seasons eligible for v2 extended stats (xG, passes, duels, dribbles).
     # Excludes Вторая Лига — SOTA doesn't collect detailed analytics for it.
