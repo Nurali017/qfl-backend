@@ -10,6 +10,7 @@ from app.models import Game
 from app.schemas.game import SeasonGameItem, StageGameItem
 from app.schemas.team import TeamWithScore
 from app.services.season_visibility import ensure_visible_season_or_404
+from app.utils.decided_in import compute_decided_in_lite
 from app.utils.game_status import compute_game_status
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.team_logo_fallback import resolve_team_logo_url
@@ -82,6 +83,7 @@ async def get_season_games(
             away_score=g.away_score,
             home_penalty_score=g.home_penalty_score,
             away_penalty_score=g.away_penalty_score,
+            decided_in=compute_decided_in_lite(g),
             has_stats=g.has_stats,
             has_lineup=g.has_lineup,
             is_live=g.is_live,
@@ -160,6 +162,7 @@ async def get_stage_games(
             away_score=g.away_score,
             home_penalty_score=g.home_penalty_score,
             away_penalty_score=g.away_penalty_score,
+            decided_in=compute_decided_in_lite(g),
             has_stats=g.has_stats,
             has_lineup=g.has_lineup,
             is_live=g.is_live,

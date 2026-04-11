@@ -378,19 +378,22 @@ class GameSyncService(BaseSyncService):
         em_data = await self.client.get_live_match_stats(sota_game_uuid)
 
         # Build lookup: metric -> {home, away}
-        # Capture per-half breakdowns (_1, _2) into by_half dict
+        # Capture per-half breakdowns (_1..._5) into by_half dict.
+        # 1=H1, 2=H2, 3=ET1, 4=ET2, 5=Shootout.
         import re
         em_stats: dict[str, dict] = {}
-        by_half: dict[str, dict[str, dict]] = {"1": {}, "2": {}}
+        by_half: dict[str, dict[str, dict]] = {
+            "1": {}, "2": {}, "3": {}, "4": {}, "5": {},
+        }
         for item in em_data:
             metric = item.get("metric", "")
-            match = re.match(r"^(.+)_([12])$", metric)
+            match = re.match(r"^(.+)_([1-5])$", metric)
             if match:
                 base, half = match.groups()
                 by_half[half][base] = {"home": item.get("home"), "away": item.get("away")}
                 continue
             if "_" in metric and metric.rsplit("_", 1)[-1].isdigit():
-                continue  # still skip _3, _4, _5
+                continue  # unexpected suffix
             em_stats[metric] = {"home": item.get("home"), "away": item.get("away")}
 
         if not em_stats:
@@ -453,10 +456,11 @@ class GameSyncService(BaseSyncService):
                     ts.possession = float(pct)
                     ts.possession_percent = pct
 
-            # Build per-half extra_stats from captured _1/_2 metrics
+            # Build per-half extra_stats from captured _1.._5 metrics
+            # (3/4 = extra time, 5 = shootout).
             merged_extra = dict(ts.extra_stats or {})
             side_by_half = {}
-            for half_num in ("1", "2"):
+            for half_num in ("1", "2", "3", "4", "5"):
                 half_data = {}
                 for base_metric, vals in by_half[half_num].items():
                     raw = vals.get(side)
@@ -824,7 +828,74 @@ class GameSyncService(BaseSyncService):
                 game_id, added, updated, deleted, len(assists_map),
             )
 
+        # Recompute penalty shootout score from shootout events.
+        await self._recompute_penalty_score(game)
+
         return {"game_id": game_id, "added": added, "updated": updated, "deleted": deleted}
+
+    async def _recompute_penalty_score(self, game: Game) -> None:
+        """
+        Derive home_penalty_score / away_penalty_score from shootout events.
+
+        A half is a shootout half when all its events are penalty-type events
+        (penalty / missed_penalty) and event "minutes" are round-number indices
+        (<= 20). This disambiguates shootouts from extra time, which uses real
+        match minutes (91..120+).
+
+        For a cup match that went to ET + shootout, the shootout is half=5.
+        For the super cup (direct to shootout), SOTA uses half=3.
+        """
+        result = await self.db.execute(
+            select(GameEvent).where(GameEvent.game_id == game.id, GameEvent.half >= 3)
+        )
+        et_or_shootout = list(result.scalars().all())
+        if not et_or_shootout:
+            return
+
+        # Group events by half.
+        by_half_num: dict[int, list[GameEvent]] = {}
+        for event in et_or_shootout:
+            by_half_num.setdefault(event.half, []).append(event)
+
+        penalty_event_types = {
+            GameEventType.penalty,
+            GameEventType.missed_penalty,
+        }
+
+        # Pick the highest half whose events look like a shootout.
+        shootout_half: int | None = None
+        for half_num in sorted(by_half_num.keys(), reverse=True):
+            half_events = by_half_num[half_num]
+            if not half_events:
+                continue
+            if all(e.event_type in penalty_event_types for e in half_events) and all(
+                (e.minute or 0) <= 20 for e in half_events
+            ):
+                shootout_half = half_num
+                break
+
+        if shootout_half is None:
+            return
+
+        home_scored = sum(
+            1
+            for e in by_half_num[shootout_half]
+            if e.team_id == game.home_team_id and e.event_type == GameEventType.penalty
+        )
+        away_scored = sum(
+            1
+            for e in by_half_num[shootout_half]
+            if e.team_id == game.away_team_id and e.event_type == GameEventType.penalty
+        )
+
+        if game.home_penalty_score != home_scored or game.away_penalty_score != away_scored:
+            game.home_penalty_score = home_scored
+            game.away_penalty_score = away_scored
+            await self.db.commit()
+            logger.info(
+                "Game %s: penalty shootout %d-%d (from half=%d events)",
+                game.id, home_scored, away_scored, shootout_half,
+            )
 
     async def _find_player_id_from_lineup(
         self, game_id: int, first_name: str, last_name: str, team_id: int | None

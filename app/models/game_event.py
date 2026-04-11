@@ -41,7 +41,10 @@ class GameEvent(Base):
     )
 
     # Event timing
-    half: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 or 2
+    # 1=H1, 2=H2, 3=ET1, 4=ET2, 5=Shootout. Super Cup (which skips ET) uses
+    # half=3 for the shootout. Disambiguation: shootout halves only contain
+    # penalty/missed_penalty events with round-number "minutes" (<=20).
+    half: Mapped[int] = mapped_column(Integer, nullable=False)
     minute: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Event type

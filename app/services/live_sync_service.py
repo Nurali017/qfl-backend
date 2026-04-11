@@ -614,22 +614,22 @@ class LiveSyncService:
             return {"error": "Unexpected stats format"}
 
         # Build lookup: metric -> {home, away}
-        # Capture per-half breakdowns (_1, _2) into by_half dict
-        # Skip _3, _4, _5 (extra time, penalties)
+        # Capture per-half breakdowns (_1..._5) into by_half dict.
+        # 1=H1, 2=H2, 3=ET1, 4=ET2, 5=Shootout.
         import re
         metrics = {}
-        by_half = {"1": {}, "2": {}}
+        by_half: dict[str, dict] = {"1": {}, "2": {}, "3": {}, "4": {}, "5": {}}
         for item in stats_data:
             metric = item.get("metric", "")
             if not metric or metric == "name":
                 continue
-            match = re.match(r"^(.+)_([12])$", metric)
+            match = re.match(r"^(.+)_([1-5])$", metric)
             if match:
                 base, half = match.groups()
                 by_half[half][base] = {"home": item.get("home"), "away": item.get("away")}
                 continue
             if re.match(r"^.+_\d+$", metric):
-                continue  # still skip _3, _4, _5
+                continue  # any unexpected suffix
             metrics[metric] = {"home": item.get("home"), "away": item.get("away")}
 
         def _parse_int(val: any) -> int | None:

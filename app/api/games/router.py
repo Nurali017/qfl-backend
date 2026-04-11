@@ -25,6 +25,7 @@ from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.game_status import compute_game_status
 from app.utils.game_grouping import group_games_by_date
+from app.utils.decided_in import compute_decided_in_lite
 from app.services.weather import format_weather
 from app.config import get_settings
 from app.services.season_visibility import ensure_visible_season_or_404, get_current_season_id
@@ -277,6 +278,7 @@ async def get_games(
             away_score=g.away_score,
             home_penalty_score=g.home_penalty_score,
             away_penalty_score=g.away_penalty_score,
+            decided_in=compute_decided_in_lite(g),
             has_stats=g.has_stats,
             has_lineup=g.has_lineup,
             is_live=g.is_live,
@@ -387,6 +389,23 @@ async def get_game(
 
     game.has_stats = await compute_single_has_stats(db, game_id)
 
+    # decided_in: cheap check for penalties, single EXISTS query for extra time.
+    decided_in = compute_decided_in_lite(game)
+    if decided_in is None and game.home_score is not None and game.home_score != game.away_score:
+        has_et_events = await db.scalar(
+            select(func.count())
+            .select_from(GameEvent)
+            .where(
+                GameEvent.game_id == game_id,
+                GameEvent.half >= 3,
+                GameEvent.minute > 20,
+            )
+        )
+        if has_et_events:
+            decided_in = "extra_time"
+        else:
+            decided_in = "regular"
+
     current_minute = None
     if game.is_live and game.live_minute is not None:
         current_minute = game.live_minute
@@ -445,6 +464,7 @@ async def get_game(
         away_score=game.away_score,
         home_penalty_score=game.home_penalty_score,
         away_penalty_score=game.away_penalty_score,
+        decided_in=decided_in,
         has_stats=game.has_stats,
         has_lineup=game.has_lineup,
         is_live=game.is_live,

@@ -56,18 +56,31 @@ def _build_season_response(s: Season, *, current_round: int | None = None) -> Se
     )
 
 
-GOAL_PERIOD_LABELS = ("0-15", "16-30", "31-45+", "46-60", "61-75", "76-90+")
+GOAL_PERIOD_LABELS = (
+    "0-15",
+    "16-30",
+    "31-45+",
+    "46-60",
+    "61-75",
+    "76-90+",
+    "ОТ",
+)
 
 
 def _get_goal_period_index(half: int | None, minute: int | None) -> int:
     """
-    Map a goal event to one of 6 minute buckets.
+    Map a goal event to one of 7 minute buckets.
 
     Buckets:
     - 0-15, 16-30, 31-45+ (first half with stoppage time)
     - 46-60, 61-75, 76-90+ (second half with stoppage time)
+    - ОТ (extra time — half 3/4 or minute > 90)
     """
     safe_minute = max(int(minute or 0), 0)
+
+    # Extra time: explicit ET halves (3 = ET1, 4 = ET2).
+    if half in (3, 4):
+        return 6
 
     if half == 1:
         if safe_minute <= 15:
@@ -83,7 +96,9 @@ def _get_goal_period_index(half: int | None, minute: int | None) -> int:
             return 4
         return 5
 
-    # Fallback to absolute minute buckets if half is unavailable/invalid.
+    # Fallback when half is unknown: treat minute > 90 as extra time.
+    if safe_minute > 90:
+        return 6
     if safe_minute <= 15:
         return 0
     if safe_minute <= 30:
