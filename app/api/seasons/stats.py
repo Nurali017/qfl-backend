@@ -895,23 +895,41 @@ async def get_season_statistics(
     clean_sheets = int(clean_sheets_result.scalar() or 0)
 
     # Query 6: Player demographics — total players, minutes, Kazakh minutes %
-    # Always use per-game stats (GamePlayerStats) filtered by cutoff
-    minutes_query = select(
-        func.count(distinct(GamePlayerStats.player_id)).label("total_players"),
-        func.coalesce(func.sum(GamePlayerStats.minutes_played), 0).label("total_minutes"),
-        func.coalesce(func.sum(
-            case(
-                (func.upper(Country.code) == "KZ", GamePlayerStats.minutes_played),
-                else_=0,
-            )
-        ), 0).label("kazakh_minutes"),
-    ).select_from(GamePlayerStats).join(
-        Game, GamePlayerStats.game_id == Game.id
-    ).join(
-        Player, GamePlayerStats.player_id == Player.id
-    ).outerjoin(
-        Country, Player.country_id == Country.id
-    ).where(*game_base_filters)
+    # For round_robin leagues we read per-game stats (GamePlayerStats) since we
+    # want cutoff-aware numbers. For knockout cups GamePlayerStats.minutes_played
+    # is not populated — use the PlayerSeasonStats aggregate instead.
+    if is_knockout:
+        minutes_query = select(
+            func.count(distinct(PlayerSeasonStats.player_id)).label("total_players"),
+            func.coalesce(func.sum(PlayerSeasonStats.time_on_field_total), 0).label("total_minutes"),
+            func.coalesce(func.sum(
+                case(
+                    (func.upper(Country.code) == "KZ", PlayerSeasonStats.time_on_field_total),
+                    else_=0,
+                )
+            ), 0).label("kazakh_minutes"),
+        ).select_from(PlayerSeasonStats).join(
+            Player, PlayerSeasonStats.player_id == Player.id
+        ).outerjoin(
+            Country, Player.country_id == Country.id
+        ).where(PlayerSeasonStats.season_id == season_id)
+    else:
+        minutes_query = select(
+            func.count(distinct(GamePlayerStats.player_id)).label("total_players"),
+            func.coalesce(func.sum(GamePlayerStats.minutes_played), 0).label("total_minutes"),
+            func.coalesce(func.sum(
+                case(
+                    (func.upper(Country.code) == "KZ", GamePlayerStats.minutes_played),
+                    else_=0,
+                )
+            ), 0).label("kazakh_minutes"),
+        ).select_from(GamePlayerStats).join(
+            Game, GamePlayerStats.game_id == Game.id
+        ).join(
+            Player, GamePlayerStats.player_id == Player.id
+        ).outerjoin(
+            Country, Player.country_id == Country.id
+        ).where(*game_base_filters)
     minutes_result = await db.execute(minutes_query)
     min_row = minutes_result.one()
     total_players = int(min_row.total_players or 0)
@@ -919,16 +937,24 @@ async def get_season_statistics(
     kazakh_minutes = int(min_row.kazakh_minutes or 0)
     kazakh_minutes_pct = round(kazakh_minutes / total_minutes * 100, 1) if total_minutes > 0 else 0.0
 
-    # Average age
-    # Average age — only players who played in games past cutoff
-    age_subq = (
-        select(Player.birthday)
-        .join(GamePlayerStats, GamePlayerStats.player_id == Player.id)
-        .join(Game, GamePlayerStats.game_id == Game.id)
-        .where(*game_base_filters)
-        .distinct(Player.id)
-        .subquery()
-    )
+    # Average age — players who played in games past cutoff (or roster for knockout)
+    if is_knockout:
+        age_subq = (
+            select(Player.birthday)
+            .join(PlayerSeasonStats, PlayerSeasonStats.player_id == Player.id)
+            .where(PlayerSeasonStats.season_id == season_id)
+            .distinct(Player.id)
+            .subquery()
+        )
+    else:
+        age_subq = (
+            select(Player.birthday)
+            .join(GamePlayerStats, GamePlayerStats.player_id == Player.id)
+            .join(Game, GamePlayerStats.game_id == Game.id)
+            .where(*game_base_filters)
+            .distinct(Player.id)
+            .subquery()
+        )
     age_query = select(
         func.avg(extract("year", func.age(age_subq.c.birthday))).label("avg_age"),
     )
