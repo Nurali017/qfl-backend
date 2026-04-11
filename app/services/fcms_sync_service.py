@@ -249,6 +249,9 @@ class FcmsSyncService:
         Strategy 2: last_name match + team + season (fallback for number mismatches)
         """
         # Strategy 1: Match by shirt number + team + season
+        # Exclude hidden contracts to avoid matching stale players when a new
+        # contract is created under the same shirt number (former holder is
+        # soft-hidden but still is_active=True).
         if shirt_number and season_id:
             result = await self.db.execute(
                 select(Player.id, PlayerTeam.amplua)
@@ -258,6 +261,7 @@ class FcmsSyncService:
                     PlayerTeam.season_id == season_id,
                     PlayerTeam.number == shirt_number,
                     PlayerTeam.is_active == True,
+                    PlayerTeam.is_hidden == False,
                 )
             )
             row = result.first()
@@ -278,6 +282,7 @@ class FcmsSyncService:
                         PlayerTeam.team_id == team_id,
                         PlayerTeam.season_id == season_id,
                         PlayerTeam.is_active == True,
+                        PlayerTeam.is_hidden == False,
                         or_(
                             and_(Player.first_name == first_name, Player.last_name == last_name),
                             and_(Player.last_name == first_name, Player.first_name == last_name),
@@ -299,6 +304,7 @@ class FcmsSyncService:
                         PlayerTeam.team_id == team_id,
                         PlayerTeam.season_id == season_id,
                         PlayerTeam.is_active == True,
+                        PlayerTeam.is_hidden == False,
                         or_(Player.last_name == name_part, Player.last_name_kz == name_part),
                     )
                 )
