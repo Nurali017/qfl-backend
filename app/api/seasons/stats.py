@@ -718,13 +718,21 @@ async def get_season_statistics(
         db, season_id, season, max_round
     )
 
-    # Base game filters (reused across queries)
+    is_knockout = season.tournament_format == "knockout" or season.has_table is False
+
+    # Base game filters (reused across queries).
+    # For round_robin leagues we require extended_stats_synced_at so that
+    # aggregate stats (pass accuracy, xG, cards) match the completed-round gate.
+    # For knockout cups the game stats sync path is different and the column is
+    # often NULL — we still want matches_played/goals/attendance from Game rows,
+    # and fall back to None for GameTeamStats-derived fields when unavailable.
     game_base_filters = [
         Game.season_id == season_id,
         Game.home_score.isnot(None),
         Game.away_score.isnot(None),
-        Game.extended_stats_synced_at.isnot(None),
     ]
+    if not is_knockout:
+        game_base_filters.append(Game.extended_stats_synced_at.isnot(None))
     if effective_max_round is not None:
         game_base_filters.append(Game.tour <= effective_max_round)
 
@@ -763,41 +771,35 @@ async def get_season_statistics(
 
     # Calculate penalties scored from GameEvent
     penalties = team_row.penalties or 0
+
+    def _event_count_filters(event_type: GameEventType):
+        filters = [
+            Game.season_id == season_id,
+            GameEvent.event_type == event_type,
+        ]
+        if not is_knockout:
+            filters.append(Game.extended_stats_synced_at.isnot(None))
+        if effective_max_round is not None:
+            filters.append(Game.tour <= effective_max_round)
+        return filters
+
     penalty_scored_query = select(func.count()).select_from(GameEvent).join(
         Game, GameEvent.game_id == Game.id
-    ).where(
-        Game.season_id == season_id,
-        Game.extended_stats_synced_at.isnot(None),
-        GameEvent.event_type == GameEventType.penalty,
-    )
-    if effective_max_round is not None:
-        penalty_scored_query = penalty_scored_query.where(Game.tour <= effective_max_round)
+    ).where(*_event_count_filters(GameEventType.penalty))
     penalty_result = await db.execute(penalty_scored_query)
     penalties_scored = penalty_result.scalar() or 0
 
     # Count red cards from game_events (direct reds only)
     red_card_count_query = select(func.count()).select_from(GameEvent).join(
         Game, GameEvent.game_id == Game.id
-    ).where(
-        Game.season_id == season_id,
-        Game.extended_stats_synced_at.isnot(None),
-        GameEvent.event_type == GameEventType.red_card,
-    )
-    if effective_max_round is not None:
-        red_card_count_query = red_card_count_query.where(Game.tour <= effective_max_round)
+    ).where(*_event_count_filters(GameEventType.red_card))
     red_card_result = await db.execute(red_card_count_query)
     total_red_cards = red_card_result.scalar() or 0
 
     # Count second yellow cards from game_events
     second_yellow_count_query = select(func.count()).select_from(GameEvent).join(
         Game, GameEvent.game_id == Game.id
-    ).where(
-        Game.season_id == season_id,
-        Game.extended_stats_synced_at.isnot(None),
-        GameEvent.event_type == GameEventType.second_yellow,
-    )
-    if effective_max_round is not None:
-        second_yellow_count_query = second_yellow_count_query.where(Game.tour <= effective_max_round)
+    ).where(*_event_count_filters(GameEventType.second_yellow))
     second_yellow_result = await db.execute(second_yellow_count_query)
     total_second_yellows = second_yellow_result.scalar() or 0
 
@@ -881,8 +883,9 @@ async def get_season_statistics(
         Game.season_id == season_id,
         Game.home_score == 0,
         Game.away_score == 0,
-        Game.extended_stats_synced_at.isnot(None),
     ]
+    if not is_knockout:
+        clean_sheets_filters.append(Game.extended_stats_synced_at.isnot(None))
     if effective_max_round is not None:
         clean_sheets_filters.append(Game.tour <= effective_max_round)
     clean_sheets_query = select(
