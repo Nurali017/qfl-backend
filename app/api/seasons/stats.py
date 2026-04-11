@@ -1006,12 +1006,15 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
 
     _, effective_max_round = await compute_season_stats_scope(db, season_id, season)
 
+    is_knockout = season.tournament_format == "knockout" or season.has_table is False
+
     game_filters = [
         Game.season_id == season_id,
         Game.home_score.isnot(None),
         Game.away_score.isnot(None),
-        Game.extended_stats_synced_at.isnot(None),
     ]
+    if not is_knockout:
+        game_filters.append(Game.extended_stats_synced_at.isnot(None))
     if effective_max_round is not None:
         game_filters.append(Game.tour <= effective_max_round)
 
