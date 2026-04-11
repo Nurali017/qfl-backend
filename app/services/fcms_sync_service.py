@@ -134,6 +134,7 @@ class FcmsSyncService:
 
             side_data = lineup_data.get(side, {})
             side_count = 0
+            matched_player_ids: set[int] = set()
 
             for lineup_type_str, players in [
                 ("starter", side_data.get("starters", [])),
@@ -179,8 +180,19 @@ class FcmsSyncService:
                         },
                     )
                     await self.db.execute(stmt)
+                    matched_player_ids.add(player_id)
                     side_count += 1
                     total_lineup += 1
+
+            # Remove stale lineup records (e.g. leftover from earlier SOTA sync)
+            if matched_player_ids:
+                await self.db.execute(
+                    GameLineup.__table__.delete().where(
+                        GameLineup.game_id == game_id,
+                        GameLineup.team_id == team_id,
+                        GameLineup.player_id.notin_(matched_player_ids),
+                    )
+                )
 
             if side == "home":
                 home_count = side_count
@@ -191,7 +203,14 @@ class FcmsSyncService:
             game.has_lineup = True
             game.lineup_source = "fcms"
 
-        game.prematch_pdf_hash = pdf_hash
+        # Only cache PDF hash if both teams matched; partial match → retry next run
+        if home_count > 0 and away_count > 0:
+            game.prematch_pdf_hash = pdf_hash
+        else:
+            logger.warning(
+                "FCMS lineup incomplete for game %d (home=%d, away=%d) — hash NOT cached, will retry",
+                game_id, home_count, away_count,
+            )
         await self.db.commit()
 
         logger.info(
