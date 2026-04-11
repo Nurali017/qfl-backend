@@ -21,6 +21,7 @@ async def list_files(
 async def upload_file(
     file: UploadFile = File(...),
     category: str = Query(default="uploads"),
+    skip_optimization: bool = Query(default=False),
     news_id: str | None = Query(default=None),
     language: str | None = Query(default=None),
     _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
@@ -39,6 +40,7 @@ async def upload_file(
         content_type=file.content_type or "application/octet-stream",
         category=category,
         metadata=metadata,
+        skip_optimization=skip_optimization,
     )
     return result
 
