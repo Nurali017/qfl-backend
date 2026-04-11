@@ -30,9 +30,18 @@ class TestMapLineupSlot:
     def test_right_back(self):
         assert aggregate_lineup_positions([("D", "R")]).primary == "ПЗ"
 
-    def test_defensive_mid_ignores_side(self):
+    def test_defensive_mid_central(self):
+        # C / LC / RC / NULL → real central defensive midfielder
         assert aggregate_lineup_positions([("DM", "C")]).primary == "ОП"
-        assert aggregate_lineup_positions([("DM", "L")]).primary == "ОП"
+        assert aggregate_lineup_positions([("DM", "LC")]).primary == "ОП"
+        assert aggregate_lineup_positions([("DM", "RC")]).primary == "ОП"
+        assert aggregate_lineup_positions([("DM", None)]).primary == "ОП"
+
+    def test_defensive_mid_wide_is_wing_midfielder(self):
+        # SOTA "DM+L/R" → Russian terminology has no "wide defensive mid";
+        # any wide midfielder is just ЛП / ПП.
+        assert aggregate_lineup_positions([("DM", "L")]).primary == "ЛП"
+        assert aggregate_lineup_positions([("DM", "R")]).primary == "ПП"
 
     def test_central_mid_variants(self):
         assert aggregate_lineup_positions([("M", "C")]).primary == "ЦП"
