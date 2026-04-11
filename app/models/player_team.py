@@ -36,9 +36,13 @@ class PlayerTeam(Base):
     # Contract dates
     joined_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     left_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    contract_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     # Contract photo (В-7)
     photo_url: Mapped[str | None] = mapped_column(FileUrlType)
+    photo_url_avatar: Mapped[str | None] = mapped_column(FileUrlType)
+    photo_url_leaderboard: Mapped[str | None] = mapped_column(FileUrlType)
+    photo_url_player_page: Mapped[str | None] = mapped_column(FileUrlType)
 
     # Relationships
     player: Mapped["Player"] = relationship("Player", back_populates="player_teams")
