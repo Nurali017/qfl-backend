@@ -1,5 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -24,6 +25,8 @@ class Club(Base):
     logo_url: Mapped[str | None] = mapped_column(FileUrlType)
     city_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("cities.id"), index=True)
     stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"), index=True)
+    founded_year: Mapped[int | None] = mapped_column(Integer)
+    social_links: Mapped[dict | None] = mapped_column(JSONB)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
