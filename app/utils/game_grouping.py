@@ -11,6 +11,7 @@ from app.schemas.game import (
     BroadcasterInfo, MatchCenterDateGroup, MatchCenterGame, StadiumInfo, TeamInMatchCenter,
 )
 from app.utils.date_helpers import format_match_date
+from app.utils.decided_in import compute_decided_in_lite
 from app.utils.game_status import compute_game_status
 from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
@@ -126,6 +127,7 @@ def group_games_by_date(
                 away_score=game.away_score,
                 home_penalty_score=game.home_penalty_score,
                 away_penalty_score=game.away_penalty_score,
+                decided_in=compute_decided_in_lite(game),
                 minute=game.live_minute if game.is_live else None,
                 half=game.live_half if game.is_live else None,
                 live_phase=game.live_phase if game.is_live else None,

@@ -1,11 +1,13 @@
 from datetime import date
 from datetime import time as time_type
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
 from app.schemas.playoff_bracket import PlayoffBracketResponse
+
+DecidedIn = Literal["regular", "extra_time", "penalties"]
 
 
 class CupTeamBrief(BaseModel):
@@ -28,6 +30,7 @@ class CupGameBrief(BaseModel):
     away_score: int | None = None
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
+    decided_in: DecidedIn | None = None
     status: str | None = None
     is_live: bool = False
     minute: Optional[int] = None

@@ -864,7 +864,7 @@ class TestSeasonsAPI:
 
         assert data["season_id"] == 61
         assert data["period_size_minutes"] == 15
-        assert len(data["periods"]) == 6
+        assert len(data["periods"]) == 7
         assert [p["period"] for p in data["periods"]] == [
             "0-15",
             "16-30",
@@ -872,6 +872,7 @@ class TestSeasonsAPI:
             "46-60",
             "61-75",
             "76-90+",
+            "ОТ",
         ]
         assert all(p["goals"] == 0 for p in data["periods"])
         assert all(p["home"] == 0 for p in data["periods"])
@@ -965,12 +966,47 @@ class TestSeasonsAPI:
         assert periods["46-60"] == {"period": "46-60", "goals": 1, "home": 0, "away": 1}
         assert periods["61-75"] == {"period": "61-75", "goals": 1, "home": 1, "away": 0}
         assert periods["76-90+"] == {"period": "76-90+", "goals": 1, "home": 0, "away": 1}
+        assert periods["ОТ"] == {"period": "ОТ", "goals": 0, "home": 0, "away": 0}
 
         assert data["meta"] == {
             "matches_played": 2,
             "matches_with_goal_events": 1,
             "coverage_pct": 50.0,
         }
+
+    async def test_get_goals_by_period_extra_time_bucket(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Goals scored in extra time (half=3/4) fall into the ОТ bucket, not 76-90+."""
+        from app.models import GameEvent, GameEventType
+
+        et_events = [
+            GameEvent(
+                game_id=sample_game.id,
+                half=4,
+                minute=106,
+                event_type=GameEventType.goal,
+                team_id=sample_teams[0].id,
+            ),
+            GameEvent(
+                game_id=sample_game.id,
+                half=3,
+                minute=95,
+                event_type=GameEventType.goal,
+                team_id=sample_teams[1].id,
+            ),
+        ]
+        test_session.add_all(et_events)
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/seasons/{sample_season.id}/goals-by-period")
+        assert response.status_code == 200
+        data = response.json()
+
+        periods = {item["period"]: item for item in data["periods"]}
+        assert periods["ОТ"] == {"period": "ОТ", "goals": 2, "home": 1, "away": 1}
+        # Regulation buckets must remain zero for this game.
+        assert periods["76-90+"]["goals"] == 0
 
     # ── effective_max_round / _compute_stats_scope tests ──────────────
 

@@ -22,6 +22,7 @@ class BroadcasterInfo(BaseModel):
 
 
 LivePhase = Literal["in_progress", "halftime"]
+DecidedIn = Literal["regular", "extra_time", "penalties"]
 
 
 class GameBase(BaseModel):
@@ -35,6 +36,10 @@ class GameBase(BaseModel):
     away_score: int | None = None
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
+    # How the match was decided. Populated for finished knockout games:
+    # 'regular' = full-time, 'extra_time' = decided in ET, 'penalties' = shootout.
+    # None for games where it's unknown or not applicable (round-robin listings).
+    decided_in: DecidedIn | None = None
     has_stats: bool = False
     is_technical: bool = False
     is_schedule_tentative: bool = False
@@ -131,6 +136,7 @@ class MatchCenterGame(BaseModel):
     away_score: int | None = None
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
+    decided_in: "DecidedIn | None" = None
 
     # Stage info
     stage_id: int | None = None
@@ -209,6 +215,7 @@ class GameListItem(BaseModel):
     away_score: int | None = None
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
+    decided_in: "DecidedIn | None" = None
     has_stats: bool = False
     has_lineup: bool = False
     is_live: bool = False
@@ -248,6 +255,7 @@ class GameDetailItem(BaseModel):
     away_score: int | None = None
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
+    decided_in: "DecidedIn | None" = None
     has_stats: bool = False
     has_lineup: bool = False
     is_live: bool = False
@@ -290,6 +298,7 @@ class SeasonGameItem(BaseModel):
     away_score: int | None = None
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
+    decided_in: "DecidedIn | None" = None
     has_stats: bool = False
     has_lineup: bool = False
     is_live: bool = False
@@ -319,6 +328,7 @@ class StageGameItem(BaseModel):
     away_score: int | None = None
     home_penalty_score: int | None = None
     away_penalty_score: int | None = None
+    decided_in: "DecidedIn | None" = None
     has_stats: bool = False
     has_lineup: bool = False
     is_live: bool = False

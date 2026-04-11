@@ -1,6 +1,7 @@
 import logging
 import re
 
+from app.utils.decided_in import compute_decided_in_lite
 from app.utils.game_status import compute_game_status
 from app.models import Game, Stage
 from app.schemas.cup import CupGameBrief, CupRound, CupTeamBrief
@@ -80,6 +81,7 @@ def build_cup_game(game: Game, lang: str) -> CupGameBrief:
         away_score=game.away_score,
         home_penalty_score=game.home_penalty_score,
         away_penalty_score=game.away_penalty_score,
+        decided_in=compute_decided_in_lite(game),
         status=status,
         is_live=game.is_live,
         minute=game.live_minute,
@@ -299,6 +301,7 @@ def _build_bracket_game(game: CupGameBrief) -> BracketGameBrief:
         away_score=game.away_score,
         home_penalty_score=game.home_penalty_score,
         away_penalty_score=game.away_penalty_score,
+        decided_in=compute_decided_in_lite(game),
         status=game.status,
         is_live=game.is_live,
         minute=game.minute,
