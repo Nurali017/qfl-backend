@@ -123,6 +123,11 @@ def _map_lineup_slot(amplua: str | None, field_position: str | None) -> str | No
         return "CB"
 
     if amp == "dm":
+        if side == "L":
+            return "LM"
+        if side == "R":
+            return "RM"
+        # C, LC, RC, NULL → central defensive midfielder
         return "DM"
 
     if amp == "m":
