@@ -105,3 +105,86 @@ class TestPlayersAPI:
         data = response.json()
         assert data["items"] == []
         assert data["total"] == 0
+
+    async def test_top_role_from_player_column(
+        self,
+        client: AsyncClient,
+        sample_player,
+    ):
+        """When Player.top_role is set, it should be returned as-is."""
+        # sample_player fixture already sets top_role="AM (attacking midfielder)"
+        response = await client.get(f"/api/v1/players/{sample_player.id}")
+        assert response.status_code == 200
+        assert response.json()["top_role"] == "AM (attacking midfielder)"
+
+    async def test_top_role_fallback_to_player_team_position(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_season,
+        sample_teams,
+    ):
+        """When Player.top_role is NULL, fall back to the latest PlayerTeam.position."""
+        from uuid import uuid4
+        from datetime import date
+        from app.models.player import Player
+        from app.models.player_team import PlayerTeam
+
+        player = Player(
+            sota_id=uuid4(),
+            first_name="No",
+            last_name="Role",
+            birthday=date(1998, 3, 10),
+            player_type="forward",
+            top_role=None,
+        )
+        test_session.add(player)
+        await test_session.commit()
+        await test_session.refresh(player)
+
+        pt = PlayerTeam(
+            player_id=player.id,
+            team_id=sample_teams[0].id,
+            season_id=sample_season.id,
+            position_ru="Нападающий",
+            position_kz="Шабуылшы",
+            position_en="Forward",
+            number=9,
+            is_active=True,
+            is_hidden=False,
+        )
+        test_session.add(pt)
+        await test_session.commit()
+
+        response = await client.get(f"/api/v1/players/{player.id}?lang=ru")
+        assert response.status_code == 200
+        assert response.json()["top_role"] == "Нападающий"
+
+        response_kz = await client.get(f"/api/v1/players/{player.id}?lang=kz")
+        assert response_kz.json()["top_role"] == "Шабуылшы"
+
+    async def test_top_role_none_when_no_player_team(
+        self,
+        client: AsyncClient,
+        test_session,
+    ):
+        """When Player.top_role is NULL and there are no PlayerTeam rows, return None."""
+        from uuid import uuid4
+        from datetime import date
+        from app.models.player import Player
+
+        player = Player(
+            sota_id=uuid4(),
+            first_name="Lone",
+            last_name="Wolf",
+            birthday=date(2000, 6, 1),
+            player_type=None,
+            top_role=None,
+        )
+        test_session.add(player)
+        await test_session.commit()
+        await test_session.refresh(player)
+
+        response = await client.get(f"/api/v1/players/{player.id}")
+        assert response.status_code == 200
+        assert response.json()["top_role"] is None

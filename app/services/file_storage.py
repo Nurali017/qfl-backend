@@ -128,8 +128,15 @@ class FileStorageService:
         content_type: str,
         category: str = "uploads",
         metadata: dict | None = None,
+        skip_optimization: bool = False,
+        object_name: str | None = None,
     ) -> dict:
-        """Upload a file to MinIO."""
+        """Upload a file to MinIO.
+
+        Args:
+            skip_optimization: When True, bypass auto-optimization for pre-processed images.
+            object_name: When provided, use this exact object name instead of generating one.
+        """
         client = get_minio_client()
         bucket = settings.minio_bucket
 
@@ -142,9 +149,9 @@ class FileStorageService:
             raw_bytes = file_data.read()
 
         # Auto-optimize photos on upload
-        if category in _OPTIMIZE_CATEGORIES and content_type.startswith("image/"):
+        if not skip_optimization and category in _OPTIMIZE_CATEGORIES and content_type.startswith("image/"):
             try:
-                raw_bytes, content_type = _optimize_image(raw_bytes)
+                raw_bytes, content_type = _optimize_image(raw_bytes, remove_bg=False)
                 filename = filename.rsplit(".", 1)[0] + ".webp"
                 logger.info("Optimized %s image: %d bytes", category, len(raw_bytes))
             except Exception:
@@ -152,7 +159,9 @@ class FileStorageService:
 
         # If news-id is in metadata, include it in the path for prefix-based lookup
         news_id = (metadata or {}).get("news-id")
-        if news_id and category == "news_image":
+        if object_name is not None:
+            pass  # Use caller-provided object name
+        elif news_id and category == "news_image":
             object_name = f"news_image/{news_id}/{file_id}.{filename.rsplit('.', 1)[-1]}" if "." in filename else f"news_image/{news_id}/{file_id}"
         else:
             object_name = FileStorageService._get_object_name(category, filename, file_id)

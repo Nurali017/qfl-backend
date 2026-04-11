@@ -22,6 +22,9 @@ class AdminContractListItem(BaseModel):
     position_kz: str | None
     position_en: str | None
     photo_url: str | None
+    photo_url_avatar: str | None = None
+    photo_url_leaderboard: str | None = None
+    photo_url_player_page: str | None = None
     is_active: bool
     is_hidden: bool
     joined_at: date | None
@@ -39,6 +42,9 @@ class AdminContractCreateRequest(BaseModel):
     position_kz: str | None = None
     position_en: str | None = None
     photo_url: str | None = None
+    photo_url_avatar: str | None = None
+    photo_url_leaderboard: str | None = None
+    photo_url_player_page: str | None = None
     is_active: bool = True
     is_hidden: bool = False
     joined_at: date | None = None
@@ -56,6 +62,9 @@ class AdminContractUpdateRequest(BaseModel):
     position_kz: str | None = None
     position_en: str | None = None
     photo_url: str | None = None
+    photo_url_avatar: str | None = None
+    photo_url_leaderboard: str | None = None
+    photo_url_player_page: str | None = None
     is_active: bool | None = None
     is_hidden: bool | None = None
     joined_at: date | None = None

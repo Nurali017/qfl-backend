@@ -138,6 +138,30 @@ async def get_player_stats_table(
         .scalar_subquery()
     )
 
+    contract_photo_avatar_subq = (
+        select(PlayerTeam.photo_url_avatar)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
+    contract_photo_leaderboard_subq = (
+        select(PlayerTeam.photo_url_leaderboard)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
     contract_amplua_subq = (
         select(PlayerTeam.amplua)
         .where(
@@ -157,6 +181,8 @@ async def get_player_stats_table(
         select(
             PlayerSeasonStats, Player, Team, Country,
             contract_photo_subq.label("contract_photo"),
+            contract_photo_avatar_subq.label("contract_photo_avatar"),
+            contract_photo_leaderboard_subq.label("contract_photo_leaderboard"),
             contract_amplua_subq.label("contract_amplua"),
         )
         .join(Player, PlayerSeasonStats.player_id == Player.id)
@@ -171,6 +197,8 @@ async def get_player_stats_table(
         team: Team | None,
         country: Country | None,
         contract_photo: str | None = None,
+        contract_photo_avatar: str | None = None,
+        contract_photo_leaderboard: str | None = None,
         contract_amplua: int | None = None,
     ) -> PlayerStatsTableEntry:
         country_data = None
@@ -186,7 +214,9 @@ async def get_player_stats_table(
             player_id=player.id,
             first_name=get_localized_field(player, "first_name", lang),
             last_name=get_localized_field(player, "last_name", lang),
-            photo_url=contract_photo or player.photo_url,
+            photo_url=contract_photo,
+            photo_url_avatar=contract_photo_avatar,
+            photo_url_leaderboard=contract_photo_leaderboard,
             country=country_data,
             team_id=team.id if team else None,
             team_name=get_localized_field(team, "name", lang) if team else None,
@@ -257,8 +287,17 @@ async def get_player_stats_table(
     result = await db.execute(query)
     rows = result.all()
     items = [
-        build_entry(stats, player, team, country, contract_photo, contract_amplua)
-        for stats, player, team, country, contract_photo, contract_amplua in rows
+        build_entry(
+            stats,
+            player,
+            team,
+            country,
+            contract_photo,
+            contract_photo_avatar,
+            contract_photo_leaderboard,
+            contract_amplua,
+        )
+        for stats, player, team, country, contract_photo, contract_photo_avatar, contract_photo_leaderboard, contract_amplua in rows
     ]
 
     return PlayerStatsTableResponse(

@@ -13,6 +13,50 @@ from app.schemas.team import TeamSeasonStatsResponse
 from app.services.season_visibility import resolve_visible_season_id
 from app.utils.error_messages import get_error_message
 
+
+def _compute_simple_ranks(
+    team_stats: TeamSeasonStats,
+    all_stats: list[TeamSeasonStats],
+) -> dict[str, int | None]:
+    """Compute league rank for each key metric (1 = best)."""
+    RANK_FIELDS = {
+        "goal": "desc",
+        "pass_ratio": "desc",
+        "possession_percent_average": "desc",
+        "goals_conceded": "asc",
+        "yellow_cards": "asc",
+        "red_cards": "asc",
+        "xg": "desc",
+        "shots_on_goal": "desc",
+        "shot": "desc",
+        "tackle": "desc",
+        "interception": "desc",
+        "dribble": "desc",
+        "corner": "desc",
+        "goal_pass": "desc",
+        "clean_sheets": "desc",
+    }
+    ranks: dict[str, int | None] = {}
+    for field, order in RANK_FIELDS.items():
+        team_val = getattr(team_stats, field, None)
+        if team_val is None:
+            ranks[field] = None
+            continue
+        vals = [
+            getattr(s, field, None) or 0
+            for s in all_stats
+            if getattr(s, field, None) is not None
+        ]
+        if not vals:
+            ranks[field] = None
+            continue
+        if order == "desc":
+            rank = sum(1 for v in vals if v > (team_val or 0)) + 1
+        else:
+            rank = sum(1 for v in vals if v < (team_val or 0)) + 1
+        ranks[field] = rank
+    return ranks
+
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
@@ -142,6 +186,15 @@ async def get_team_stats(
         clean_sheets=clean_sheets,
         extra_stats=stats.extra_stats,
     )
+
+    # Compute ranks across all teams in the season
+    all_stats_result = await db.execute(
+        select(TeamSeasonStats).where(TeamSeasonStats.season_id == season_id)
+    )
+    all_stats = list(all_stats_result.scalars().all())
+    if all_stats:
+        response.ranks = _compute_simple_ranks(stats, all_stats)
+
     json_bytes = response.model_dump_json().encode()
     cache_set(cache_key, json_bytes, 60)
     return Response(content=json_bytes, media_type="application/json")

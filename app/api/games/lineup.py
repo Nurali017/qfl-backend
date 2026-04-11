@@ -162,7 +162,7 @@ async def get_game_lineup(
             first_name = get_localized_field(player, "first_name", lang)
             last_name = get_localized_field(player, "last_name", lang)
             role_text = get_localized_field(contract, "position", lang) or str(contract.role)
-            photo = contract.photo_url or player.photo_url
+            photo = contract.photo_url
 
             coaches_list.append(LineupCoach(
                 id=player.id,
