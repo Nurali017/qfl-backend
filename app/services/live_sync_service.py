@@ -456,6 +456,8 @@ class LiveSyncService:
         # Step 3: поиск по номеру футболки + команда + сезон.
         # Номер уникален в рамках команды/сезона — самый надёжный фоллбэк
         # когда имена не совпадают (разная транслитерация FCMS vs SOTA).
+        # Исключаем is_hidden контракты: после смены игрока под тем же номером
+        # старый контракт может быть is_active=True, is_hidden=True — не линковать на него.
         if shirt_number and team_id and season_id:
             result = await self.db.execute(
                 select(Player)
@@ -464,6 +466,8 @@ class LiveSyncService:
                     PlayerTeam.team_id == team_id,
                     PlayerTeam.season_id == season_id,
                     PlayerTeam.number == shirt_number,
+                    PlayerTeam.is_active == True,  # noqa: E712
+                    PlayerTeam.is_hidden == False,  # noqa: E712
                     Player.sota_id.is_(None),
                 )
             )
