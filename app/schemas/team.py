@@ -150,6 +150,7 @@ class TeamSeasonStatsResponse(BaseModel):
     clean_sheets: int | None = None
 
     extra_stats: dict | None = None
+    ranks: dict[str, int | None] | None = None
 
     class Config:
         from_attributes = True
@@ -279,6 +280,8 @@ class TeamOverviewTeam(BaseModel):
     primary_color: str | None = None
     secondary_color: str | None = None
     accent_color: str | None = None
+    founded_year: int | None = None
+    social_links: dict | None = None
 
 
 class TeamOverviewSeason(BaseModel):
@@ -346,10 +349,15 @@ class TeamOverviewLeaderPlayer(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     photo_url: str | None = None
+    photo_url_leaderboard: str | None = None
     team_id: int | None = None
     team_name: str | None = None
     team_logo: str | None = None
     position: str | None = None
+    position_code: str | None = None
+    jersey_number: int | None = None
+    country_code: str | None = None
+    nationality: str | None = None
     games_played: int = 0
     goal: int = 0
     goal_pass: int = 0
@@ -364,6 +372,7 @@ class TeamOverviewLeaderPlayer(BaseModel):
     key_pass: int = 0
     recovery: int = 0
     goals_conceded: int = 0
+    time_on_field_total: int | None = None
 
 
 class TeamOverviewMiniLeaders(BaseModel):

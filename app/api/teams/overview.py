@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_db
 from app.utils.cache import cache_get, cache_set
 from app.models import (
+    Country,
     Game,
     Player,
     PlayerTeam,
@@ -64,7 +65,7 @@ async def get_team_overview(
     team_result = await db.execute(
         select(Team)
         .where(Team.id == team_id)
-        .options(selectinload(Team.stadium))
+        .options(selectinload(Team.stadium), selectinload(Team.club))
     )
     team = team_result.scalar_one_or_none()
     if not team:
@@ -188,8 +189,14 @@ async def get_team_overview(
     else:
         score_table_entries = []
 
+    # Use ScoreTable only if it has meaningful data (not all zeros from stale snapshot).
+    # If every entry in the window reports games_played == 0, fall back to live game aggregation.
+    score_table_has_data = any(
+        _safe_int(entry.games_played) > 0 for entry in score_table_entries
+    )
+
     standings: list[TeamOverviewStandingEntry] = []
-    if score_table_entries:
+    if score_table_entries and score_table_has_data:
         for entry in score_table_entries:
             standings.append(
                 TeamOverviewStandingEntry(
@@ -300,8 +307,32 @@ async def get_team_overview(
         .scalar_subquery()
     )
 
+    contract_photo_leaderboard_subq = (
+        select(PlayerTeam.photo_url_leaderboard)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
     contract_amplua_subq = (
         select(PlayerTeam.amplua)
+        .where(
+            PlayerTeam.player_id == PlayerSeasonStats.player_id,
+            PlayerTeam.team_id == PlayerSeasonStats.team_id,
+            PlayerTeam.season_id == PlayerSeasonStats.season_id,
+        )
+        .limit(1)
+        .correlate(PlayerSeasonStats)
+        .scalar_subquery()
+    )
+
+    contract_number_subq = (
+        select(PlayerTeam.number)
         .where(
             PlayerTeam.player_id == PlayerSeasonStats.player_id,
             PlayerTeam.team_id == PlayerSeasonStats.team_id,
@@ -317,11 +348,15 @@ async def get_team_overview(
             PlayerSeasonStats,
             Player,
             Team,
+            Country,
             contract_photo_subq.label("contract_photo"),
+            contract_photo_leaderboard_subq.label("contract_photo_leaderboard"),
             contract_amplua_subq.label("contract_amplua"),
+            contract_number_subq.label("contract_number"),
         )
         .join(Player, PlayerSeasonStats.player_id == Player.id)
         .outerjoin(Team, PlayerSeasonStats.team_id == Team.id)
+        .outerjoin(Country, Player.country_id == Country.id)
         .where(
             PlayerSeasonStats.season_id == season_id,
             PlayerSeasonStats.team_id == team_id,
@@ -334,16 +369,22 @@ async def get_team_overview(
     def_entries: list[tuple[int, TeamOverviewLeaderPlayer]] = []
     mid_entries: list[tuple[int, TeamOverviewLeaderPlayer]] = []
     fwd_entries: list[tuple[int, TeamOverviewLeaderPlayer]] = []
-    for row_stats, row_player, row_team, contract_photo, contract_amplua in player_rows:
+    AMPLUA_MAP = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+    for row_stats, row_player, row_team, row_country, contract_photo, contract_photo_leaderboard, contract_amplua, contract_number in player_rows:
         player_entry = TeamOverviewLeaderPlayer(
             player_id=row_player.id,
             first_name=get_localized_field(row_player, "first_name", lang),
             last_name=get_localized_field(row_player, "last_name", lang),
             photo_url=contract_photo or row_player.photo_url,
+            photo_url_leaderboard=contract_photo_leaderboard,
             team_id=row_team.id if row_team else row_stats.team_id,
             team_name=get_localized_name(row_team, lang) if row_team else None,
             team_logo=resolve_team_logo_url(row_team),
             position=get_localized_field(row_player, "top_role", lang),
+            position_code=AMPLUA_MAP.get(contract_amplua),
+            jersey_number=contract_number,
+            country_code=row_country.code.lower() if row_country and row_country.code else None,
+            nationality=get_localized_name(row_country, lang) if row_country else None,
             games_played=_safe_int(row_stats.games_played),
             goal=_safe_int(row_stats.goal),
             goal_pass=_safe_int(row_stats.goal_pass),
@@ -358,6 +399,7 @@ async def get_team_overview(
             key_pass=_safe_int(row_stats.key_pass),
             recovery=_safe_int(row_stats.recovery),
             goals_conceded=_safe_int(row_stats.goals_conceded),
+            time_on_field_total=_safe_int(row_stats.time_on_field_total),
         )
         players.append(player_entry)
         if contract_amplua == 1:  # GK
@@ -440,7 +482,7 @@ async def get_team_overview(
             id=p.id,
             first_name=get_localized_field(p, "first_name", lang) or p.first_name,
             last_name=get_localized_field(p, "last_name", lang) or p.last_name,
-            photo_url=ct.photo_url or p.photo_url,
+            photo_url=ct.photo_url,
             role=role_text,
             country_name=get_localized_name(p.country, lang) if p.country else None,
         ))
@@ -448,7 +490,7 @@ async def get_team_overview(
     overview_team = TeamOverviewTeam(
         id=team.id,
         name=get_localized_name(team, lang),
-        city=get_localized_city(team, lang),
+        city=get_localized_city(team, lang) or (get_localized_city(team.stadium, lang) if team.stadium else None),
         logo_url=resolve_team_logo_url(team),
         website=team.website,
         stadium=TeamOverviewStadium(
@@ -458,6 +500,8 @@ async def get_team_overview(
         primary_color=team.primary_color,
         secondary_color=team.secondary_color,
         accent_color=team.accent_color,
+        founded_year=team.club.founded_year if team.club else None,
+        social_links=team.club.social_links if team.club else None,
     )
     overview_season = (
         TeamOverviewSeason(

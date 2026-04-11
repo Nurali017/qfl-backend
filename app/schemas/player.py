@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Any
 from pydantic import BaseModel
 
 from app.schemas.country import CountryInPlayer
@@ -12,6 +13,9 @@ class PlayerBase(BaseModel):
     player_type: str | None = None
     country: CountryInPlayer | None = None
     photo_url: str | None = None
+    photo_url_avatar: str | None = None
+    photo_url_leaderboard: str | None = None
+    photo_url_player_page: str | None = None
     age: int | None = None
     top_role: str | None = None
 
@@ -26,12 +30,26 @@ class PlayerListResponse(BaseModel):
     total: int
 
 
+class PlayerPositionsBlock(BaseModel):
+    """Aggregated field positions derived from recent lineups (or top_role fallback)."""
+
+    primary: str | None = None          # e.g. "АП", "ЦЗ"
+    secondary: list[str] = []           # up to 2 extra positions
+    sample_size: int = 0                # lineup rows considered
+    source: str = "unknown"             # "lineups" | "top_role" | "unknown"
+
+
 class PlayerDetailResponse(PlayerResponse):
     teams: list[int] = []
     jersey_number: int | None = None
     height: int | None = None
     weight: int | None = None
     gender: str | None = None
+    contract_end: str | None = None
+    # Normalized position group derived from player_type + top_role (GK/DEF/MID/FWD).
+    position_code: str | None = None
+    # Aggregated positions from recent starter lineups (preferred over top_role).
+    positions: PlayerPositionsBlock | None = None
 
 
 class PlayerWithTeamResponse(PlayerResponse):
@@ -101,6 +119,8 @@ class PlayerStatsTableEntry(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     photo_url: str | None = None
+    photo_url_avatar: str | None = None
+    photo_url_leaderboard: str | None = None
     country: CountryInPlayer | None = None
     team_id: int | None = None
     team_name: str | None = None
@@ -188,6 +208,7 @@ class PlayerTeammateResponse(BaseModel):
     position: str | None = None
     age: int | None = None
     photo_url: str | None = None
+    photo_url_avatar: str | None = None
 
     class Config:
         from_attributes = True
@@ -210,15 +231,80 @@ class PlayerTournamentHistoryEntry(BaseModel):
     team_name: str | None = None
     position: str | None = None
     games_played: int | None = None
+    games_starting: int | None = None
     time_on_field_total: int | None = None
     goal: int | None = None
     goal_pass: int | None = None
+    shot: int | None = None
+    shots_on_goal: int | None = None
+    passes: int | None = None
+    pass_ratio: float | None = None
+    key_pass: int | None = None
+    duel: int | None = None
+    duel_success: int | None = None
+    tackle: int | None = None
+    interception: int | None = None
+    recovery: int | None = None
+    dribble: int | None = None
+    xg: float | None = None
+    xg_per_90: float | None = None
+    corner: int | None = None
+    offside: int | None = None
+    foul: int | None = None
     yellow_cards: int | None = None
     red_cards: int | None = None
+    extra_stats: dict[str, Any] | None = None
 
 
 class PlayerTournamentHistoryResponse(BaseModel):
     """Response for player tournament history."""
 
     items: list[PlayerTournamentHistoryEntry]
+    total: int
+
+
+class PlayerMatchHistoryTeam(BaseModel):
+    """Team block embedded in a player match history entry."""
+
+    id: int | None = None
+    name: str | None = None
+    logo_url: str | None = None
+    score: int | None = None
+
+
+class PlayerMatchHistoryEntry(BaseModel):
+    """Single match played by a player, with per-match stats."""
+
+    game_id: int
+    date: str | None = None
+    tour: int | None = None
+    season_id: int
+    season_name: str | None = None
+    home_team: PlayerMatchHistoryTeam
+    away_team: PlayerMatchHistoryTeam
+    player_team_id: int | None = None
+    position: str | None = None
+    minutes_played: int | None = None
+    started: bool | None = None
+    goals: int = 0
+    assists: int = 0
+    shots: int = 0
+    shots_on_goal: int = 0
+    shots_off_goal: int = 0
+    passes: int = 0
+    pass_accuracy: float | None = None
+    duel: int = 0
+    tackle: int = 0
+    corner: int = 0
+    offside: int = 0
+    foul: int = 0
+    yellow_cards: int = 0
+    red_cards: int = 0
+    extra_stats: dict[str, Any] | None = None
+
+
+class PlayerMatchHistoryResponse(BaseModel):
+    """Response for player match history."""
+
+    items: list[PlayerMatchHistoryEntry]
     total: int

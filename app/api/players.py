@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import Player, PlayerTeam, Game, GamePlayerStats, PlayerSeasonStats, Team, Season
+from app.models.game_event import GameEvent, GameEventType
 from app.schemas.player import (
     PlayerResponse,
     PlayerListResponse,
@@ -14,17 +15,57 @@ from app.schemas.player import (
     PlayerTeammatesListResponse,
     PlayerTournamentHistoryEntry,
     PlayerTournamentHistoryResponse,
+    PlayerMatchHistoryEntry,
+    PlayerMatchHistoryResponse,
+    PlayerMatchHistoryTeam,
 )
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.team import TeamInGame
+from app.models.game_lineup import GameLineup, LineupType
 from app.services.season_visibility import ensure_visible_season_or_404, resolve_visible_season_id
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.numbers import sanitize_non_finite_numbers
+from app.utils.positions import (
+    aggregate_lineup_positions,
+    fallback_positions_from_top_role,
+    infer_position_code,
+)
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.has_stats import enrich_games_has_stats
 
 router = APIRouter(prefix="/players", tags=["players"])
 
+
+def _resolve_top_role(
+    player: Player,
+    lang: str,
+    player_team: PlayerTeam | None = None,
+) -> str | None:
+    """
+    Return localized player top_role with fallback to PlayerTeam.position.
+
+    Priority:
+    1. Player.top_role_{lang} / top_role (set manually via admin API).
+    2. PlayerTeam.position_{lang} / position_ru fallback from the supplied
+       contract, or from the most recent contract on player.player_teams.
+    """
+    top_role = get_localized_field(player, "top_role", lang)
+    if top_role:
+        return top_role
+
+    if player_team is not None:
+        pt_position = get_localized_field(player_team, "position", lang)
+        if pt_position:
+            return pt_position
+        return None
+
+    player_teams = getattr(player, "player_teams", None) or []
+    for pt in sorted(player_teams, key=lambda p: p.season_id, reverse=True):
+        pt_position = get_localized_field(pt, "position", lang)
+        if pt_position:
+            return pt_position
+
+    return None
 
 
 @router.get("", response_model=PlayerListResponse)
@@ -80,7 +121,7 @@ async def get_players(
             "country": country_data,
             "photo_url": next((pt.photo_url for pt in p.player_teams if pt.photo_url and (not season_id or pt.season_id == season_id) and (not team_id or pt.team_id == team_id)), None) or p.photo_url,
             "age": p.age,
-            "top_role": get_localized_field(p, "top_role", lang),
+            "top_role": _resolve_top_role(p, lang),
         })
 
     return {"items": items, "total": total}
@@ -132,6 +173,15 @@ async def get_player(
 
     jersey_number = latest_pts[0].number if latest_pts else None
 
+    # Extract contract end date from active records only
+    contract_end = None
+    active_with_contract = [
+        pt for pt in latest_pts
+        if pt.is_active and pt.contract_end_date
+    ]
+    if active_with_contract:
+        contract_end = active_with_contract[0].contract_end_date.isoformat()
+
     # Build country response
     country_data = None
     if player.country:
@@ -142,6 +192,30 @@ async def get_player(
             "flag_url": player.country.flag_url,
         }
 
+    resolved_top_role = _resolve_top_role(
+        player,
+        lang,
+        player_team=latest_pts[0] if latest_pts else None,
+    )
+
+    # Aggregate real positions from the last 20 starter lineups.
+    # Ordered by game date DESC, NULLs last, falling back to game_id.
+    lineup_result = await db.execute(
+        select(GameLineup.amplua, GameLineup.field_position)
+        .join(Game, Game.id == GameLineup.game_id)
+        .where(
+            GameLineup.player_id == player_id,
+            GameLineup.lineup_type == LineupType.starter,
+            GameLineup.amplua.isnot(None),
+        )
+        .order_by(Game.date.desc().nullslast(), Game.id.desc())
+        .limit(20)
+    )
+    lineup_rows: list[tuple[str | None, str | None]] = list(lineup_result.all())
+    aggregated = aggregate_lineup_positions(lineup_rows)
+    if aggregated.source == "unknown":
+        aggregated = fallback_positions_from_top_role(player.player_type, resolved_top_role)
+
     return {
         "id": player.id,
         "first_name": get_localized_field(player, "first_name", lang),
@@ -150,13 +224,24 @@ async def get_player(
         "player_type": player.player_type,
         "country": country_data,
         "photo_url": (latest_pts[0].photo_url if latest_pts else None) or player.photo_url,
+        "photo_url_avatar": latest_pts[0].photo_url_avatar if latest_pts else None,
+        "photo_url_leaderboard": latest_pts[0].photo_url_leaderboard if latest_pts else None,
+        "photo_url_player_page": latest_pts[0].photo_url_player_page if latest_pts else None,
         "age": player.age,
-        "top_role": get_localized_field(player, "top_role", lang),
+        "top_role": resolved_top_role,
         "teams": teams,
         "jersey_number": jersey_number,
         "height": player.height,
         "weight": player.weight,
         "gender": player.gender,
+        "contract_end": contract_end,
+        "position_code": infer_position_code(player.player_type, resolved_top_role),
+        "positions": {
+            "primary": aggregated.primary,
+            "secondary": list(aggregated.secondary),
+            "sample_size": aggregated.sample_size,
+            "source": aggregated.source,
+        },
     }
 
 
@@ -318,13 +403,168 @@ async def get_player_teammates(
                     first_name=get_localized_field(pt.player, "first_name", lang),
                     last_name=get_localized_field(pt.player, "last_name", lang),
                     jersey_number=pt.number,
-                    position=get_localized_field(pt.player, "top_role", lang),
+                    position=_resolve_top_role(pt.player, lang, player_team=pt),
                     age=pt.player.age,
-                    photo_url=pt.photo_url or pt.player.photo_url,
+                    photo_url=pt.photo_url,
                 )
             )
 
     return PlayerTeammatesListResponse(items=items, total=len(items))
+
+
+@router.get("/{player_id}/match-history", response_model=PlayerMatchHistoryResponse)
+async def get_player_match_history(
+    player_id: int,
+    season_id: int | None = Query(default=None),
+    limit: int = Query(default=50, le=200),
+    lang: str = Query(default="kz", description="Language: kz, ru, or en"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get player's per-match history, enriched with per-match stats
+    from GamePlayerStats and goal/assist counts derived from game_events.
+
+    Unlike /games (which returns raw Game objects), this endpoint joins
+    GamePlayerStats for minutes/shots/cards and aggregates goals/assists
+    from the game_events table for the specific player_id.
+    """
+    if season_id is not None:
+        await ensure_visible_season_or_404(db, season_id)
+
+    # 1. Fetch per-game stats rows for the player, joined with Game + teams + season
+    stats_query = (
+        select(GamePlayerStats)
+        .where(GamePlayerStats.player_id == player_id)
+        .options(
+            selectinload(GamePlayerStats.game).selectinload(Game.home_team),
+            selectinload(GamePlayerStats.game).selectinload(Game.away_team),
+            selectinload(GamePlayerStats.game).selectinload(Game.season),
+        )
+    )
+    if season_id is not None:
+        stats_query = stats_query.join(Game, GamePlayerStats.game_id == Game.id).where(
+            Game.season_id == season_id
+        )
+
+    stats_result = await db.execute(stats_query)
+    per_game_stats = list(stats_result.scalars().all())
+
+    if not per_game_stats:
+        return PlayerMatchHistoryResponse(items=[], total=0)
+
+    game_ids = [ps.game_id for ps in per_game_stats]
+
+    # 2. Count goals/assists per game_id for this player from game_events
+    events_result = await db.execute(
+        select(
+            GameEvent.game_id,
+            GameEvent.event_type,
+            func.count(GameEvent.id).label("cnt"),
+        )
+        .where(
+            GameEvent.game_id.in_(game_ids),
+            (
+                (GameEvent.player_id == player_id)
+                | (GameEvent.assist_player_id == player_id)
+            ),
+        )
+        .group_by(GameEvent.game_id, GameEvent.event_type)
+    )
+
+    goals_by_game: dict[int, int] = {}
+    assists_by_game: dict[int, int] = {}
+    for row in events_result.all():
+        gid, event_type, cnt = row
+        if event_type in (GameEventType.goal, GameEventType.penalty):
+            # Only count if player_id matches (filter above may have matched via assist_player_id)
+            goals_by_game[gid] = goals_by_game.get(gid, 0) + int(cnt or 0)
+        elif event_type == GameEventType.assist:
+            assists_by_game[gid] = assists_by_game.get(gid, 0) + int(cnt or 0)
+
+    # Re-query to accurately split goals (by player_id) from assists (by assist_player_id)
+    # The single grouped query above may double-count; run precise queries instead.
+    goals_result = await db.execute(
+        select(GameEvent.game_id, func.count(GameEvent.id))
+        .where(
+            GameEvent.game_id.in_(game_ids),
+            GameEvent.player_id == player_id,
+            GameEvent.event_type.in_(
+                [GameEventType.goal, GameEventType.penalty]
+            ),
+        )
+        .group_by(GameEvent.game_id)
+    )
+    goals_by_game = {gid: int(cnt or 0) for gid, cnt in goals_result.all()}
+
+    assists_result = await db.execute(
+        select(GameEvent.game_id, func.count(GameEvent.id))
+        .where(
+            GameEvent.game_id.in_(game_ids),
+            GameEvent.assist_player_id == player_id,
+            GameEvent.event_type == GameEventType.assist,
+        )
+        .group_by(GameEvent.game_id)
+    )
+    assists_by_game = {gid: int(cnt or 0) for gid, cnt in assists_result.all()}
+
+    # 3. Build response items, sorted newest first
+    per_game_stats.sort(key=lambda ps: (ps.game.date if ps.game else None, ps.game_id), reverse=True)
+    per_game_stats = per_game_stats[:limit]
+
+    items: list[PlayerMatchHistoryEntry] = []
+    for ps in per_game_stats:
+        game = ps.game
+        if game is None:
+            continue
+
+        home_team_obj = game.home_team
+        away_team_obj = game.away_team
+
+        home_team = PlayerMatchHistoryTeam(
+            id=home_team_obj.id if home_team_obj else None,
+            name=get_localized_field(home_team_obj, "name", lang) if home_team_obj else None,
+            logo_url=resolve_team_logo_url(home_team_obj) if home_team_obj else None,
+            score=game.home_score,
+        )
+        away_team = PlayerMatchHistoryTeam(
+            id=away_team_obj.id if away_team_obj else None,
+            name=get_localized_field(away_team_obj, "name", lang) if away_team_obj else None,
+            logo_url=resolve_team_logo_url(away_team_obj) if away_team_obj else None,
+            score=game.away_score,
+        )
+
+        items.append(
+            PlayerMatchHistoryEntry(
+                game_id=game.id,
+                date=game.date.isoformat() if game.date else None,
+                tour=game.tour,
+                season_id=game.season_id,
+                season_name=get_localized_field(game.season, "name", lang) if game.season else None,
+                home_team=home_team,
+                away_team=away_team,
+                player_team_id=ps.team_id,
+                position=ps.position,
+                minutes_played=ps.minutes_played,
+                started=ps.started,
+                goals=goals_by_game.get(game.id, 0),
+                assists=assists_by_game.get(game.id, 0),
+                shots=ps.shots or 0,
+                shots_on_goal=ps.shots_on_goal or 0,
+                shots_off_goal=ps.shots_off_goal or 0,
+                passes=ps.passes or 0,
+                pass_accuracy=float(ps.pass_accuracy) if ps.pass_accuracy is not None else None,
+                duel=ps.duel or 0,
+                tackle=ps.tackle or 0,
+                corner=ps.corner or 0,
+                offside=ps.offside or 0,
+                foul=ps.foul or 0,
+                yellow_cards=ps.yellow_cards or 0,
+                red_cards=ps.red_cards or 0,
+                extra_stats=ps.extra_stats or None,
+            )
+        )
+
+    return PlayerMatchHistoryResponse(items=items, total=len(items))
 
 
 @router.get("/{player_id}/tournaments", response_model=PlayerTournamentHistoryResponse)
@@ -373,11 +613,29 @@ async def get_player_tournament_history(
                 team_name=team_name,
                 position=None,
                 games_played=stat.games_played,
+                games_starting=stat.games_starting,
                 time_on_field_total=stat.time_on_field_total,
                 goal=stat.goal,
                 goal_pass=stat.goal_pass,
+                shot=stat.shot,
+                shots_on_goal=stat.shots_on_goal,
+                passes=stat.passes,
+                pass_ratio=float(stat.pass_ratio) if stat.pass_ratio is not None else None,
+                key_pass=stat.key_pass,
+                duel=stat.duel,
+                duel_success=stat.duel_success,
+                tackle=stat.tackle,
+                interception=stat.interception,
+                recovery=stat.recovery,
+                dribble=stat.dribble,
+                xg=float(stat.xg) if stat.xg is not None else None,
+                xg_per_90=float(stat.xg_per_90) if stat.xg_per_90 is not None else None,
+                corner=stat.corner,
+                offside=stat.offside,
+                foul=stat.foul,
                 yellow_cards=stat.yellow_cards,
                 red_cards=stat.red_cards,
+                extra_stats=stat.extra_stats or None,
             )
         )
 

@@ -11,6 +11,9 @@ class AdminPlayerTeamBindingInput(BaseModel):
     is_active: bool = True
     is_hidden: bool = False
     photo_url: str | None = None
+    photo_url_avatar: str | None = None
+    photo_url_leaderboard: str | None = None
+    photo_url_player_page: str | None = None
     role: int | None = None
     amplua: int | None = None
     position_ru: str | None = None

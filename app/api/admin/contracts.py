@@ -56,6 +56,9 @@ def _build_contract_item(pt: PlayerTeam, player: Player, team: Team, season: Sea
         position_kz=pt.position_kz,
         position_en=pt.position_en,
         photo_url=pt.photo_url,
+        photo_url_avatar=pt.photo_url_avatar,
+        photo_url_leaderboard=pt.photo_url_leaderboard,
+        photo_url_player_page=pt.photo_url_player_page,
         is_active=pt.is_active,
         is_hidden=pt.is_hidden,
         joined_at=pt.joined_at,
@@ -348,6 +351,9 @@ async def create_contract(
         position_kz=payload.position_kz,
         position_en=payload.position_en,
         photo_url=to_object_name(payload.photo_url) if payload.photo_url else None,
+        photo_url_avatar=to_object_name(payload.photo_url_avatar) if payload.photo_url_avatar else None,
+        photo_url_leaderboard=to_object_name(payload.photo_url_leaderboard) if payload.photo_url_leaderboard else None,
+        photo_url_player_page=to_object_name(payload.photo_url_player_page) if payload.photo_url_player_page else None,
         is_active=payload.is_active,
         is_hidden=payload.is_hidden,
         joined_at=payload.joined_at,
@@ -415,9 +421,10 @@ async def update_contract(
         if season is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="season_id not found")
 
-    # Handle photo_url separately
-    if "photo_url" in update_data:
-        update_data["photo_url"] = to_object_name(update_data["photo_url"]) if update_data["photo_url"] else None
+    # Handle photo_url fields separately
+    for photo_field in ("photo_url", "photo_url_avatar", "photo_url_leaderboard", "photo_url_player_page"):
+        if photo_field in update_data:
+            update_data[photo_field] = to_object_name(update_data[photo_field]) if update_data[photo_field] else None
 
     # Track changes for notification
     changes: dict[str, tuple] = {}

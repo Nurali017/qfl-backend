@@ -37,7 +37,7 @@ def _build_player_info(pt: PlayerTeam, lang: str) -> dict:
         "id": p.id,
         "first_name": get_localized_field(p, "first_name", lang),
         "last_name": get_localized_field(p, "last_name", lang),
-        "photo_url": pt.photo_url or p.photo_url,
+        "photo_url": pt.photo_url,
         "position": position,
         "age": p.age,
         "country": country_data,
