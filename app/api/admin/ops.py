@@ -903,3 +903,39 @@ async def backfill_cup_advancement(
             advanced.append({"game_id": game.id, "error": str(e)})
 
     return {"season_id": season_id, "total_games": len(games), "deleted_rounds": deleted_rounds, "advanced": advanced}
+
+
+@router.post("/cup/setup-sota/{season_id}")
+async def setup_cup_sota_endpoint(
+    season_id: int,
+    sota_season_id: int | None = Query(default=None, description="SOTA season ID; auto-discovered if omitted"),
+    dry_run: bool = Query(default=False, description="Don't commit — preview matches only"),
+    enable_sync: bool = Query(default=True, description="Set sync_enabled=true + sota_season_id on the season"),
+    discover_year: str = Query(default="2026", description="Year used when auto-discovering the cup season in SOTA"),
+    db: AsyncSession = Depends(get_db),
+    client: SotaClient = Depends(get_sota_client),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Match a cup season's local games to SOTA and enable sync.
+
+    Idempotent: games that already have ``sota_id`` are skipped.
+    """
+    from app.services.cup_sota_setup import setup_cup_sota
+
+    try:
+        result = await setup_cup_sota(
+            db,
+            client,
+            season_id=season_id,
+            sota_season_id=sota_season_id,
+            dry_run=dry_run,
+            enable_sync=enable_sync,
+            discover_year=discover_year,
+        )
+        return SyncResponse(
+            status=SyncStatus.SUCCESS,
+            message=result.message or "Cup SOTA setup completed",
+            details=result.to_dict(),
+        )
+    except Exception as exc:
+        return SyncResponse(status=SyncStatus.FAILED, message=f"Cup SOTA setup failed: {exc}")
