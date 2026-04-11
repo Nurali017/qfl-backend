@@ -939,3 +939,31 @@ async def setup_cup_sota_endpoint(
         )
     except Exception as exc:
         return SyncResponse(status=SyncStatus.FAILED, message=f"Cup SOTA setup failed: {exc}")
+
+
+@router.get("/sota/seasons")
+async def list_sota_seasons(
+    filter_text: str | None = Query(default=None, description="Case-insensitive substring filter on season name / tournament"),
+    client: SotaClient = Depends(get_sota_client),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Return raw SOTA seasons list for debugging / discovery."""
+    seasons = await client.get_seasons()
+    items = []
+    needle = (filter_text or "").lower().strip()
+    for season in seasons:
+        name = season.get("name") or ""
+        tournament = season.get("tournament") or {}
+        tournament_name = tournament.get("name", "") if isinstance(tournament, dict) else ""
+        if needle:
+            haystack = f"{name} {tournament_name}".lower()
+            if needle not in haystack:
+                continue
+        items.append({
+            "id": season.get("id"),
+            "name": name,
+            "tournament": tournament_name,
+            "date_start": season.get("date_start"),
+            "date_end": season.get("date_end"),
+        })
+    return {"total": len(items), "items": items}
