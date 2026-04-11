@@ -941,6 +941,27 @@ async def setup_cup_sota_endpoint(
         return SyncResponse(status=SyncStatus.FAILED, message=f"Cup SOTA setup failed: {exc}")
 
 
+@router.get("/sota/seasons/{sota_season_id}/games")
+async def list_sota_season_games(
+    sota_season_id: int,
+    client: SotaClient = Depends(get_sota_client),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    """Return raw SOTA games for a given SOTA season — for debugging / matching."""
+    games = await client.get_games(sota_season_id)
+    items = []
+    for g in games:
+        home = g.get("home_team") or {}
+        away = g.get("away_team") or {}
+        items.append({
+            "id": str(g.get("id")),
+            "date": g.get("date"),
+            "home": home.get("name") if isinstance(home, dict) else None,
+            "away": away.get("name") if isinstance(away, dict) else None,
+        })
+    return {"total": len(items), "items": items}
+
+
 @router.get("/sota/seasons")
 async def list_sota_seasons(
     filter_text: str | None = Query(default=None, description="Case-insensitive substring filter on season name / tournament"),
