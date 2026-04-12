@@ -89,7 +89,9 @@ POSITION_SHORT = {
     "LM": "ЛП",   # левый полузащитник
     "CM": "ЦП",   # центральный полузащитник
     "RM": "ПП",   # правый полузащитник
-    "AM": "АП",   # атакующий полузащитник
+    "LAM": "ЛАП",  # левый атакующий полузащитник
+    "AM": "АП",    # атакующий полузащитник
+    "RAM": "ПАП",  # правый атакующий полузащитник
     "LF": "ЛН",   # левый нападающий
     "CF": "ЦН",   # центральный нападающий
     "RF": "ПН",   # правый нападающий
@@ -138,8 +140,10 @@ def _map_lineup_slot(amplua: str | None, field_position: str | None) -> str | No
         return "CM"
 
     if amp == "am":
-        # Side-specific attacking mids are rare in Russian terminology;
-        # keep everything as АП unless strongly wide.
+        if side == "L":
+            return "LAM"
+        if side == "R":
+            return "RAM"
         return "AM"
 
     if amp == "f":

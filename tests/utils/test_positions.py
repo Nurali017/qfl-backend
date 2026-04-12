@@ -49,11 +49,13 @@ class TestMapLineupSlot:
         assert aggregate_lineup_positions([("M", "R")]).primary == "ПП"
         assert aggregate_lineup_positions([("M", None)]).primary == "ЦП"
 
-    def test_attacking_mid_always_central(self):
-        # AM + any side → АП (Russian tradition)
+    def test_attacking_mid_variants(self):
         assert aggregate_lineup_positions([("AM", "C")]).primary == "АП"
-        assert aggregate_lineup_positions([("AM", "L")]).primary == "АП"
-        assert aggregate_lineup_positions([("AM", "R")]).primary == "АП"
+        assert aggregate_lineup_positions([("AM", "L")]).primary == "ЛАП"
+        assert aggregate_lineup_positions([("AM", "R")]).primary == "ПАП"
+        assert aggregate_lineup_positions([("AM", None)]).primary == "АП"
+        assert aggregate_lineup_positions([("AM", "LC")]).primary == "АП"
+        assert aggregate_lineup_positions([("AM", "RC")]).primary == "АП"
 
     def test_forward_variants(self):
         assert aggregate_lineup_positions([("F", "C")]).primary == "ЦН"
