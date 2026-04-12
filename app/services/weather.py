@@ -40,8 +40,9 @@ WEATHER_CONDITIONS: dict[str, dict[str, str]] = {
     "fog": {"kz": "Тұманды", "ru": "Туман", "en": "Fog"},
 }
 
-# In-memory geocoding cache: city_name → (lat, lon)
+# Bounded geocoding cache: city_name → (lat, lon). Max 128 entries.
 _geocode_cache: dict[str, tuple[float, float] | None] = {}
+_GEOCODE_CACHE_MAX = 128
 
 
 def format_weather(temp: int | None, condition: str | None, lang: str) -> str | None:
@@ -80,6 +81,10 @@ async def _geocode_city(city: str, client: httpx.AsyncClient) -> tuple[float, fl
     resp.raise_for_status()
     data = resp.json()
     results = data.get("results")
+
+    if len(_geocode_cache) >= _GEOCODE_CACHE_MAX:
+        _geocode_cache.clear()
+
     if not results:
         _geocode_cache[city] = None
         return None
