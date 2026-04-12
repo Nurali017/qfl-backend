@@ -17,7 +17,7 @@ class GameBroadcaster(Base):
         GAME_ID_SQL_TYPE, ForeignKey("games.id", ondelete="CASCADE"), nullable=False, index=True
     )
     broadcaster_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("broadcasters.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("broadcasters.id", ondelete="CASCADE"), nullable=False, index=True
     )
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
 

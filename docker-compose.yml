@@ -27,6 +27,14 @@ services:
 
   db:
     image: postgres:15
+    command: >-
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c autovacuum_naptime=30s
+      -c autovacuum_vacuum_scale_factor=0.05
+      -c autovacuum_analyze_scale_factor=0.02
+      -c autovacuum_vacuum_cost_delay=2ms
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

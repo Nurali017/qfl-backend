@@ -94,7 +94,7 @@ if settings.fcms_enabled:
     }
     celery_app.conf.beat_schedule["sync-fcms-rosters-daily"] = {
         "task": "app.tasks.fcms_tasks.sync_fcms_rosters",
-        "schedule": crontab(minute="0", hour="10,17"),
+        "schedule": crontab(minute="0", hour="7,10,14,17"),
     }
 
 if settings.youtube_auto_link_enabled:

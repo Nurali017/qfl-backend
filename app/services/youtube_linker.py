@@ -50,8 +50,9 @@ def _roman_to_int(s: str) -> int | None:
             result += val
     return result
 
-# Module-level cache for uploads playlist ID per channel (never changes)
+# Bounded cache for uploads playlist ID per channel. Max 32 entries.
 _uploads_playlist_ids: dict[str, str] = {}
+_PLAYLIST_CACHE_MAX = 32
 
 
 @dataclass(slots=True)
@@ -79,6 +80,8 @@ async def _get_uploads_playlist_id(channel_id: str, api_key: str) -> str:
         raise ValueError(f"YouTube channel {channel_id} not found")
 
     playlist_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    if len(_uploads_playlist_ids) >= _PLAYLIST_CACHE_MAX:
+        _uploads_playlist_ids.clear()
     _uploads_playlist_ids[channel_id] = playlist_id
     return playlist_id
 
