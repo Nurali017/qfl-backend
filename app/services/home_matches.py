@@ -75,11 +75,12 @@ async def get_home_widget(
 
     # Rule 1: current tour is still ongoing → upcoming=current, finished=previous tour
     if hint_games and any(g.status not in TERMINAL_STATUSES for g in hint_games):
-        finished_groups = _group_widget_games(
+        finished_groups = await _enrich_and_group(
+            db, season_id,
             previous_tour_games if _tour_is_fully_terminal(previous_tour_games) else [],
             lang,
         )
-        upcoming_groups = _group_widget_games(hint_games, lang)
+        upcoming_groups = await _enrich_and_group(db, season_id, hint_games, lang)
         return HomeMatchesWidgetResponse(
             frontend_code=frontend_code,
             season_id=season_id,
@@ -96,11 +97,12 @@ async def get_home_widget(
     # Rule 2: current tour already completed → upcoming=next tour, finished=current completed tour
     completed_window_expires_at = _recent_completion_expires(hint_games, now)
     if next_games:
-        finished_groups = _group_widget_games(
+        finished_groups = await _enrich_and_group(
+            db, season_id,
             hint_games if _tour_is_fully_terminal(hint_games) else [],
             lang,
         )
-        upcoming_groups = _group_widget_games(next_games, lang)
+        upcoming_groups = await _enrich_and_group(db, season_id, next_games, lang)
         in_completed_window = completed_window_expires_at is not None
         return HomeMatchesWidgetResponse(
             frontend_code=frontend_code,
@@ -117,7 +119,7 @@ async def get_home_widget(
 
     # Rule 3: no next tour yet, but keep finished tour open for 24h
     if completed_window_expires_at is not None:
-        finished_groups = _group_widget_games(hint_games, lang)
+        finished_groups = await _enrich_and_group(db, season_id, hint_games, lang)
         return HomeMatchesWidgetResponse(
             frontend_code=frontend_code,
             season_id=season_id,
@@ -162,6 +164,62 @@ def _group_widget_games(games: list[Game], lang: str):
     if not games:
         return []
     return group_games_by_date(games, lang, status_mode="home_widget")
+
+
+def _filter_outlier_games(games: list[Game], max_gap_days: int = 7) -> list[Game]:
+    """Keep only games whose date is within *max_gap_days* of the median date."""
+    dated = [(g, g.date) for g in games if g.date is not None]
+    if len(dated) <= 1:
+        return [g for g, _ in dated]
+    sorted_dates = sorted(d for _, d in dated)
+    median = sorted_dates[len(sorted_dates) // 2]
+    return [g for g, d in dated if abs((d - median).days) <= max_gap_days]
+
+
+async def _load_same_date_games(
+    db: AsyncSession,
+    season_id: int,
+    game_dates: set[date],
+    exclude_ids: set[int],
+) -> list[Game]:
+    """Load games from any tour on *game_dates*, excluding already-known ids."""
+    if not game_dates:
+        return []
+    query = (
+        select(Game)
+        .where(
+            Game.season_id == season_id,
+            Game.date.in_(game_dates),
+        )
+        .options(*_EAGER_OPTIONS)
+        .order_by(Game.date.asc(), Game.time.asc())
+    )
+    if exclude_ids:
+        query = query.where(~Game.id.in_(exclude_ids))
+    result = await db.execute(query)
+    games = list(result.scalars().all())
+    if games:
+        await enrich_games_has_stats(db, games)
+    return games
+
+
+async def _enrich_and_group(
+    db: AsyncSession,
+    season_id: int,
+    tour_games: list[Game],
+    lang: str,
+):
+    """Filter outlier dates, add same-date games from other tours, group by date."""
+    if not tour_games:
+        return []
+    filtered = _filter_outlier_games(tour_games)
+    if not filtered:
+        return group_games_by_date(tour_games, lang, status_mode="home_widget")
+    game_dates = {g.date for g in filtered if g.date}
+    known_ids = {g.id for g in filtered}
+    extra = await _load_same_date_games(db, season_id, game_dates, known_ids)
+    all_games = filtered + extra
+    return group_games_by_date(all_games, lang, status_mode="home_widget")
 
 
 async def _resolve_season(db: AsyncSession, frontend_code: str) -> Season | None:
@@ -250,7 +308,7 @@ async def _rule0_first_upcoming(
         return _empty(frontend_code, season_id)
     first_tour = int(first_tour)
     games = await _load_tours(db, season_id, [first_tour])
-    upcoming_groups = _group_widget_games(games, lang)
+    upcoming_groups = await _enrich_and_group(db, season_id, games, lang)
     return HomeMatchesWidgetResponse(
         frontend_code=frontend_code,
         season_id=season_id,
