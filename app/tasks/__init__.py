@@ -74,9 +74,9 @@ celery_app.conf.beat_schedule["fetch-weather-every-3h"] = {
     "schedule": crontab(minute="30", hour="*/3"),
 }
 
-celery_app.conf.beat_schedule["search-tickets-every-3h"] = {
+celery_app.conf.beat_schedule["search-tickets-twice-daily"] = {
     "task": "app.tasks.ticket_tasks.search_tickets",
-    "schedule": crontab(minute="0", hour="*/3"),
+    "schedule": crontab(minute="0", hour="9,18"),
 }
 
 if settings.fcms_enabled:
