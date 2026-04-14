@@ -1,4 +1,4 @@
-"""FCMS sync service: pre-match lineup fetch (PDF) and post-match protocol PDF download."""
+"""FCMS sync service: pre-match lineup fetch (PDF), post-match protocol PDF download, and event sync."""
 
 import hashlib
 import logging
@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Game, GameLineup, GameStatus, LineupType, Player, PlayerTeam, Team
+from app.models import Game, GameEvent, GameEventType, GameLineup, GameStatus, LineupType, Player, PlayerTeam, Team
 from app.services.fcms_client import FcmsClient
 from app.services.file_storage import FileStorageService
 from app.services.telegram import send_telegram_document, send_telegram_message
@@ -405,4 +405,219 @@ class FcmsSyncService:
             logger.warning("Failed to send protocol notification for game %d", game_id, exc_info=True)
 
         logger.info("FCMS protocol PDF %s for game %d: %s", action, game_id, object_name)
+
+        # Sync events from FCMS for games without SOTA (SOTA has priority)
+        if not game.sota_id:
+            try:
+                events_result = await self.sync_fcms_events(game.id)
+                logger.info("FCMS events synced for game %d: %s", game_id, events_result)
+            except Exception:
+                logger.warning("Failed to sync FCMS events for game %d", game_id, exc_info=True)
+
         return {"status": "updated" if is_update else "uploaded", "object_name": object_name}
+
+    # ── FCMS Event Sync ─────────────────────────────────────────────
+
+    # FCMS eventType+eventSubtype → GameEventType
+    _FCMS_EVENT_MAP: dict[tuple[str, str | None], GameEventType] = {
+        ("GOAL", "SCORING"): GameEventType.goal,
+        ("GOAL", "OWN_GOAL"): GameEventType.own_goal,
+        ("GOAL", "PENALTY"): GameEventType.penalty,
+        ("GOAL", "MISSED_PENALTY"): GameEventType.missed_penalty,
+        ("CARD", "YELLOW"): GameEventType.yellow_card,
+        ("CARD", "YELLOW_RED"): GameEventType.second_yellow,
+        ("CARD", "RED"): GameEventType.red_card,
+        ("SUBSTITUTION", None): GameEventType.substitution,
+    }
+
+    async def sync_fcms_events(self, game_id: int) -> dict:
+        """Sync events from FCMS matchEvents API for games without sota_id.
+
+        Full reconciliation: adds new events, updates changed ones,
+        deletes FCMS events that no longer exist. Manual/SOTA events are protected.
+        """
+        game = await self.db.get(Game, game_id)
+        if not game or not game.fcms_match_id:
+            return {"error": f"Game {game_id} not found or no fcms_match_id", "added": 0, "updated": 0, "deleted": 0}
+
+        # Get match data for competitor IDs
+        match_data = await self.client.get_match(game.fcms_match_id)
+        home_competitor_id = match_data.get("homeCompetitorId")
+        away_competitor_id = match_data.get("awayCompetitorId")
+
+        if not home_competitor_id or not away_competitor_id:
+            return {"error": "Missing competitor IDs in FCMS match data", "added": 0, "updated": 0, "deleted": 0}
+
+        # Build matchPlayerId → personId mapping from both teams
+        mp_to_person: dict[int, int] = {}
+        mp_to_name: dict[int, str] = {}
+        for comp_id in (home_competitor_id, away_competitor_id):
+            try:
+                match_players = await self.client.get_match_players(game.fcms_match_id, comp_id)
+            except Exception:
+                logger.warning("Failed to fetch matchPlayers for comp %d game %d", comp_id, game_id, exc_info=True)
+                continue
+            for mp in match_players:
+                mp_id = mp["id"]
+                cp = mp.get("competitorPlayer", {})
+                player_data = cp.get("player", {})
+                person_id = player_data.get("personId")
+                if person_id:
+                    mp_to_person[mp_id] = person_id
+                fn = player_data.get("localFirstName", "")
+                ln = player_data.get("localFamilyName", "")
+                mp_to_name[mp_id] = f"{fn} {ln}".strip()
+
+        # Build personId → our player_id lookup
+        all_person_ids = list(mp_to_person.values())
+        person_to_player: dict[int, tuple[int, str | None]] = {}
+        if all_person_ids:
+            result = await self.db.execute(
+                select(Player.id, Player.fcms_person_id, Player.first_name, Player.last_name)
+                .where(Player.fcms_person_id.in_(all_person_ids))
+            )
+            for row in result.all():
+                person_to_player[row[1]] = (row[0], f"{row[2] or ''} {row[3] or ''}".strip())
+
+        # Fetch events from FCMS
+        fcms_events = await self.client.get_match_events(game.fcms_match_id)
+
+        # Load existing FCMS events from DB
+        result = await self.db.execute(
+            select(GameEvent).where(GameEvent.game_id == game_id, GameEvent.source == "fcms")
+        )
+        existing_fcms_events = list(result.scalars().all())
+
+        # Index existing by fcms signature (event_type, half, minute, player_id)
+        def _sig(et_value: str, half: int, minute: int, player_id: int | None) -> tuple:
+            return (et_value, half, minute, player_id)
+
+        existing_by_sig: dict[tuple, list[GameEvent]] = {}
+        for e in existing_fcms_events:
+            sig = _sig(e.event_type.value, e.half, e.minute, e.player_id)
+            existing_by_sig.setdefault(sig, []).append(e)
+
+        matched_db_ids: set[int] = set()
+        added = 0
+        updated = 0
+
+        for fe in fcms_events:
+            event_type_str = fe.get("eventType", "")
+            event_subtype = fe.get("eventSubtype")
+            game_event_type = self._FCMS_EVENT_MAP.get((event_type_str, event_subtype))
+            if game_event_type is None:
+                # Try without subtype for SUBSTITUTION
+                game_event_type = self._FCMS_EVENT_MAP.get((event_type_str, None))
+            if game_event_type is None:
+                continue
+
+            half = fe.get("periodNumber", 1)
+            minute = fe.get("matchActualTime", 0)
+            origin = fe.get("matchPlayerOrigin")
+
+            # Determine team_id
+            team_id = None
+            if origin == "HOME":
+                team_id = game.home_team_id
+            elif origin == "AWAY":
+                team_id = game.away_team_id
+
+            # Resolve primary player
+            mp_id = fe.get("matchPlayerId")
+            player_id = None
+            player_name = None
+            if mp_id:
+                person_id = mp_to_person.get(mp_id)
+                if person_id and person_id in person_to_player:
+                    player_id, player_name = person_to_player[person_id]
+                else:
+                    player_name = mp_to_name.get(mp_id)
+
+            # Resolve player2 (substitution: in/out)
+            player2_id = None
+            player2_name = None
+            if game_event_type == GameEventType.substitution:
+                # For FCMS: matchPlayerOutId = player going off, matchPlayerInId = player coming on
+                out_mp_id = fe.get("matchPlayerOutId")
+                in_mp_id = fe.get("matchPlayerInId")
+                # In our model: player = going off, player2 = coming on
+                if out_mp_id:
+                    out_person = mp_to_person.get(out_mp_id)
+                    if out_person and out_person in person_to_player:
+                        player_id, player_name = person_to_player[out_person]
+                    else:
+                        player_name = mp_to_name.get(out_mp_id)
+                if in_mp_id:
+                    in_person = mp_to_person.get(in_mp_id)
+                    if in_person and in_person in person_to_player:
+                        player2_id, player2_name = person_to_player[in_person]
+                    else:
+                        player2_name = mp_to_name.get(in_mp_id)
+
+            # Resolve assist
+            assist_player_id = None
+            assist_player_name = None
+            assist_mp_id = fe.get("matchPlayerAssistedId")
+            if assist_mp_id:
+                assist_person = mp_to_person.get(assist_mp_id)
+                if assist_person and assist_person in person_to_player:
+                    assist_player_id, assist_player_name = person_to_player[assist_person]
+                else:
+                    assist_player_name = mp_to_name.get(assist_mp_id)
+
+            # Try to match existing FCMS event
+            sig = _sig(game_event_type.value, half, minute, player_id)
+            matched = None
+            candidates = existing_by_sig.get(sig, [])
+            for c in candidates:
+                if c.id not in matched_db_ids:
+                    matched = c
+                    break
+
+            fields = {
+                "event_type": game_event_type,
+                "half": half,
+                "minute": minute,
+                "team_id": team_id,
+                "player_id": player_id,
+                "player_name": player_name,
+                "player2_id": player2_id,
+                "player2_name": player2_name,
+                "assist_player_id": assist_player_id,
+                "assist_player_name": assist_player_name,
+            }
+
+            if matched:
+                matched_db_ids.add(matched.id)
+                for field, value in fields.items():
+                    old_value = getattr(matched, field)
+                    if field == "event_type":
+                        if old_value != value:
+                            setattr(matched, field, value)
+                            updated += 1
+                    elif old_value != value:
+                        setattr(matched, field, value)
+                        updated += 1
+            else:
+                event = GameEvent(
+                    game_id=game_id,
+                    source="fcms",
+                    **fields,
+                )
+                self.db.add(event)
+                added += 1
+
+        # Delete unmatched FCMS events
+        deleted = 0
+        for e in existing_fcms_events:
+            if e.id not in matched_db_ids:
+                await self.db.delete(e)
+                deleted += 1
+
+        await self.db.commit()
+
+        logger.info(
+            "Game %s: FCMS events added=%d updated=%d deleted=%d",
+            game_id, added, updated, deleted,
+        )
+        return {"added": added, "updated": updated, "deleted": deleted}
