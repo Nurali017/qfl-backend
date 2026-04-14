@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Game, GameBroadcaster, GameStatus, Season
 from app.schemas.game import HomeMatchesWidgetResponse
+from app.services.season_filters import get_final_stage_ids, get_group_team_ids
 from app.services.season_visibility import is_season_visible_clause
 from app.utils.game_grouping import group_games_by_date
 from app.utils.has_stats import enrich_games_has_stats
@@ -46,6 +47,8 @@ async def get_home_widget(
     db: AsyncSession,
     frontend_code: str,
     lang: str,
+    *,
+    group: str | None = None,
 ) -> HomeMatchesWidgetResponse:
     """Return home widget data for a tour-based league."""
     season = await _resolve_season(db, frontend_code)
@@ -53,6 +56,13 @@ async def get_home_widget(
         return _empty(frontend_code)
 
     season_id = season.id
+
+    # 2L: dispatch to group-specific or final logic
+    if frontend_code == "2l" and group:
+        if group == "final":
+            return await _get_widget_final(db, season_id, frontend_code, lang)
+        return await _get_widget_group(db, season_id, frontend_code, lang, group)
+
     hint = await _played_round_hint(db, season_id)
     now = _now_almaty()
 
@@ -375,4 +385,261 @@ def _empty(frontend_code: str, season_id: int = 0) -> HomeMatchesWidgetResponse:
         finished_groups=[],
         upcoming_groups=[],
         completed_window_expires_at=None,
+    )
+
+
+# ── 2L group-scoped widget ─────────────────────────────────────────
+
+
+async def _played_round_hint_for_group(
+    db: AsyncSession, season_id: int, team_ids: list[int]
+) -> int | None:
+    """Max tour where both scores are set, scoped to group teams."""
+    result = await db.execute(
+        select(func.max(Game.tour)).where(
+            Game.season_id == season_id,
+            Game.tour.isnot(None),
+            Game.home_score.isnot(None),
+            Game.away_score.isnot(None),
+            Game.home_team_id.in_(team_ids),
+            Game.away_team_id.in_(team_ids),
+        )
+    )
+    val = result.scalar()
+    return int(val) if val is not None else None
+
+
+async def _load_tours_for_group(
+    db: AsyncSession, season_id: int, tours: list[int], team_ids: list[int]
+) -> list[Game]:
+    """Load tour games scoped to group teams."""
+    result = await db.execute(
+        select(Game)
+        .where(
+            Game.season_id == season_id,
+            Game.tour.in_(tours),
+            Game.home_team_id.in_(team_ids),
+            Game.away_team_id.in_(team_ids),
+        )
+        .options(*_EAGER_OPTIONS)
+        .order_by(Game.date.asc(), Game.time.asc())
+    )
+    games = list(result.scalars().all())
+    if games:
+        await enrich_games_has_stats(db, games)
+    return games
+
+
+async def _rule0_first_upcoming_group(
+    db: AsyncSession,
+    season_id: int,
+    frontend_code: str,
+    lang: str,
+    team_ids: list[int],
+) -> HomeMatchesWidgetResponse:
+    """Rule 0 for group-scoped widget: first upcoming tour."""
+    result = await db.execute(
+        select(func.min(Game.tour)).where(
+            Game.season_id == season_id,
+            Game.tour.isnot(None),
+            Game.status.in_([GameStatus.created, GameStatus.live]),
+            Game.home_team_id.in_(team_ids),
+            Game.away_team_id.in_(team_ids),
+        )
+    )
+    first_tour = result.scalar()
+    if first_tour is None:
+        return _empty(frontend_code, season_id)
+    first_tour = int(first_tour)
+    games = await _load_tours_for_group(db, season_id, [first_tour], team_ids)
+    upcoming_groups = _group_widget_games(games, lang)
+    return HomeMatchesWidgetResponse(
+        frontend_code=frontend_code,
+        season_id=season_id,
+        selected_round=first_tour,
+        window_state="active_round",
+        default_tab="upcoming",
+        show_tabs=False,
+        groups=upcoming_groups,
+        finished_groups=[],
+        upcoming_groups=upcoming_groups,
+        completed_window_expires_at=None,
+    )
+
+
+async def _get_widget_group(
+    db: AsyncSession,
+    season_id: int,
+    frontend_code: str,
+    lang: str,
+    group: str,
+) -> HomeMatchesWidgetResponse:
+    """Home widget for a 2L group (A or B) — same 4-rule logic as PL, scoped to group teams."""
+    team_ids = await get_group_team_ids(db, season_id, group)
+    if not team_ids:
+        return _empty(frontend_code, season_id)
+
+    hint = await _played_round_hint_for_group(db, season_id, team_ids)
+    now = _now_almaty()
+
+    # Rule 0: no played round → first upcoming tour
+    if hint is None:
+        return await _rule0_first_upcoming_group(db, season_id, frontend_code, lang, team_ids)
+
+    # Load window [hint-1, hint, hint+1]
+    window = [t for t in (hint - 1, hint, hint + 1) if t > 0]
+    all_games = await _load_tours_for_group(db, season_id, window, team_ids)
+    by_tour: dict[int, list[Game]] = {}
+    for g in all_games:
+        if g.tour is not None:
+            by_tour.setdefault(g.tour, []).append(g)
+
+    hint_games = by_tour.get(hint, [])
+    previous_tour_games = by_tour.get(hint - 1, [])
+    next_tour = hint + 1
+    next_games = by_tour.get(next_tour, [])
+
+    # Rule 1: current tour is still ongoing
+    if hint_games and any(g.status not in TERMINAL_STATUSES for g in hint_games):
+        finished_groups = _group_widget_games(
+            previous_tour_games if _tour_is_fully_terminal(previous_tour_games) else [],
+            lang,
+        )
+        upcoming_groups = _group_widget_games(hint_games, lang)
+        return HomeMatchesWidgetResponse(
+            frontend_code=frontend_code,
+            season_id=season_id,
+            selected_round=hint,
+            window_state="active_round",
+            default_tab="upcoming",
+            show_tabs=bool(finished_groups) and bool(upcoming_groups),
+            groups=upcoming_groups or finished_groups,
+            finished_groups=finished_groups,
+            upcoming_groups=upcoming_groups,
+            completed_window_expires_at=None,
+        )
+
+    # Rule 2: current tour completed, next tour exists
+    completed_window_expires_at = _recent_completion_expires(hint_games, now)
+    if next_games:
+        finished_groups = _group_widget_games(
+            hint_games if _tour_is_fully_terminal(hint_games) else [],
+            lang,
+        )
+        upcoming_groups = _group_widget_games(next_games, lang)
+        in_completed_window = completed_window_expires_at is not None
+        return HomeMatchesWidgetResponse(
+            frontend_code=frontend_code,
+            season_id=season_id,
+            selected_round=hint if in_completed_window else next_tour,
+            window_state="completed_window" if in_completed_window else "active_round",
+            default_tab="finished" if in_completed_window else "upcoming",
+            show_tabs=bool(finished_groups) and bool(upcoming_groups),
+            groups=finished_groups if in_completed_window else (upcoming_groups or finished_groups),
+            finished_groups=finished_groups,
+            upcoming_groups=upcoming_groups,
+            completed_window_expires_at=completed_window_expires_at,
+        )
+
+    # Rule 3: no next tour yet, keep finished tour for 24h
+    if completed_window_expires_at is not None:
+        finished_groups = _group_widget_games(hint_games, lang)
+        return HomeMatchesWidgetResponse(
+            frontend_code=frontend_code,
+            season_id=season_id,
+            selected_round=hint,
+            window_state="completed_window",
+            default_tab="finished",
+            show_tabs=False,
+            groups=finished_groups,
+            finished_groups=finished_groups,
+            upcoming_groups=[],
+            completed_window_expires_at=completed_window_expires_at,
+        )
+
+    # Rule 4: fallback — latest games for this group
+    return _empty(frontend_code, season_id)
+
+
+# ── 2L final-stage widget ──────────────────────────────────────────
+
+
+async def _get_widget_final(
+    db: AsyncSession,
+    season_id: int,
+    frontend_code: str,
+    lang: str,
+) -> HomeMatchesWidgetResponse:
+    """Home widget for 2L final stage — status-based (no tours)."""
+    stage_ids = await get_final_stage_ids(db, season_id)
+    if not stage_ids:
+        return _empty(frontend_code, season_id)
+
+    result = await db.execute(
+        select(Game)
+        .where(Game.season_id == season_id, Game.stage_id.in_(stage_ids))
+        .options(*_EAGER_OPTIONS)
+        .order_by(Game.date.asc(), Game.time.asc())
+    )
+    games = list(result.scalars().all())
+    if not games:
+        return _empty(frontend_code, season_id)
+    await enrich_games_has_stats(db, games)
+
+    now = _now_almaty()
+    finished = _finished_games(games)
+    unfinished = _unfinished_games(games)
+
+    finished_groups = _group_widget_games(finished, lang)
+    upcoming_groups = _group_widget_games(unfinished, lang)
+
+    has_finished = bool(finished)
+    has_upcoming = bool(unfinished)
+    show_tabs = has_finished and has_upcoming
+
+    # 24h window: if all games finished, show "finished" for 24h
+    if has_finished and not has_upcoming:
+        completed_window_expires_at = _recent_completion_expires(games, now)
+        return HomeMatchesWidgetResponse(
+            frontend_code=frontend_code,
+            season_id=season_id,
+            selected_round=None,
+            window_state="completed_window" if completed_window_expires_at else "fallback",
+            default_tab="finished",
+            show_tabs=False,
+            groups=finished_groups,
+            finished_groups=finished_groups,
+            upcoming_groups=[],
+            completed_window_expires_at=completed_window_expires_at,
+        )
+
+    # Has live or upcoming games
+    if has_upcoming and not has_finished:
+        return HomeMatchesWidgetResponse(
+            frontend_code=frontend_code,
+            season_id=season_id,
+            selected_round=None,
+            window_state="active_round",
+            default_tab="upcoming",
+            show_tabs=False,
+            groups=upcoming_groups,
+            finished_groups=[],
+            upcoming_groups=upcoming_groups,
+            completed_window_expires_at=None,
+        )
+
+    # Mixed: check 24h window for recently finished
+    completed_window_expires_at = _recent_completion_expires(finished, now)
+    in_window = completed_window_expires_at is not None
+    return HomeMatchesWidgetResponse(
+        frontend_code=frontend_code,
+        season_id=season_id,
+        selected_round=None,
+        window_state="completed_window" if in_window else "active_round",
+        default_tab="finished" if in_window else "upcoming",
+        show_tabs=show_tabs,
+        groups=finished_groups if in_window else upcoming_groups,
+        finished_groups=finished_groups,
+        upcoming_groups=upcoming_groups,
+        completed_window_expires_at=completed_window_expires_at,
     )

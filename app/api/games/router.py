@@ -320,20 +320,21 @@ async def get_games(
 
 @router.get("/home-widget")
 async def home_widget(
-    frontend_code: str = Query(..., pattern="^(pl|1l|el)$"),
+    frontend_code: str = Query(..., pattern="^(pl|1l|el|2l)$"),
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
+    group: str | None = Query(default=None, pattern="^(A|B|final)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Home matches widget for tour-based leagues (pl, 1l, el)."""
+    """Home matches widget for tour-based leagues."""
     from app.utils.cache import cache_get, cache_set
     from app.services.home_matches import get_home_widget
 
-    cache_key = f"home_widget:{frontend_code}:{lang}"
+    cache_key = f"home_widget:{frontend_code}:{group or ''}:{lang}"
     cached = cache_get(cache_key)
     if cached is not None:
         return Response(content=cached, media_type="application/json")
 
-    result = await get_home_widget(db, frontend_code, lang)
+    result = await get_home_widget(db, frontend_code, lang, group=group)
     json_bytes = result.model_dump_json().encode()
 
     # TTL varies by window_state
