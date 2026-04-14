@@ -157,7 +157,22 @@ _FREE_ENTRY_EXCEPTIONS = [
 ]
 
 
-def _detect_free_entry(organic_results: list[dict], home_name: str) -> bool:
+def _snippet_mentions_date(text: str, game_date: date) -> bool:
+    """Check if snippet/title mentions the game date (day + month in any format)."""
+    day = str(game_date.day)
+    month_ru = _MONTHS_RU[game_date.month]
+    # "18 апреля", "18.04", "18/04"
+    month_num = f"{game_date.month:02d}"
+    if f"{day} {month_ru}" in text:
+        return True
+    if f"{day}.{month_num}" in text:
+        return True
+    if f"{day}/{month_num}" in text:
+        return True
+    return False
+
+
+def _detect_free_entry(organic_results: list[dict], home_name: str, game_date: date) -> bool:
     """Check if search results indicate free entry for the home team's match."""
     for result in organic_results:
         title = result.get("title", "")
@@ -165,6 +180,9 @@ def _detect_free_entry(organic_results: list[dict], home_name: str) -> bool:
         text = f"{title} {snippet}".lower()
         # Only consider results that mention the home team
         if not _team_matches_text(home_name, text):
+            continue
+        # Must mention the correct date to avoid old results
+        if not _snippet_mentions_date(text, game_date):
             continue
         for phrase in _FREE_ENTRY_PHRASES:
             if phrase in text:
@@ -462,7 +480,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                 all_organic = organic + ig_organic
 
                 # Check for free entry in all results
-                is_free = _detect_free_entry(all_organic, home_team.name)
+                is_free = _detect_free_entry(all_organic, home_team.name, game.date)
 
                 # If search didn't detect free entry, check home team's website
                 if not is_free and home_team.website:
