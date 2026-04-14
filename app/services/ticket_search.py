@@ -19,21 +19,17 @@ from app.models.season import Season
 from app.services.telegram import send_telegram_message
 from app.utils.timestamps import ensure_utc, utcnow
 
-# Only search tickets for these championships (Premier League, First League, Cup)
-_TICKET_CHAMPIONSHIP_IDS = {1, 2, 3}
+# Only search tickets for these championships (Premier League, Cup)
+_TICKET_CHAMPIONSHIP_IDS = {1, 3}
 
 logger = logging.getLogger(__name__)
 
 # Prioritized ticket platform domains
 TICKET_DOMAINS = [
     "ticketon.kz",
-    "sxodim.com",
-    "portalbilet.kz",
-    "shop.kaspi.kz",
-    "iticket.kz",
     "zakazbiletov.kz",
-    "kino.kz",
     "afisha.yandex.kz",
+    "kino.kz",
 ]
 
 # Generic paths that don't point to a specific event — reject these
@@ -270,10 +266,6 @@ def _extract_ticket_url(
                     continue
                 if not _team_matches_text(away_name, unquote(path)):
                     continue
-            # sxodim.com: reject /tag/ pages (club listings, not events)
-            if hostname == "sxodim.com" or hostname.endswith(".sxodim.com"):
-                if "/tag/" in path:
-                    continue
             # Check domain allowlist
             domain_ok = False
             for domain in TICKET_DOMAINS:
@@ -421,16 +413,14 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
         return {"skipped": True, "reason": "serper_api_key not set"}
 
     today = date.today()
-    cutoff = today + timedelta(days=10)
-    three_hours_ago = utcnow() - timedelta(hours=3)
+    search_dates = {today + timedelta(days=5), today + timedelta(days=3)}
 
     result = await db.execute(
         select(Game)
         .join(Season, Game.season_id == Season.id)
         .options(selectinload(Game.home_team), selectinload(Game.away_team))
         .where(
-            Game.date >= today,
-            Game.date <= cutoff,
+            Game.date.in_(search_dates),
             Game.status == GameStatus.created,
             Game.ticket_url.is_(None),
             Game.is_free_entry.is_(False),
@@ -449,7 +439,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
         for game in games:
             # Skip if recently searched
             fetched_at = ensure_utc(game.ticket_url_fetched_at)
-            if fetched_at and fetched_at > three_hours_ago:
+            if fetched_at and fetched_at.date() == today:
                 skipped += 1
                 continue
 
