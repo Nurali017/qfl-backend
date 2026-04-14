@@ -190,6 +190,24 @@ class FcmsClient:
             raise
         return None
 
+    async def get_match_events(self, match_id: int) -> list[dict]:
+        """Get match events (goals, cards, substitutions)."""
+        resp = await self._request(
+            "GET",
+            f"/v1/matches/{match_id}/matchEvents",
+            params={"limit": 200},
+        )
+        return resp.json().get("_embedded", {}).get("matchEvents", [])
+
+    async def get_match_players(self, match_id: int, competitor_id: int) -> list[dict]:
+        """Get match player list for a competitor (maps matchPlayerId → player details)."""
+        resp = await self._request(
+            "GET",
+            f"/v1/matches/{match_id}/competitors/{competitor_id}/matchPlayers",
+            params={"limit": 100},
+        )
+        return resp.json().get("_embedded", {}).get("matchPlayers", [])
+
     async def list_matches(
         self,
         group_id: int,
