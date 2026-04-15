@@ -57,8 +57,8 @@ async def get_home_widget(
 
     season_id = season.id
 
-    # 2L: dispatch to group-specific or final logic
-    if frontend_code == "2l" and group:
+    # Group-based leagues (2L, Women's League): dispatch to group-specific or final logic
+    if group:
         if group == "final":
             return await _get_widget_final(db, season_id, frontend_code, lang)
         return await _get_widget_group(db, season_id, frontend_code, lang, group)
