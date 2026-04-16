@@ -297,6 +297,15 @@ async def _find_matching_game(
         # Add compact versions for matching "кызыл жар" ↔ "кызылжар"
         all_home |= {n.replace(" ", "") for n in all_home}
         all_away |= {n.replace(" ", "") for n in all_away}
+        # Add abbreviation aliases: "каират жастар" → "каират ж"
+        # YouTube titles often abbreviate team suffixes (e.g. "ҚАЙРАТ Ж" for "Қайрат-Жастар")
+        for names_set in (all_home, all_away):
+            abbrevs: set[str] = set()
+            for n in names_set:
+                tokens = n.split()
+                if len(tokens) >= 2 and len(tokens[-1]) > 1:
+                    abbrevs.add(" ".join(tokens[:-1]) + " " + tokens[-1][0])
+            names_set |= abbrevs
 
         # Match in either order (home-away or away-home)
         # Also try word-set matching for reversed word order
