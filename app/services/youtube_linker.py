@@ -8,15 +8,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.models.game import Game
+from app.models.game import Game, GameStatus
 from app.models.game_broadcaster import GameBroadcaster
 from app.models.broadcaster import Broadcaster
-from app.models.media_video import MediaVideo
 from app.services.season_visibility import get_current_season_id
 from app.models import Season
 from app.utils.live_flag import get_redis
@@ -32,6 +31,12 @@ _TOUR_BEFORE_RE = re.compile(r"([IVXLC]+)\s*[-–—]?\s*(?:тур|tour|тұр)"
 _TEAM_SPLIT_RE = re.compile(r"\s+[-–—vs]+\s+", re.IGNORECASE)
 # "ҚПЛ - 2026" or "ПФЛ - 2026" — league + year, not teams
 _LEAGUE_YEAR_RE = re.compile(r"^[\w]{2,5}\s*[-–—]\s*\d{4}$", re.UNICODE)
+# Cup/league/round patterns to strip from candidate team segments
+_CUP_LEAGUE_SUFFIX_RE = re.compile(
+    r"\s+(?:(?:OLIMPBET\s+)?(?:ҚАЗАҚСТАН|КАЗАХСТАН)\s+)?(?:КУБОГЫ|КУБОК|ЛИГА|ПРЕМЬЕР|БІРІНШІ).*$",
+    re.IGNORECASE,
+)
+_ROUND_RE = re.compile(r"^\d+/\d+\s+\w+$", re.UNICODE)  # "1/16 ФИНАЛ"
 
 _ROMAN_MAP = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
 
@@ -60,6 +65,124 @@ class ParsedTitle:
     team_a: str
     team_b: str
     tour: int | None
+
+
+@dataclass(slots=True)
+class _PendingEntry:
+    game: object  # Game ORM instance or mock
+    home_names: set[str]
+    away_names: set[str]
+    needs_live: bool
+    needs_review: bool
+
+
+@dataclass(slots=True)
+class PendingGameIndex:
+    """Pre-built index of games needing video links.
+
+    Built once per cycle from pending games. Replaces per-video DB queries
+    with O(N) in-memory matching over a small set of pending games.
+    """
+    _entries: list[_PendingEntry]
+
+    @classmethod
+    def build(cls, games: list) -> "PendingGameIndex":
+        entries: list[_PendingEntry] = []
+        for game in games:
+            home_names = _collect_team_names(game.home_team)
+            away_names = _collect_team_names(game.away_team)
+
+            # Expand with fc/фк stripped variants
+            for names_set in (home_names, away_names):
+                extra = {
+                    normalize_team_name(n.replace("фк ", "").replace("fc ", ""))
+                    for n in names_set if " " in n
+                }
+                names_set |= extra
+                # Compact forms (remove spaces): "кызыл жар" → "кызылжар"
+                names_set |= {n.replace(" ", "") for n in names_set}
+                # Abbreviation aliases: "каират жастар" → "каират ж"
+                abbrevs: set[str] = set()
+                for n in list(names_set):
+                    tokens = n.split()
+                    if len(tokens) >= 2 and len(tokens[-1]) > 1:
+                        abbrevs.add(" ".join(tokens[:-1]) + " " + tokens[-1][0])
+                names_set |= abbrevs
+
+            entries.append(_PendingEntry(
+                game=game,
+                home_names=home_names,
+                away_names=away_names,
+                needs_live=game.youtube_live_url is None,
+                needs_review=game.video_review_url is None,
+            ))
+        return cls(_entries=entries)
+
+    def find_match(
+        self, parsed: ParsedTitle, match_date: date, video_type: str,
+    ) -> object | None:
+        """Find a matching game for the parsed video title."""
+        tolerance = 2 if video_type == "review" else 1
+        date_from = match_date - timedelta(days=tolerance)
+        date_to = match_date + timedelta(days=tolerance)
+
+        norm_a = normalize_team_name(parsed.team_a)
+        norm_b = normalize_team_name(parsed.team_b)
+        compact_a = norm_a.replace(" ", "")
+        compact_b = norm_b.replace(" ", "")
+
+        candidates: list[_PendingEntry] = []
+        for entry in self._entries:
+            # Date check
+            if not (date_from <= entry.game.date <= date_to):
+                continue
+
+            # Needs-type check
+            if video_type in ("live", "replay") and not entry.needs_live:
+                continue
+            if video_type == "review" and not entry.needs_review:
+                continue
+
+            # Team name matching
+            def _matches(a: str, ca: str, names: set[str]) -> bool:
+                if a in names or ca in names:
+                    return True
+                a_words = frozenset(a.split())
+                if len(a_words) >= 2:
+                    return any(frozenset(n.split()) == a_words for n in names)
+                return False
+
+            match_fwd = (
+                _matches(norm_a, compact_a, entry.home_names)
+                and _matches(norm_b, compact_b, entry.away_names)
+            )
+            match_rev = (
+                _matches(norm_a, compact_a, entry.away_names)
+                and _matches(norm_b, compact_b, entry.home_names)
+            )
+            if match_fwd or match_rev:
+                candidates.append(entry)
+
+        if not candidates:
+            return None
+
+        # Tour disambiguation
+        if parsed.tour is not None and len(candidates) > 1:
+            tour_matched = [e for e in candidates if e.game.tour == parsed.tour]
+            if len(tour_matched) == 1:
+                return tour_matched[0].game
+
+        if len(candidates) == 1:
+            return candidates[0].game
+
+        if len(candidates) > 1:
+            logger.warning(
+                "Ambiguous match for '%s vs %s' (date=%s): %d candidates [%s]",
+                parsed.team_a, parsed.team_b, match_date,
+                len(candidates),
+                ", ".join(str(e.game.id) for e in candidates),
+            )
+        return None
 
 
 async def _get_uploads_playlist_id(channel_id: str, api_key: str) -> str:
@@ -187,6 +310,7 @@ def parse_video_title(title: str) -> ParsedTitle | None:
 
     tour: int | None = None
     teams_segment: str | None = None
+    candidate_teams: list[str] = []
 
     for seg in segments:
         # Check for tour number
@@ -214,21 +338,27 @@ def parse_video_title(title: str) -> ParsedTitle | None:
             teams_segment = seg
             continue
 
-    if not teams_segment:
-        return None
+        # Collect unclassified segments as candidate team names
+        # (for pipe-separated formats like "Шолу | Team A | Team B LEAGUE")
+        if not _ROUND_RE.match(seg):
+            candidate = _CUP_LEAGUE_SUFFIX_RE.sub("", seg).strip()
+            if candidate:
+                candidate_teams.append(candidate)
 
-    # Split teams
-    parts = _TEAM_SPLIT_RE.split(teams_segment, maxsplit=1)
-    if len(parts) != 2:
-        return None
+    # Primary: split by team separator within one segment
+    if teams_segment:
+        parts = _TEAM_SPLIT_RE.split(teams_segment, maxsplit=1)
+        if len(parts) == 2:
+            team_a = parts[0].strip()
+            team_b = parts[1].strip()
+            if team_a and team_b:
+                return ParsedTitle(team_a=team_a, team_b=team_b, tour=tour)
 
-    team_a = parts[0].strip()
-    team_b = parts[1].strip()
+    # Fallback: pipe-separated team names in consecutive segments
+    if len(candidate_teams) >= 2:
+        return ParsedTitle(team_a=candidate_teams[0], team_b=candidate_teams[1], tour=tour)
 
-    if not team_a or not team_b:
-        return None
-
-    return ParsedTitle(team_a=team_a, team_b=team_b, tour=tour)
+    return None
 
 
 def _get_match_date(
@@ -251,106 +381,13 @@ def _get_match_date(
     return None
 
 
-async def _find_matching_game(
-    parsed: ParsedTitle,
-    match_date: date,
-    video_type: str,
-    db: AsyncSession,
-    season_ids: list[int],
-) -> Game | None:
-    """Find a game matching the parsed title and date.
-
-    Searches across all provided season IDs.
-    Returns None if no match or ambiguous (multiple matches).
-    """
-    # Date tolerance: ±1 day for live/replay, ±2 days for review
-    tolerance = 2 if video_type == "review" else 1
-    date_from = match_date - timedelta(days=tolerance)
-    date_to = match_date + timedelta(days=tolerance)
-
-    result = await db.execute(
-        select(Game)
-        .options(selectinload(Game.home_team), selectinload(Game.away_team))
-        .where(
-            Game.season_id.in_(season_ids),
-            Game.date >= date_from,
-            Game.date <= date_to,
-        )
-    )
-    games = result.scalars().all()
-
-    if not games:
-        return None
-
-    norm_a = normalize_team_name(parsed.team_a)
-    norm_b = normalize_team_name(parsed.team_b)
-    # Compact versions: "кызыл жар" → "кызылжар" for hyphenated names
-    compact_a = norm_a.replace(" ", "")
-    compact_b = norm_b.replace(" ", "")
-
-    candidates: list[Game] = []
-    for game in games:
-        home_names = _collect_team_names(game.home_team)
-        away_names = _collect_team_names(game.away_team)
-        all_home = home_names | {normalize_team_name(n.replace("фк ", "").replace("fc ", "")) for n in home_names if " " in n}
-        all_away = away_names | {normalize_team_name(n.replace("фк ", "").replace("fc ", "")) for n in away_names if " " in n}
-        # Add compact versions for matching "кызыл жар" ↔ "кызылжар"
-        all_home |= {n.replace(" ", "") for n in all_home}
-        all_away |= {n.replace(" ", "") for n in all_away}
-        # Add abbreviation aliases: "каират жастар" → "каират ж"
-        # YouTube titles often abbreviate team suffixes (e.g. "ҚАЙРАТ Ж" for "Қайрат-Жастар")
-        for names_set in (all_home, all_away):
-            abbrevs: set[str] = set()
-            for n in names_set:
-                tokens = n.split()
-                if len(tokens) >= 2 and len(tokens[-1]) > 1:
-                    abbrevs.add(" ".join(tokens[:-1]) + " " + tokens[-1][0])
-            names_set |= abbrevs
-
-        # Match in either order (home-away or away-home)
-        # Also try word-set matching for reversed word order
-        # e.g. "онтустик академия" ↔ "академия онтустик"
-        def _matches(a: str, ca: str, names: set[str]) -> bool:
-            if a in names or ca in names:
-                return True
-            a_words = frozenset(a.split())
-            if len(a_words) >= 2:
-                return any(frozenset(n.split()) == a_words for n in names)
-            return False
-
-        match_forward = (_matches(norm_a, compact_a, all_home) and _matches(norm_b, compact_b, all_away))
-        match_reverse = (_matches(norm_a, compact_a, all_away) and _matches(norm_b, compact_b, all_home))
-
-        if match_forward or match_reverse:
-            # If tour is specified, verify it matches
-            if parsed.tour is not None and game.tour is not None:
-                if game.tour != parsed.tour:
-                    continue
-            candidates.append(game)
-
-    if len(candidates) == 1:
-        return candidates[0]
-
-    if len(candidates) > 1:
-        logger.warning(
-            "Ambiguous match for '%s vs %s' (date=%s): %d candidates [%s]",
-            parsed.team_a, parsed.team_b, match_date,
-            len(candidates),
-            ", ".join(str(g.id) for g in candidates),
-        )
-    return None
-
-
 def _url_fields_for_type(video_type: str) -> list[str]:
     """Map video type to Game URL field names.
 
-    Replay (completed broadcast) sets both video_url and youtube_live_url
-    because the recording IS the live stream.
+    Only auto-links youtube_live_url and video_review_url.
     """
-    if video_type == "live":
+    if video_type in ("live", "replay"):
         return ["youtube_live_url"]
-    if video_type == "replay":
-        return ["video_url", "youtube_live_url"]
     if video_type == "review":
         return ["video_review_url"]
     return []
@@ -370,20 +407,36 @@ async def _ensure_broadcaster_linked(
         db.add(GameBroadcaster(game_id=game_id, broadcaster_id=broadcaster_id))
 
 
-async def _ensure_media_video(db: AsyncSession, video_id: str, title: str) -> None:
-    """Add MediaVideo row if youtube_id not already present."""
-    existing = await db.execute(
-        select(MediaVideo.id).where(MediaVideo.youtube_id == video_id)
+async def _find_games_needing_videos(
+    db: AsyncSession, season_ids: list[int],
+) -> list[Game]:
+    """Find games that still need video URLs within the active window.
+
+    Window: today-3..today+7 (covers 48h post-match for reviews,
+    12h pre-match for live streams, with date-level granularity).
+    """
+    if not season_ids:
+        return []
+    today = date.today()
+    result = await db.execute(
+        select(Game)
+        .options(selectinload(Game.home_team), selectinload(Game.away_team))
+        .where(
+            Game.season_id.in_(season_ids),
+            Game.status.not_in([
+                GameStatus.postponed,
+                GameStatus.cancelled,
+                GameStatus.technical_defeat,
+            ]),
+            Game.date >= today - timedelta(days=3),
+            Game.date <= today + timedelta(days=7),
+            or_(
+                Game.youtube_live_url.is_(None),
+                Game.video_review_url.is_(None),
+            ),
+        )
     )
-    if existing.scalar_one_or_none():
-        return
-    # Get lowest sort_order to place new video on top
-    min_order = await db.execute(
-        select(MediaVideo.sort_order).order_by(MediaVideo.sort_order).limit(1)
-    )
-    top_order = (min_order.scalar() or 0) - 1
-    db.add(MediaVideo(title=title, youtube_id=video_id, sort_order=top_order))
-    logger.info("Added MediaVideo: %s (%s)", title, video_id)
+    return list(result.scalars().all())
 
 
 async def _get_kff_broadcaster_id(db: AsyncSession) -> int | None:
@@ -425,9 +478,11 @@ async def _fetch_videos_from_channel(
 
 
 async def link_youtube_videos(db: AsyncSession) -> dict:
-    """Main orchestrator: fetch recent videos, classify, match, and link.
+    """Main orchestrator: game-first approach.
 
-    Checks the primary channel first, then any reserve channels.
+    1. Query DB for games needing videos (early exit if none)
+    2. Build PendingGameIndex from those games
+    3. Fetch YouTube videos and match against the index
     """
     settings = get_settings()
     api_key = settings.youtube_api_key
@@ -445,7 +500,10 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
     channel_ids = [channel_id] + reserve_ids
 
     redis = await get_redis()
-    stats = {"processed": 0, "linked": 0, "skipped": 0, "retry": 0, "errors": 0, "channels_checked": 0}
+    stats = {
+        "processed": 0, "linked": 0, "skipped": 0, "retry": 0,
+        "errors": 0, "channels_checked": 0, "pending_games": 0,
+    }
 
     try:
         # Get all current season IDs (multiple leagues can be active)
@@ -455,6 +513,15 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
         season_ids = [row[0] for row in season_result.all()]
         if not season_ids:
             season_ids = [await get_current_season_id(db)]
+
+        # ── GAME-FIRST: early exit if no games need videos ──
+        pending_games = await _find_games_needing_videos(db, season_ids)
+        stats["pending_games"] = len(pending_games)
+        if not pending_games:
+            logger.info("No games needing videos, skipping YouTube fetch")
+            return stats
+
+        index = PendingGameIndex.build(pending_games)
 
         # Get KFF broadcaster ID for linking
         broadcaster_id = await _get_kff_broadcaster_id(db)
@@ -513,8 +580,8 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
                     stats["retry"] += 1
                     continue
 
-                # Find matching game
-                game = await _find_matching_game(parsed, match_date, video_type, db, season_ids)
+                # Find matching game via pre-built index
+                game = index.find_match(parsed, match_date, video_type)
                 if game is None:
                     logger.info("No match found for: %s (date=%s)", title, match_date)
                     await redis.set(f"yt:retry:{vid}", "1", ex=7200)
