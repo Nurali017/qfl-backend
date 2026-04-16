@@ -44,7 +44,7 @@ class GameBase(BaseModel):
     is_technical: bool = False
     is_schedule_tentative: bool = False
     visitors: int | None = None
-    video_url: str | None = None
+    video_review_url: str | None = None
     protocol_url: str | None = None
 
 
@@ -170,8 +170,8 @@ class MatchCenterGame(BaseModel):
     ticket_url: str | None = None
     is_free_entry: bool = False
 
-    # Optional video replay URL
-    video_url: str | None = None
+    # Optional video review URL
+    video_review_url: str | None = None
 
     # Optional YouTube live stream URL
     youtube_live_url: str | None = None
@@ -230,7 +230,7 @@ class GameListItem(BaseModel):
     half: Optional[int] = None
     ticket_url: str | None = None
     is_free_entry: bool = False
-    video_url: str | None = None
+    video_review_url: str | None = None
     youtube_live_url: str | None = None
     protocol_url: str | None = None
     where_broadcast: str | None = None
@@ -271,7 +271,7 @@ class GameDetailItem(BaseModel):
     visitors: int | None = None
     ticket_url: str | None = None
     is_free_entry: bool = False
-    video_url: str | None = None
+    video_review_url: str | None = None
     youtube_live_url: str | None = None
     protocol_url: str | None = None
     where_broadcast: str | None = None

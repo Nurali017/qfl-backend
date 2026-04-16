@@ -143,7 +143,7 @@ def group_games_by_date(
                 has_score=game.home_score is not None and game.away_score is not None,
                 ticket_url=getattr(game, "ticket_url", None),
                 is_free_entry=game.is_free_entry,
-                video_url=game.video_url,
+                video_review_url=game.video_review_url,
                 youtube_live_url=game.youtube_live_url,
                 protocol_url=game.protocol_url,
                 home_team=_build_team(game.home_team, lang),

@@ -92,7 +92,6 @@ class Game(Base):
     is_free_entry: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
-    video_url: Mapped[str | None] = mapped_column(String(500))  # URL for video replay
     youtube_live_url: Mapped[str | None] = mapped_column(String(500))  # YouTube live stream URL
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
     protocol_pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # SHA-256 for change detection
@@ -124,7 +123,7 @@ class Game(Base):
 
     # Broadcast fields (В-1)
     where_broadcast: Mapped[str | None] = mapped_column(String(500))  # Where to watch
-    video_review_url: Mapped[str | None] = mapped_column(String(500))  # Video review URL
+    video_review_url: Mapped[str | None] = mapped_column(String(500))  # YouTube review/replay URL
 
     # Weather data (fetched from OpenWeatherMap)
     weather_temp: Mapped[int | None] = mapped_column(Integer)

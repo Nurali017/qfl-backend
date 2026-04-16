@@ -39,10 +39,9 @@ class AdminGameResponse(BaseModel):
     stadium_name: Optional[str] = None
     visitors: Optional[int] = None
     ticket_url: Optional[str] = None
-    video_url: Optional[str] = None
+    video_review_url: Optional[str] = None
     youtube_live_url: Optional[str] = None
     where_broadcast: Optional[str] = None
-    video_review_url: Optional[str] = None
     protocol_url: Optional[str] = None
     home_formation: Optional[str] = None
     away_formation: Optional[str] = None
@@ -68,10 +67,9 @@ class AdminGameUpdateRequest(BaseModel):
     stadium_id: Optional[int] = None
     visitors: Optional[int] = None
     ticket_url: Optional[str] = None
-    video_url: Optional[str] = None
+    video_review_url: Optional[str] = None
     youtube_live_url: Optional[str] = None
     where_broadcast: Optional[str] = None
-    video_review_url: Optional[str] = None
     protocol_url: Optional[str] = None
     is_featured: Optional[bool] = None
     is_free_entry: Optional[bool] = None
