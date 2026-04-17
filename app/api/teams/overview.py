@@ -485,6 +485,7 @@ async def get_team_overview(
             photo_url=ct.photo_url,
             role=role_text,
             country_name=get_localized_name(p.country, lang) if p.country else None,
+            country_code=p.country.code if p.country else None,
         ))
 
     overview_team = TeamOverviewTeam(

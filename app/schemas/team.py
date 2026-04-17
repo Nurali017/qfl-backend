@@ -401,6 +401,7 @@ class TeamOverviewCoachPreview(BaseModel):
     photo_url: str | None = None
     role: str
     country_name: str | None = None
+    country_code: str | None = None
 
 
 class TeamOverviewResponse(BaseModel):
