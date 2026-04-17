@@ -32,6 +32,25 @@ COMP_NAMES = {
     3598: "Кубок РК 2026",
 }
 
+# FCMS playerPositionId → (position_ru, position_kz, position_en)
+# Source: GET /v1/playerPositions (sportId=2 = football)
+_FCMS_POSITION_MAP: dict[int, tuple[str, str, str]] = {
+    117: ("Вратарь", "Қақпашы", "Goalkeeper"),
+    118: ("Защитник", "Қорғаушы", "Defender"),
+    119: ("Полузащитник", "Жартылай қорғаушы", "Midfielder"),
+    120: ("Нападающий", "Шабуылшы", "Forward"),
+}
+
+
+def _resolve_position(fcms_position_id: int | None) -> tuple[str, str, str] | None:
+    """Map FCMS playerPositionId → (position_ru, position_kz, position_en) or None."""
+    if fcms_position_id is None:
+        return None
+    mapped = _FCMS_POSITION_MAP.get(fcms_position_id)
+    if mapped is None:
+        logger.warning("Unknown FCMS playerPositionId=%d", fcms_position_id)
+    return mapped
+
 
 def _name_key(ln: str | None, fn: str | None):
     if ln and fn:
@@ -237,6 +256,9 @@ class FcmsRosterSyncService:
             country_iso2 = citizenships[0].get("iso2") if citizenships else None
             country_id = await self._resolve_country(country_iso2) if country_iso2 else None
 
+            # Extract player position (FCMS may return null for young/new players)
+            position = _resolve_position(fp.get("playerPositionId"))
+
             # Step 0: no jersey number = deregistered → hide from roster
             if num is None:
                 match, method = self._find_in_roster(
@@ -394,6 +416,14 @@ class FcmsRosterSyncService:
                     player_updates.append(f"номер: {pt.number} → {num}")
                     pt.number = num
 
+                if position:
+                    pos_ru, pos_kz, pos_en = position
+                    if pt.position_ru != pos_ru:
+                        player_updates.append(f"позиция: {pt.position_ru or '—'} → {pos_ru}")
+                        pt.position_ru = pos_ru
+                        pt.position_kz = pos_kz
+                        pt.position_en = pos_en
+
                 if player_updates:
                     existing = [u for u in changes["auto_updates"] if u.get("name") == fcms_name]
                     if existing:
@@ -435,15 +465,18 @@ class FcmsRosterSyncService:
                 self.db.add(lp)
                 await self.db.flush()
 
-                pt = PlayerTeam(
-                    player_id=lp.id,
-                    team_id=team.id,
-                    season_id=season_id,
-                    number=num,
-                    role=1,
-                    is_active=True,
-                    is_hidden=False,
-                )
+                pt_kwargs: dict = {
+                    "player_id": lp.id,
+                    "team_id": team.id,
+                    "season_id": season_id,
+                    "number": num,
+                    "role": 1,
+                    "is_active": True,
+                    "is_hidden": False,
+                }
+                if position:
+                    pt_kwargs["position_ru"], pt_kwargs["position_kz"], pt_kwargs["position_en"] = position
+                pt = PlayerTeam(**pt_kwargs)
                 self.db.add(pt)
                 await self.db.flush()
 
