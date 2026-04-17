@@ -21,6 +21,7 @@ from app.models.news import NewsTeam
 from app.schemas.news import NewsListItem
 from app.schemas.game import TeamGameItem
 from app.schemas.team import (
+    TeamDefaultSeasonResponse,
     TeamDetailResponse,
     TeamListResponse,
     TeamSeasonEntry,
@@ -29,6 +30,7 @@ from app.schemas.team import (
     TeamWithScore,
 )
 from app.models import Championship
+from app.services.default_season import pick_default_season
 from app.services.season_participants import resolve_season_participants
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause, resolve_visible_season_id
 from app.services.team_overview import _extract_year
@@ -169,6 +171,44 @@ async def get_team_seasons(
         )
 
     return TeamSeasonsResponse(items=items, total=len(items))
+
+
+@router.get("/{team_id}/seasons/default", response_model=TeamDefaultSeasonResponse)
+async def get_team_default_season(
+    team_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the team's default season — newest year, priority pl > 1l > 2l > el > cup."""
+    season_ids_subq = (
+        select(Game.season_id)
+        .where(or_(Game.home_team_id == team_id, Game.away_team_id == team_id))
+        .distinct()
+        .subquery()
+    )
+    result = await db.execute(
+        select(Season.id, Season.frontend_code, Season.date_start)
+        .where(
+            Season.id.in_(select(season_ids_subq.c.season_id)),
+            is_season_visible_clause(),
+        )
+    )
+    rows = result.all()
+    entries = [
+        (sid, date_start.year if date_start else None, code)
+        for sid, code, date_start in rows
+    ]
+    season_id = pick_default_season(entries)
+    if season_id is None:
+        return TeamDefaultSeasonResponse()
+
+    picked = next((row for row in rows if row[0] == season_id), None)
+    frontend_code = picked[1] if picked else None
+    season_year = picked[2].year if picked and picked[2] else None
+    return TeamDefaultSeasonResponse(
+        season_id=season_id,
+        frontend_code=frontend_code,
+        season_year=season_year,
+    )
 
 
 @router.get("/{team_id}/players")

@@ -22,6 +22,7 @@ from app.schemas.player import (
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.team import TeamInGame
 from app.models.game_lineup import GameLineup, LineupType
+from app.services.default_season import pick_default_season
 from app.services.season_visibility import ensure_visible_season_or_404, resolve_visible_season_id
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.numbers import sanitize_non_finite_numbers
@@ -609,6 +610,8 @@ async def get_player_tournament_history(
                 season_id=stat.season_id,
                 season_name=season_name,
                 championship_name=championship_name,
+                frontend_code=season.frontend_code,
+                season_year=season.date_start.year if season.date_start else None,
                 team_id=stat.team_id,
                 team_name=team_name,
                 position=None,
@@ -681,6 +684,8 @@ async def get_player_tournament_history(
                 season_id=pt.season_id,
                 season_name=season_name,
                 championship_name=championship_name,
+                frontend_code=season.frontend_code,
+                season_year=season.date_start.year if season.date_start else None,
                 team_id=pt.team_id,
                 team_name=team_name,
                 position=None,
@@ -690,4 +695,12 @@ async def get_player_tournament_history(
     # Sort by season_id descending
     items.sort(key=lambda x: x.season_id, reverse=True)
 
-    return PlayerTournamentHistoryResponse(items=items, total=len(items))
+    default_season_id = pick_default_season(
+        (it.season_id, it.season_year, it.frontend_code) for it in items
+    )
+
+    return PlayerTournamentHistoryResponse(
+        items=items,
+        total=len(items),
+        default_season_id=default_season_id,
+    )

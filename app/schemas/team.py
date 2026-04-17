@@ -427,3 +427,9 @@ class TeamSeasonEntry(BaseModel):
 class TeamSeasonsResponse(BaseModel):
     items: list[TeamSeasonEntry]
     total: int
+
+
+class TeamDefaultSeasonResponse(BaseModel):
+    season_id: int | None = None
+    frontend_code: str | None = None
+    season_year: int | None = None
