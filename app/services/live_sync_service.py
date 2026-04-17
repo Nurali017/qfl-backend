@@ -43,6 +43,19 @@ ACTION_TYPE_MAP = {
 logger = logging.getLogger(__name__)
 
 
+def _normalize_name(value: str | None) -> str:
+    return (value or "").strip().casefold()
+
+
+def _last_names_match(sota_last_name: str | None, player: Player) -> bool:
+    """True if SOTA last_name matches any of the player's last_name variants."""
+    target = _normalize_name(sota_last_name)
+    if not target:
+        return False
+    candidates = (player.last_name, player.last_name_kz, player.last_name_en)
+    return any(_normalize_name(c) == target for c in candidates)
+
+
 class LiveSyncService:
     """Service for syncing live match data from SOTA /em/ endpoints."""
 
@@ -458,6 +471,10 @@ class LiveSyncService:
         # когда имена не совпадают (разная транслитерация FCMS vs SOTA).
         # Исключаем is_hidden контракты: после смены игрока под тем же номером
         # старый контракт может быть is_active=True, is_hidden=True — не линковать на него.
+        #
+        # Разрешаем перезапись существующего sota_id, если фамилия из SOTA
+        # совпадает с last_name/last_name_kz/last_name_en у игрока — SOTA
+        # периодически меняет UUID игроков (дубликаты на их стороне).
         if shirt_number and team_id and season_id:
             result = await self.db.execute(
                 select(Player)
@@ -468,18 +485,29 @@ class LiveSyncService:
                     PlayerTeam.number == shirt_number,
                     PlayerTeam.is_active == True,  # noqa: E712
                     PlayerTeam.is_hidden == False,  # noqa: E712
-                    Player.sota_id.is_(None),
                 )
             )
-            existing = result.scalar_one_or_none()
+            existing = result.scalars().first()
             if existing is not None:
-                existing.sota_id = sota_id
-                await self.db.flush()
-                logger.info(
-                    "Linked sota_id to existing player %s (id=%s) by shirt number %s",
-                    f"{existing.first_name} {existing.last_name}", existing.id, shirt_number,
-                )
-                return existing.id
+                if existing.sota_id is None:
+                    existing.sota_id = sota_id
+                    await self.db.flush()
+                    logger.info(
+                        "Linked sota_id to existing player %s (id=%s) by shirt number %s",
+                        f"{existing.first_name} {existing.last_name}", existing.id, shirt_number,
+                    )
+                    return existing.id
+                if existing.sota_id != sota_id and _last_names_match(last_name, existing):
+                    old_sota_id = existing.sota_id
+                    existing.sota_id = sota_id
+                    await self.db.flush()
+                    logger.warning(
+                        "Rewrote sota_id for player %s (id=%s): %s → %s "
+                        "(matched by team=%s season=%s number=%s + last_name)",
+                        f"{existing.first_name} {existing.last_name}", existing.id,
+                        old_sota_id, sota_id, team_id, season_id, shirt_number,
+                    )
+                    return existing.id
 
         # Unknown player — notify via Telegram (deduplicated by Redis)
         try:
