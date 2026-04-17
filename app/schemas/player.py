@@ -227,6 +227,8 @@ class PlayerTournamentHistoryEntry(BaseModel):
     season_id: int
     season_name: str | None = None
     championship_name: str | None = None
+    frontend_code: str | None = None
+    season_year: int | None = None
     team_id: int | None = None
     team_name: str | None = None
     position: str | None = None
@@ -261,6 +263,7 @@ class PlayerTournamentHistoryResponse(BaseModel):
 
     items: list[PlayerTournamentHistoryEntry]
     total: int
+    default_season_id: int | None = None
 
 
 class PlayerMatchHistoryTeam(BaseModel):
