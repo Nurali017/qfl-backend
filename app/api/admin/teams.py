@@ -35,6 +35,8 @@ def _team_detail_dict(team: Team) -> dict:
         "secondary_color": team.secondary_color,
         "accent_color": team.accent_color,
         "logo_url": team.logo_url,
+        "founded_year": team.club.founded_year if team.club else None,
+        "has_club": team.club is not None,
     }
 
 
@@ -69,7 +71,9 @@ async def get_team(
 ):
     """Get full team details."""
     result = await db.execute(
-        select(Team).options(selectinload(Team.stadium)).where(Team.id == team_id)
+        select(Team)
+        .options(selectinload(Team.stadium), selectinload(Team.club))
+        .where(Team.id == team_id)
     )
     team = result.scalar_one_or_none()
     if not team:
@@ -85,20 +89,38 @@ async def update_team(
     _admin: AdminUser = Depends(require_roles("superadmin", "editor")),
 ):
     """Update team fields."""
-    result = await db.execute(select(Team).where(Team.id == team_id))
+    result = await db.execute(
+        select(Team)
+        .options(selectinload(Team.club))
+        .where(Team.id == team_id)
+    )
     team = result.scalar_one_or_none()
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    for key, value in body.model_dump(exclude_unset=True).items():
+    payload = body.model_dump(exclude_unset=True)
+
+    # founded_year lives on the parent Club row, not on Team itself.
+    if "founded_year" in payload:
+        founded_year = payload.pop("founded_year")
+        if team.club is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot set founded_year — team has no associated club",
+            )
+        team.club.founded_year = founded_year
+
+    for key, value in payload.items():
         setattr(team, key, value)
 
     await db.commit()
     await db.refresh(team)
 
-    # Reload with stadium
+    # Reload with stadium + club
     result = await db.execute(
-        select(Team).options(selectinload(Team.stadium)).where(Team.id == team_id)
+        select(Team)
+        .options(selectinload(Team.stadium), selectinload(Team.club))
+        .where(Team.id == team_id)
     )
     team = result.scalar_one()
     return _team_detail_dict(team)

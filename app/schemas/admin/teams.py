@@ -14,6 +14,10 @@ class AdminTeamUpdateRequest(BaseModel):
     secondary_color: str | None = None
     accent_color: str | None = None
     logo_url: str | None = None
+    # Foundation year lives on the parent Club row; edits from the team
+    # form write through to team.club.founded_year. Teams without a club
+    # reject writes with 400.
+    founded_year: int | None = None
 
 
 class AdminTeamListItem(BaseModel):
@@ -43,3 +47,7 @@ class AdminTeamDetailResponse(BaseModel):
     secondary_color: str | None = None
     accent_color: str | None = None
     logo_url: str | None = None
+    # Resolved from the parent Club row via team.club.founded_year.
+    # Null when the team has no associated club.
+    founded_year: int | None = None
+    has_club: bool = False
