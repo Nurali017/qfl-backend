@@ -491,11 +491,16 @@ def compute_metric_ranks(
             reverse=definition.rank_order == "desc",
         )
 
+        # Standard competition ranking ("1224"): tied entries share the
+        # higher rank, then subsequent ranks skip to reflect how many
+        # entries are actually ahead. For assists this means 9 players tied
+        # at 2 share rank 1, and the next 44 players at 1 get rank 10,
+        # which matches how sports leaderboards are read.
         last_value: float | None = None
         current_rank = 0
-        for entity_id, value in ranked_values:
+        for index, (entity_id, value) in enumerate(ranked_values, start=1):
             if last_value is None or value != last_value:
-                current_rank += 1
+                current_rank = index
                 last_value = value
 
             ranks[entity_id][key] = current_rank
