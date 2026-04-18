@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import asyncio
+import hashlib
 import io
 import logging
 import re
@@ -64,12 +65,13 @@ TEAM_MAP = {
 
 SEASON_ID = 200
 
-# Variant config: (db_column, object_suffix, skip_optimization)
+# Variant config: (db_column, suffix_base, suffix_ext, skip_optimization)
+# Final object_name: player_photos/{binding_id}{suffix_base}_{hash8}{suffix_ext}
 VARIANT_CONFIG = {
-    1: ("photo_url", "_main.webp", False),
-    2: ("photo_url_avatar", "_avatar.png", True),
-    3: ("photo_url_leaderboard", "_leaderboard.png", True),
-    4: ("photo_url_player_page", "_player_page.png", True),
+    1: ("photo_url", "_main", ".webp", False),
+    2: ("photo_url_avatar", "_avatar", ".png", True),
+    3: ("photo_url_leaderboard", "_leaderboard", ".png", True),
+    4: ("photo_url_player_page", "_player_page", ".png", True),
 }
 
 # Filename pattern: firstname_lastname_number_variant.png
@@ -213,10 +215,23 @@ async def run(team_folder: str, apply: bool, force: bool):
             continue
 
         matched += 1
-        db_column, suffix, skip_opt = VARIANT_CONFIG[variant]
-        object_name = f"player_photos/{binding_id}{suffix}"
+        db_column, suffix_base, suffix_ext, skip_opt = VARIANT_CONFIG[variant]
 
-        # Check if already uploaded
+        # Read and optionally optimize FIRST so we can hash final bytes
+        raw_bytes = filepath.read_bytes()
+        content_type = "image/png"
+
+        if not skip_opt:
+            try:
+                raw_bytes, content_type = optimize_image(raw_bytes)
+                logger.info("Optimized %s: %d bytes", filepath.name, len(raw_bytes))
+            except Exception:
+                logger.warning("Optimization failed for %s, uploading original", filepath.name)
+
+        hash8 = hashlib.md5(raw_bytes).hexdigest()[:8]
+        object_name = f"player_photos/{binding_id}{suffix_base}_{hash8}{suffix_ext}"
+
+        # Check if already uploaded (same content → same hash → same name)
         if not force:
             try:
                 client.stat_object(bucket, object_name)
@@ -229,17 +244,6 @@ async def run(team_folder: str, apply: bool, force: bool):
         if not apply:
             logger.info("[DRY] Would upload %s → %s (column=%s)", filepath.name, object_name, db_column)
             continue
-
-        # Read and optionally optimize
-        raw_bytes = filepath.read_bytes()
-        content_type = "image/png"
-
-        if not skip_opt:
-            try:
-                raw_bytes, content_type = optimize_image(raw_bytes)
-                logger.info("Optimized %s: %d bytes", filepath.name, len(raw_bytes))
-            except Exception:
-                logger.warning("Optimization failed for %s, uploading original", filepath.name)
 
         # Upload to MinIO
         try:

@@ -16,6 +16,7 @@ from app.api.cities import router as cities_router
 from app.api.team_of_week import router as team_of_week_router
 from app.api.media_videos import router as media_videos_router
 from app.api.live import router as live_router
+from app.api.youtube_stats import router as youtube_stats_router
 from app.api.admin.router import router as admin_router
 
 api_router = APIRouter()
@@ -52,6 +53,9 @@ api_router.include_router(media_videos_router)
 
 # Live match events
 api_router.include_router(live_router)
+
+# Internal: YouTube view stats overview (no menu entry)
+api_router.include_router(youtube_stats_router)
 
 # Admin API
 api_router.include_router(admin_router)
