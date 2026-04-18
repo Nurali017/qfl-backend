@@ -108,6 +108,14 @@ class PendingGameIndex:
                     if len(tokens) >= 2 and len(tokens[-1]) > 1:
                         abbrevs.add(" ".join(tokens[:-1]) + " " + tokens[-1][0])
                 names_set |= abbrevs
+                # League-suffix alias: "каисар ж"/"каисар а" → "каисар"
+                # (ЖЛ/2Л/М teams in video titles often lack the 1-char suffix)
+                suffix_stripped: set[str] = set()
+                for n in list(names_set):
+                    tokens = n.split()
+                    if len(tokens) >= 2 and len(tokens[-1]) == 1:
+                        suffix_stripped.add(" ".join(tokens[:-1]))
+                names_set |= suffix_stripped
 
             entries.append(_PendingEntry(
                 game=game,
