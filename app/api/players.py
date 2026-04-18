@@ -455,10 +455,18 @@ async def get_player_match_history(
     if season_id is not None:
         await ensure_visible_season_or_404(db, season_id)
 
-    # 1. Fetch per-game stats rows for the player, joined with Game + teams + season
+    # 1. Fetch per-game stats rows for the player, joined with Game + teams + season.
+    # Skip rows where v2 enrichment (minutes_played / pass accuracy / duels /
+    # tackles) has not landed yet — otherwise the table renders misleading
+    # zeros for a match that was just played and is still pending sync from
+    # SOTA. Once enrichment runs, minutes_played becomes non-null and the
+    # match appears automatically.
     stats_query = (
         select(GamePlayerStats)
-        .where(GamePlayerStats.player_id == player_id)
+        .where(
+            GamePlayerStats.player_id == player_id,
+            GamePlayerStats.minutes_played.isnot(None),
+        )
         .options(
             selectinload(GamePlayerStats.game).selectinload(Game.home_team),
             selectinload(GamePlayerStats.game).selectinload(Game.away_team),
