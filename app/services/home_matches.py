@@ -177,29 +177,43 @@ def _group_widget_games(games: list[Game], lang: str):
 
 
 def _filter_outlier_games(games: list[Game], max_gap_days: int = 7) -> list[Game]:
-    """Keep only games whose date is within *max_gap_days* of the median date."""
+    """Keep only games whose date is within *max_gap_days* of an anchor date.
+
+    Anchor priority:
+    1. Median of confirmed (non-tentative) game dates, if any.
+    2. Otherwise, global median.
+
+    This prevents a single confirmed match-day from being dropped when the rest
+    of the tour is still held on placeholder/tentative end-of-season dates.
+    """
     dated = [(g, g.date) for g in games if g.date is not None]
     if len(dated) <= 1:
         return [g for g, _ in dated]
-    sorted_dates = sorted(d for _, d in dated)
-    median = sorted_dates[len(sorted_dates) // 2]
-    return [g for g, d in dated if abs((d - median).days) <= max_gap_days]
+    confirmed_dates = sorted(
+        d for g, d in dated if not getattr(g, "is_schedule_tentative", False)
+    )
+    if confirmed_dates:
+        anchor = confirmed_dates[len(confirmed_dates) // 2]
+    else:
+        all_dates = sorted(d for _, d in dated)
+        anchor = all_dates[len(all_dates) // 2]
+    return [g for g, d in dated if abs((d - anchor).days) <= max_gap_days]
 
 
 async def _load_same_date_games(
     db: AsyncSession,
     season_id: int,
-    game_dates: set[date],
+    date_from: date,
+    date_to: date,
     exclude_ids: set[int],
 ) -> list[Game]:
-    """Load games from any tour on *game_dates*, excluding already-known ids."""
-    if not game_dates:
-        return []
+    """Load games from any tour within [date_from, date_to], excluding known ids."""
     query = (
         select(Game)
         .where(
             Game.season_id == season_id,
-            Game.date.in_(game_dates),
+            Game.date >= date_from,
+            Game.date <= date_to,
         )
         .options(*_EAGER_OPTIONS)
         .order_by(Game.date.asc(), Game.time.asc())
@@ -219,15 +233,20 @@ async def _enrich_and_group(
     tour_games: list[Game],
     lang: str,
 ):
-    """Filter outlier dates, add same-date games from other tours, group by date."""
+    """Filter outlier dates, pad with adjacent-day games from any tour, group by date."""
     if not tour_games:
         return []
     filtered = _filter_outlier_games(tour_games)
     if not filtered:
         return group_games_by_date(tour_games, lang, status_mode="home_widget")
-    game_dates = {g.date for g in filtered if g.date}
+    game_dates = [g.date for g in filtered if g.date]
+    if not game_dates:
+        return group_games_by_date(filtered, lang, status_mode="home_widget")
+    pad = timedelta(days=2)
+    date_from = min(game_dates) - pad
+    date_to = max(game_dates) + pad
     known_ids = {g.id for g in filtered}
-    extra = await _load_same_date_games(db, season_id, game_dates, known_ids)
+    extra = await _load_same_date_games(db, season_id, date_from, date_to, known_ids)
     all_games = filtered + extra
     return group_games_by_date(all_games, lang, status_mode="home_widget")
 
