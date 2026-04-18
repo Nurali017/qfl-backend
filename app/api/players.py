@@ -502,7 +502,9 @@ async def get_player_match_history(
         .where(
             GameEvent.game_id.in_(game_ids),
             GameEvent.assist_player_id == player_id,
-            GameEvent.event_type == GameEventType.assist,
+            GameEvent.event_type.in_(
+                [GameEventType.goal, GameEventType.penalty]
+            ),
         )
         .group_by(GameEvent.game_id)
     )
