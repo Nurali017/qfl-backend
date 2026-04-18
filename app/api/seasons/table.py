@@ -125,26 +125,19 @@ async def get_season_table(
     else:
         table_data = []
 
-    # Compute position_change vs previous tour (unfiltered view only)
+    # Compute position_change only during LIVE matches — compares current live
+    # standings vs standings before live games started (Flashscore-style).
+    # When no live games, standings are static → no indicators shown.
     position_change_map: dict[int, int] = {}
-    if not home_away and not group and not final:
-        max_tour_val = await db.scalar(
-            select(func.max(Game.tour)).where(
-                Game.season_id == season_id,
-                Game.status.in_([GameStatus.finished, GameStatus.technical_defeat, GameStatus.live]),
-                Game.tour.isnot(None),
-            )
+    if live_count and not home_away and not group and not final:
+        pre_live_table = await calculate_dynamic_table(
+            db, season_id,
+            tour_from=tour_from, tour_to=tour_to,
+            home_away=None, lang=lang,
+            group_team_ids=None, final_stage_ids=None,
+            include_live=False,
         )
-        prev_tour_to = (max_tour_val or 1) - 1
-        if prev_tour_to >= 1:
-            prev_table = await calculate_dynamic_table(
-                db, season_id,
-                tour_from=tour_from, tour_to=prev_tour_to,
-                home_away=None, lang=lang,
-                group_team_ids=None, final_stage_ids=None,
-                include_live=False,
-            )
-            position_change_map = {e["team_id"]: e["position"] for e in prev_table}
+        position_change_map = {e["team_id"]: e["position"] for e in pre_live_table}
 
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)
