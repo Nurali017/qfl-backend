@@ -125,6 +125,27 @@ async def get_season_table(
     else:
         table_data = []
 
+    # Compute position_change vs previous tour (unfiltered view only)
+    position_change_map: dict[int, int] = {}
+    if not home_away and not group and not final:
+        max_tour_val = await db.scalar(
+            select(func.max(Game.tour)).where(
+                Game.season_id == season_id,
+                Game.status.in_([GameStatus.finished, GameStatus.technical_defeat, GameStatus.live]),
+                Game.tour.isnot(None),
+            )
+        )
+        prev_tour_to = (max_tour_val or 1) - 1
+        if prev_tour_to >= 1:
+            prev_table = await calculate_dynamic_table(
+                db, season_id,
+                tour_from=tour_from, tour_to=prev_tour_to,
+                home_away=None, lang=lang,
+                group_team_ids=None, final_stage_ids=None,
+                include_live=False,
+            )
+            position_change_map = {e["team_id"]: e["position"] for e in prev_table}
+
     team_ids = [entry["team_id"] for entry in table_data]
     next_games = await get_next_games_for_teams(db, season_id, team_ids)
     total_rows = len(table_data)
@@ -143,6 +164,8 @@ async def get_season_table(
 
     table = []
     for entry in table_data:
+        prev_pos = position_change_map.get(entry["team_id"])
+        pos_change = (prev_pos - entry["position"]) if prev_pos and entry.get("position") else None
         table.append(
             ScoreTableEntryResponse(
                 position=entry["position"],
@@ -169,6 +192,7 @@ async def get_season_table(
                     relegation_spots=relegation_spots,
                 ),
                 next_game=next_games.get(entry["team_id"]),
+                position_change=pos_change,
             )
         )
 
