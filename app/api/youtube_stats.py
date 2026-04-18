@@ -74,14 +74,20 @@ class YoutubeStatsOverview(BaseModel):
     by_tour: list[TourRow]
     by_team: list[TeamRow]
     media_videos: list[MediaVideoRow]
+    max_completed_tour: int | None = None
 
 
 @router.get("/overview", response_model=YoutubeStatsOverview)
 async def get_youtube_stats_overview(
     season_id: int | None = Query(None),
+    max_tour: int | None = Query(None, description="Include only games with tour <= max_tour"),
     db: AsyncSession = Depends(get_db),
 ) -> YoutubeStatsOverview:
-    """Internal page data: games with YouTube URLs + active media_videos with view_count."""
+    """Public overview: games with YouTube URLs + active media_videos with view_count.
+
+    ``max_tour`` filter caps games at the given tour (inclusive) — useful for
+    comparing current season vs previous season at the same progress point.
+    """
     stmt = (
         select(Game)
         .where(or_(Game.youtube_live_url.is_not(None), Game.video_review_url.is_not(None)))
@@ -93,6 +99,8 @@ async def get_youtube_stats_overview(
     )
     if season_id is not None:
         stmt = stmt.where(Game.season_id == season_id)
+    if max_tour is not None:
+        stmt = stmt.where(Game.tour <= max_tour)
 
     games: list[Game] = list((await db.execute(stmt)).scalars().all())
 
@@ -201,6 +209,11 @@ async def get_youtube_stats_overview(
         for m in sorted(media_items, key=lambda m: m.view_count or 0, reverse=True)
     ]
 
+    max_completed_tour = max(
+        (g.tour for g in games if g.tour is not None),
+        default=None,
+    )
+
     return YoutubeStatsOverview(
         summary=Summary(
             total_live_views=total_live,
@@ -214,4 +227,5 @@ async def get_youtube_stats_overview(
         by_tour=tour_rows,
         by_team=team_rows,
         media_videos=media_rows,
+        max_completed_tour=max_completed_tour,
     )
