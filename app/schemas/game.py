@@ -172,9 +172,11 @@ class MatchCenterGame(BaseModel):
 
     # Optional video review URL
     video_review_url: str | None = None
+    video_review_view_count: int | None = None
 
     # Optional YouTube live stream URL
     youtube_live_url: str | None = None
+    youtube_live_view_count: int | None = None
 
     # Optional match protocol URL (PDF)
     protocol_url: str | None = None
@@ -231,10 +233,11 @@ class GameListItem(BaseModel):
     ticket_url: str | None = None
     is_free_entry: bool = False
     video_review_url: str | None = None
+    video_review_view_count: int | None = None
     youtube_live_url: str | None = None
+    youtube_live_view_count: int | None = None
     protocol_url: str | None = None
     where_broadcast: str | None = None
-    video_review_url: str | None = None
     home_team: TeamInMatchCenter | None = None
     away_team: TeamInMatchCenter | None = None
     stadium_info: StadiumInfo | None = None
@@ -272,10 +275,11 @@ class GameDetailItem(BaseModel):
     ticket_url: str | None = None
     is_free_entry: bool = False
     video_review_url: str | None = None
+    video_review_view_count: int | None = None
     youtube_live_url: str | None = None
+    youtube_live_view_count: int | None = None
     protocol_url: str | None = None
     where_broadcast: str | None = None
-    video_review_url: str | None = None
     preview_ru: str | None = None
     preview_kz: str | None = None
     status: str

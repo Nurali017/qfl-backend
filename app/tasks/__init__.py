@@ -103,6 +103,28 @@ if settings.youtube_auto_link_enabled:
         "schedule": crontab(minute="*/30"),
     }
 
+if settings.youtube_api_key:
+    celery_app.conf.beat_schedule["youtube-view-counts-live-1min"] = {
+        "task": "app.tasks.youtube_tasks.sync_view_counts_live",
+        "schedule": crontab(minute="*/1"),
+    }
+    celery_app.conf.beat_schedule["youtube-view-counts-fresh-5min"] = {
+        "task": "app.tasks.youtube_tasks.sync_view_counts_fresh",
+        "schedule": crontab(minute="*/5"),
+    }
+    celery_app.conf.beat_schedule["youtube-view-counts-medium-hourly"] = {
+        "task": "app.tasks.youtube_tasks.sync_view_counts_medium",
+        "schedule": crontab(minute="0"),
+    }
+    celery_app.conf.beat_schedule["youtube-view-counts-old-daily"] = {
+        "task": "app.tasks.youtube_tasks.sync_view_counts_old",
+        "schedule": crontab(hour="4", minute="0"),
+    }
+    celery_app.conf.beat_schedule["youtube-view-counts-media-30min"] = {
+        "task": "app.tasks.youtube_tasks.sync_view_counts_media",
+        "schedule": crontab(minute="*/30"),
+    }
+
 @worker_shutdown.connect
 def on_worker_shutdown(**kwargs):
     from app.utils.async_celery import cleanup_event_loop

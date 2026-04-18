@@ -93,6 +93,9 @@ class Game(Base):
         Boolean, default=False, nullable=False, server_default="false"
     )
     youtube_live_url: Mapped[str | None] = mapped_column(String(500))  # YouTube live stream URL
+    youtube_live_view_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    video_review_view_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    youtube_stats_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     protocol_url: Mapped[str | None] = mapped_column(FileUrlType)  # Match protocol PDF
     protocol_pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # SHA-256 for change detection
     prematch_pdf_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # SHA-256 for pre-match PDF dedup

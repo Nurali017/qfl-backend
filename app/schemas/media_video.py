@@ -6,6 +6,7 @@ class MediaVideoResponse(BaseModel):
     title: str
     youtube_id: str
     sort_order: int = 0
+    view_count: int | None = None
 
     model_config = {"from_attributes": True}
 

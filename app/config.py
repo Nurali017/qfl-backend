@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     youtube_channel_id: str = ""
     youtube_reserve_channel_ids: str = ""  # Comma-separated reserve channel IDs
     youtube_auto_link_enabled: bool = False
+    # YouTube view_count sync — limit to specific seasons (comma-separated IDs)
+    # Default: 2026 seasons only (PL, Super Cup, Cup, 2L, 1L, Women)
+    youtube_stats_season_ids: str = "200,201,202,203,204,205"
 
     # Frontend revalidation
     revalidation_secret: str = ""
