@@ -84,18 +84,18 @@ def test_compute_metric_ranks_desc_skips_tied_group_count():
     assert ranks[5]["goal_pass"] == 4
 
 
-def test_compute_metric_ranks_asc_keeps_zero_as_best():
-    """ASC-order metrics (fouls, cards) treat 0 as the best outcome and
-    must keep zero values in the ranking."""
+def test_compute_metric_ranks_asc_excludes_zero():
+    """ASC-order metrics (fouls, cards, own goals) also exclude zero —
+    showing a "★ 1 место" badge for hundreds of players with zero red
+    cards is noise, not a ranking signal."""
     registry = {
-        "yellow_cards": MetricDefinition(
-            group="disciplinary", rank_order="asc", exclude_zero=False
-        ),
+        "yellow_cards": MetricDefinition(group="disciplinary", rank_order="asc"),
     }
     items = [
         {"player_id": 1, "yellow_cards": 0},
         {"player_id": 2, "yellow_cards": 2},
         {"player_id": 3, "yellow_cards": 0},
+        {"player_id": 4, "yellow_cards": 1},
     ]
 
     ranks = compute_metric_ranks(
@@ -104,9 +104,10 @@ def test_compute_metric_ranks_asc_keeps_zero_as_best():
         registry=registry,
     )
 
-    assert ranks[1]["yellow_cards"] == 1
-    assert ranks[3]["yellow_cards"] == 1
-    assert ranks[2]["yellow_cards"] == 3
+    assert ranks[1]["yellow_cards"] is None
+    assert ranks[3]["yellow_cards"] is None
+    assert ranks[4]["yellow_cards"] == 1
+    assert ranks[2]["yellow_cards"] == 2
 
 
 def test_compute_metric_ranks_asc_skips_nulls():
@@ -118,6 +119,7 @@ def test_compute_metric_ranks_asc_skips_nulls():
         {"player_id": 2, "red_cards": 2},
         {"player_id": 3, "red_cards": None},
         {"player_id": 4, "red_cards": 0},
+        {"player_id": 5, "red_cards": 1},
     ]
 
     ranks = compute_metric_ranks(
@@ -126,7 +128,8 @@ def test_compute_metric_ranks_asc_skips_nulls():
         registry=registry,
     )
 
-    assert ranks[1]["red_cards"] == 1
-    assert ranks[4]["red_cards"] == 1
-    assert ranks[2]["red_cards"] == 3
+    assert ranks[1]["red_cards"] is None
+    assert ranks[4]["red_cards"] is None
     assert ranks[3]["red_cards"] is None
+    assert ranks[5]["red_cards"] == 1
+    assert ranks[2]["red_cards"] == 2
