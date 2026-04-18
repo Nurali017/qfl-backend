@@ -87,6 +87,7 @@ class ScoreTableEntryResponse(BaseModel):
     total_yellow_cards: int | None = None
     zone: Literal["champion", "euro_cups", "relegation"] | None = None
     next_game: NextGameInfo | None = None
+    position_change: int | None = None
 
     class Config:
         from_attributes = True
