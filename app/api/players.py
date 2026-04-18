@@ -199,20 +199,43 @@ async def get_player(
         player_team=latest_pts[0] if latest_pts else None,
     )
 
-    # Aggregate real positions from the last 20 starter lineups.
-    # Ordered by game date DESC, NULLs last, falling back to game_id.
-    lineup_result = await db.execute(
-        select(GameLineup.amplua, GameLineup.field_position)
-        .join(Game, Game.id == GameLineup.game_id)
-        .where(
-            GameLineup.player_id == player_id,
-            GameLineup.lineup_type == LineupType.starter,
-            GameLineup.amplua.isnot(None),
-        )
-        .order_by(Game.date.desc().nullslast(), Game.id.desc())
-        .limit(20)
+    # Aggregate positions from starter lineups in the player's CURRENT season
+    # (derived from the latest PlayerTeam contract). If fewer than 3 such
+    # lineups exist (e.g. early in a new season), fall back to the last 20
+    # across all seasons so new/inactive players still get a label.
+    current_season_id = (
+        max(pt.season_id for pt in latest_pts) if latest_pts else None
     )
-    lineup_rows: list[tuple[str | None, str | None]] = list(lineup_result.all())
+
+    lineup_rows: list[tuple[str | None, str | None]] = []
+    if current_season_id is not None:
+        season_lineup_result = await db.execute(
+            select(GameLineup.amplua, GameLineup.field_position)
+            .join(Game, Game.id == GameLineup.game_id)
+            .where(
+                GameLineup.player_id == player_id,
+                GameLineup.lineup_type == LineupType.starter,
+                GameLineup.amplua.isnot(None),
+                Game.season_id == current_season_id,
+            )
+            .order_by(Game.date.desc().nullslast(), Game.id.desc())
+        )
+        lineup_rows = list(season_lineup_result.all())
+
+    if len(lineup_rows) < 3:
+        fallback_result = await db.execute(
+            select(GameLineup.amplua, GameLineup.field_position)
+            .join(Game, Game.id == GameLineup.game_id)
+            .where(
+                GameLineup.player_id == player_id,
+                GameLineup.lineup_type == LineupType.starter,
+                GameLineup.amplua.isnot(None),
+            )
+            .order_by(Game.date.desc().nullslast(), Game.id.desc())
+            .limit(20)
+        )
+        lineup_rows = list(fallback_result.all())
+
     aggregated = aggregate_lineup_positions(lineup_rows)
     if aggregated.source == "unknown":
         aggregated = fallback_positions_from_top_role(player.player_type, resolved_top_role)
