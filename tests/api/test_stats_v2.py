@@ -144,8 +144,11 @@ class TestStatsV2API:
         assert data["ranks"]["goal_and_assist"] == 2
         assert data["ranks"]["xg"] == 2
         assert data["ranks"]["interception"] == 2
-        assert data["ranks"]["yellow_cards"] == 2
-        assert data["ranks"]["red_cards"] == 2
+        # sample has yellow_cards=2, others are [0, 2] — asc ranking with
+        # zero excluded yields [2, 2] tied at rank 1.
+        assert data["ranks"]["yellow_cards"] == 1
+        # sample has red_cards=1, others are [0, 1] — same story.
+        assert data["ranks"]["red_cards"] == 1
         assert "extra_stats" not in data
 
     async def test_get_player_stats_table_v2_matches_canonical_metrics(
@@ -305,7 +308,9 @@ class TestStatsV2API:
         assert data["ranks"]["points"] == 2
         assert data["ranks"]["goal_difference"] == 1
         assert data["ranks"]["goals_conceded"] == 1
-        assert data["ranks"]["match_loss"] == 1
+        # All three fixture teams have match_loss=0 — asc ranking with zero
+        # excluded gives every team a null rank for this metric.
+        assert data["ranks"]["match_loss"] is None
         assert "extra_stats" not in data
 
     async def test_get_team_stats_table_v2_sorts_by_goal_difference(

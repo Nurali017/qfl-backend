@@ -16,12 +16,13 @@ class MetricDefinition:
     group: str
     rankable: bool = True
     rank_order: RankOrder = "desc"
-    # When True, exclude rows whose value is 0 from rank computation so a
-    # player with 0 assists does not share a rank with everyone else who did
-    # not contribute. Applied automatically to desc-ordered metrics (where 0
-    # means "did not achieve anything"); asc-ordered metrics keep zero in the
-    # ranking because 0 fouls / 0 yellow cards is the best possible outcome.
-    exclude_zero: bool = False
+    # When True, exclude rows whose value is 0 from rank computation so the
+    # "no event" default does not generate a misleading rank badge. Applies
+    # universally: in desc metrics 0 means "did not contribute", in asc
+    # metrics (own goals, offsides, cards) 0 means "no incident" and most
+    # of the league sits there — showing hundreds of players tied at rank 1
+    # for having zero own goals is pure noise.
+    exclude_zero: bool = True
 
 
 def _build_metric_registry(
@@ -33,11 +34,9 @@ def _build_metric_registry(
     registry: dict[str, MetricDefinition] = {}
 
     def _make(group: str, key: str) -> MetricDefinition:
-        is_asc = key in asc_fields
         return MetricDefinition(
             group=group,
-            rank_order="asc" if is_asc else "desc",
-            exclude_zero=not is_asc,
+            rank_order="asc" if key in asc_fields else "desc",
         )
 
     for key, group in base_groups.items():
