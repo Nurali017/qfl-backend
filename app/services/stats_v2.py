@@ -16,6 +16,14 @@ class MetricDefinition:
     group: str
     rankable: bool = True
     rank_order: RankOrder = "desc"
+    # When True, exclude rows whose value is 0 from rank computation so a
+    # player with 0 assists does not share a rank with everyone else who did
+    # not contribute. Applied automatically to desc-ordered metrics (where 0
+    # means "did not achieve anything"); asc-ordered metrics keep zero in the
+    # ranking because 0 fouls / 0 yellow cards is the best possible outcome.
+    exclude_zero: bool = False
+
+
 def _build_metric_registry(
     *,
     base_groups: dict[str, str],
@@ -24,18 +32,20 @@ def _build_metric_registry(
 ) -> dict[str, MetricDefinition]:
     registry: dict[str, MetricDefinition] = {}
 
-    for key, group in base_groups.items():
-        registry[key] = MetricDefinition(
+    def _make(group: str, key: str) -> MetricDefinition:
+        is_asc = key in asc_fields
+        return MetricDefinition(
             group=group,
-            rank_order="asc" if key in asc_fields else "desc",
+            rank_order="asc" if is_asc else "desc",
+            exclude_zero=not is_asc,
         )
+
+    for key, group in base_groups.items():
+        registry[key] = _make(group, key)
 
     for group, keys in groups.items():
         for key in keys:
-            registry[key] = MetricDefinition(
-                group=group,
-                rank_order="asc" if key in asc_fields else "desc",
-            )
+            registry[key] = _make(group, key)
 
     return registry
 
@@ -470,6 +480,8 @@ def compute_metric_ranks(
 
             value = to_finite_float(item.get(key))
             if value is None:
+                continue
+            if definition.exclude_zero and value == 0:
                 continue
 
             ranked_values.append((entity_id, value))
