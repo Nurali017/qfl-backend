@@ -458,8 +458,9 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
     since = await _load_last_sync()
     drive = get_drive_client()
     try:
+        # max_depth=3 to support root → tour → [optional date] → match → clips.
         videos = await drive.list_recent_videos_recursive(
-            settings.google_drive_goals_folder_id, since=since, max_depth=2
+            settings.google_drive_goals_folder_id, since=since, max_depth=3
         )
     except Exception:
         logger.exception("Failed to list Drive videos")
