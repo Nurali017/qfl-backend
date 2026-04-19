@@ -14,6 +14,13 @@ services:
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET=qfl-files
       - MINIO_SECURE=false
+      - GOOGLE_DRIVE_ENABLED=${GOOGLE_DRIVE_ENABLED:-false}
+      - GOOGLE_SERVICE_ACCOUNT_FILE=${GOOGLE_SERVICE_ACCOUNT_FILE:-/app/secrets/google-sa.json}
+      - GOOGLE_DRIVE_GOALS_FOLDER_ID=${GOOGLE_DRIVE_GOALS_FOLDER_ID:-}
+      - GOAL_VIDEO_AI_FALLBACK_ENABLED=${GOAL_VIDEO_AI_FALLBACK_ENABLED:-true}
+      - GOAL_VIDEO_AI_MODEL=${GOAL_VIDEO_AI_MODEL:-claude-haiku-4-5-20251001}
+      - GOAL_VIDEO_SYNC_INTERVAL_MINUTES=${GOAL_VIDEO_SYNC_INTERVAL_MINUTES:-2}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
@@ -23,6 +30,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+      - ./secrets:/app/secrets:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
@@ -90,12 +98,20 @@ services:
       - SERPER_API_KEY=${SERPER_API_KEY:-}
       - TICKET_SEARCH_ENABLED=${TICKET_SEARCH_ENABLED:-false}
       - YOUTUBE_RESERVE_CHANNEL_IDS=${YOUTUBE_RESERVE_CHANNEL_IDS:-}
+      - GOOGLE_DRIVE_ENABLED=${GOOGLE_DRIVE_ENABLED:-false}
+      - GOOGLE_SERVICE_ACCOUNT_FILE=${GOOGLE_SERVICE_ACCOUNT_FILE:-/app/secrets/google-sa.json}
+      - GOOGLE_DRIVE_GOALS_FOLDER_ID=${GOOGLE_DRIVE_GOALS_FOLDER_ID:-}
+      - GOAL_VIDEO_AI_FALLBACK_ENABLED=${GOAL_VIDEO_AI_FALLBACK_ENABLED:-true}
+      - GOAL_VIDEO_AI_MODEL=${GOAL_VIDEO_AI_MODEL:-claude-haiku-4-5-20251001}
+      - GOAL_VIDEO_SYNC_INTERVAL_MINUTES=${GOAL_VIDEO_SYNC_INTERVAL_MINUTES:-2}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     depends_on:
       - db
       - redis
       - minio
     volumes:
       - .:/app
+      - ./secrets:/app/secrets:ro
 
   celery_beat:
     build: .
@@ -114,6 +130,8 @@ services:
       - SERPER_API_KEY=${SERPER_API_KEY:-}
       - TICKET_SEARCH_ENABLED=${TICKET_SEARCH_ENABLED:-false}
       - YOUTUBE_RESERVE_CHANNEL_IDS=${YOUTUBE_RESERVE_CHANNEL_IDS:-}
+      - GOOGLE_DRIVE_ENABLED=${GOOGLE_DRIVE_ENABLED:-false}
+      - GOAL_VIDEO_SYNC_INTERVAL_MINUTES=${GOAL_VIDEO_SYNC_INTERVAL_MINUTES:-2}
     depends_on:
       - db
       - redis

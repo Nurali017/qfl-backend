@@ -32,6 +32,7 @@ class GameEventResponse(BaseModel):
     player2_team_name: str | None = None
     assist_player_id: int | None = None
     assist_player_name: str | None = None
+    video_url: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

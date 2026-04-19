@@ -31,6 +31,9 @@ class Team(Base):
     accent_color: Mapped[str | None] = mapped_column(String(7))
     colors_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Telegram custom emoji id from t.me/addemoji/KazakhstanFootballClubs
+    tg_custom_emoji_id: Mapped[str | None] = mapped_column(String(32))
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )

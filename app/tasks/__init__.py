@@ -10,7 +10,16 @@ celery_app = Celery(
     "qfl_tasks",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.sync_tasks", "app.tasks.live_tasks", "app.tasks.weather_tasks", "app.tasks.ticket_tasks", "app.tasks.fcms_tasks", "app.tasks.youtube_tasks"],
+    include=[
+        "app.tasks.sync_tasks",
+        "app.tasks.live_tasks",
+        "app.tasks.weather_tasks",
+        "app.tasks.ticket_tasks",
+        "app.tasks.fcms_tasks",
+        "app.tasks.youtube_tasks",
+        "app.tasks.telegram_tasks",
+        "app.tasks.goal_video_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -28,6 +37,12 @@ celery_app.conf.update(
         "app.tasks.live_tasks.auto_start_live_games": {"queue": "live"},
         "app.tasks.live_tasks.auto_end_finished_games": {"queue": "live"},
         "app.tasks.live_tasks.fetch_pregame_lineups": {"queue": "live"},
+        "app.tasks.telegram_tasks.post_match_start_task": {"queue": "telegram"},
+        "app.tasks.telegram_tasks.post_match_finish_task": {"queue": "telegram"},
+        "app.tasks.telegram_tasks.post_game_event_task": {"queue": "telegram"},
+        "app.tasks.telegram_tasks.post_pregame_lineup_task": {"queue": "telegram"},
+        "app.tasks.telegram_tasks.post_goal_video_task": {"queue": "telegram"},
+        "app.tasks.telegram_tasks.tour_announce_daily": {"queue": "telegram"},
     },
 )
 
@@ -74,6 +89,12 @@ celery_app.conf.beat_schedule["fetch-weather-every-3h"] = {
     "schedule": crontab(minute="30", hour="*/3"),
 }
 
+if settings.telegram_public_posts_enabled and settings.telegram_tour_announce_enabled:
+    celery_app.conf.beat_schedule["tour-announce-daily-21-ala"] = {
+        "task": "app.tasks.telegram_tasks.tour_announce_daily",
+        "schedule": crontab(minute="0", hour="21"),
+    }
+
 celery_app.conf.beat_schedule["search-tickets-twice-daily"] = {
     "task": "app.tasks.ticket_tasks.search_tickets",
     "schedule": crontab(minute="0", hour="9,18"),
@@ -101,6 +122,13 @@ if settings.youtube_auto_link_enabled:
     celery_app.conf.beat_schedule["link-youtube-videos-every-30min"] = {
         "task": "app.tasks.youtube_tasks.link_youtube_videos",
         "schedule": crontab(minute="*/30"),
+    }
+
+if settings.google_drive_enabled:
+    _gv_interval = max(1, settings.goal_video_sync_interval_minutes)
+    celery_app.conf.beat_schedule["goal-video-sync"] = {
+        "task": "app.tasks.goal_video_tasks.sync_goal_videos_task",
+        "schedule": crontab(minute=f"*/{_gv_interval}"),
     }
 
 if settings.youtube_api_key:

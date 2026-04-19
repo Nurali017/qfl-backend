@@ -62,10 +62,16 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
 
-    # Telegram notifications
+    # Telegram notifications (admin operations)
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_notifications_enabled: bool = False
+
+    # Public Telegram posts (t.me/kffleague channel)
+    telegram_public_posts_enabled: bool = False
+    telegram_public_chat_id: str = ""  # Falls back to telegram_chat_id when empty
+    telegram_tour_announce_enabled: bool = False  # Daily 21:00 beat for Scenario 0
+    telegram_match_start_enabled: bool = False     # Scenario 1 (match start) — opt-in
 
     # Weather (Open-Meteo, no API key needed)
     weather_enabled: bool = False
@@ -95,6 +101,27 @@ class Settings(BaseSettings):
     # Frontend revalidation
     revalidation_secret: str = ""
     frontend_internal_url: str = "http://qfl-frontend:3000"
+
+    # Google Drive — goal video ingest during live matches
+    google_drive_enabled: bool = False
+    google_service_account_file: str = "/app/secrets/google-sa.json"
+    google_drive_goals_folder_id: str = ""
+    goal_video_ai_fallback_enabled: bool = True
+    goal_video_ai_model: str = "claude-haiku-4-5-20251001"
+    goal_video_sync_interval_minutes: int = 2
+    # Re-encode incoming clips with ffmpeg (libx264 CRF 20) before uploading to
+    # MinIO — roughly halves the file size without perceptible quality loss.
+    goal_video_transcode_enabled: bool = True
+    goal_video_transcode_crf: str = "20"
+    goal_video_transcode_preset: str = "medium"
+
+    # Live streaming
+    livestream_enabled: bool = False
+    livestream_provider: str = "cloudflare"  # cloudflare | yandex | mock
+    cf_stream_account_id: str = ""
+    cf_stream_api_token: str = ""
+    cf_stream_subdomain: str = ""
+    cf_stream_allowed_origins: str = ""  # Comma-separated — restricts embed/playback origins
 
     class Config:
         env_file = ".env"

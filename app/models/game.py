@@ -82,6 +82,12 @@ class Game(Base):
     # Lineup embargo: Telegram notification tracking
     lineup_telegram_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lineup_telegram_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lineup_telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Public Telegram posts (kffleague channel) tracking
+    announce_telegram_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    start_telegram_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finish_telegram_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Stadium FK
     stadium_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stadiums.id"), index=True)

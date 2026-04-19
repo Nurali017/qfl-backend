@@ -913,6 +913,41 @@ async def delete_event(game_id: int, event_id: int, db: AsyncSession = Depends(g
     return {"ok": True}
 
 
+@router.delete("/{game_id}/events/{event_id}/video")
+async def delete_event_video(
+    game_id: int, event_id: int, db: AsyncSession = Depends(get_db)
+):
+    """Remove the goal highlight clip linked to an event.
+
+    Clears ``event.video_url`` and best-effort deletes the MinIO object. The
+    Drive file ID remains in the processed-set so the next sync does not
+    re-link the same file by accident.
+    """
+    from app.services.file_storage import FileStorageService
+    from app.utils.file_urls import to_object_name
+
+    result = await db.execute(
+        select(GameEvent).where(GameEvent.id == event_id, GameEvent.game_id == game_id)
+    )
+    ev = result.scalar_one_or_none()
+    if not ev:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    object_name = to_object_name(ev.video_url) if ev.video_url else None
+    ev.video_url = None
+    await db.commit()
+
+    if object_name:
+        try:
+            await FileStorageService.delete_file(object_name)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to delete goal video object %s", object_name, exc_info=True
+            )
+
+    return {"ok": True}
+
+
 @router.patch("/{game_id}/events/{event_id}", response_model=AdminEventItem)
 async def update_event(game_id: int, event_id: int, body: AdminEventUpdateRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(

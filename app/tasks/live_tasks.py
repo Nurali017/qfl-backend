@@ -84,6 +84,14 @@ async def _sync_single_game_impl(game_id: int, token: str):
 
                 await db.commit()
 
+                try:
+                    from app.tasks.telegram_tasks import dispatch_pending_event_posts
+                    await dispatch_pending_event_posts(db, game_id)
+                except Exception:
+                    logger.exception(
+                        "Failed to dispatch telegram event posts for game %s", game_id
+                    )
+
                 elapsed = time.monotonic() - t0
                 if events_added:
                     logger.info("Synced %d new events for game %s", events_added, game_id)
@@ -327,6 +335,14 @@ async def _fetch_pregame_lineups():
                             "Pre-fetched lineup for game %s: %d players",
                             game.id, lineup_count,
                         )
+                        try:
+                            from app.tasks.telegram_tasks import post_pregame_lineup_task
+                            post_pregame_lineup_task.delay(game.id)
+                        except Exception:
+                            logger.exception(
+                                "Failed to enqueue post_pregame_lineup_task for %s",
+                                game.id,
+                            )
                 except Exception as e:
                     logger.warning(
                         "Failed to pre-fetch lineup for game %s: %s",
