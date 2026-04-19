@@ -45,9 +45,11 @@ async def _sync_goal_videos_impl() -> dict:
             "status": "ok",
             "listed": result.listed,
             "matched": result.matched,
-            "ai_matched": result.ai_matched,
+            "ai_folder_matched": result.ai_folder_matched,
+            "ai_event_matched": result.ai_event_matched,
             "unmatched": result.unmatched,
             "skipped_already_processed": result.skipped_already_processed,
+            "skipped_no_game": result.skipped_no_game,
             "errors": result.errors,
         }
     finally:
