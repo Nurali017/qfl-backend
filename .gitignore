@@ -53,6 +53,7 @@ coverage.xml
 # Environments
 .env
 .venv
+secrets/
 env/
 venv/
 ENV/
@@ -74,6 +75,14 @@ Thumbs.db
 *.db
 *.sqlite3
 celerybeat-schedule
+
+# Telethon session (contains auth token — do NOT commit)
+.telethon_qfl_session.session
+.telethon_qfl_session*
+
+# Emoji pack preview artifacts (generated locally, not needed in repo)
+scripts/*_previews/
+scripts/pack_index.txt
 
 # Images (store in MinIO, not in git)
 *.jpeg

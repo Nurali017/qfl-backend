@@ -41,9 +41,6 @@ pymysql==1.1.0
 python-dotenv==1.0.0
 python-multipart==0.0.6
 
-# Web scraping
-playwright==1.41.0
-
 # HTML parsing
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
@@ -53,6 +50,10 @@ openai==1.54.0
 
 # Anthropic API
 anthropic>=0.39.0
+
+# Google Drive (goal video ingest)
+google-api-python-client>=2.100.0
+google-auth>=2.30.0
 
 # Testing
 pytest==8.0.0

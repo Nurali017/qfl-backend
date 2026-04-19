@@ -66,6 +66,41 @@ async def send_telegram_message(text: str) -> None:
         logger.exception("Failed to send Telegram notification")
 
 
+async def send_public_telegram_message(text: str) -> bool:
+    """Post to the public kffleague channel. Returns True on HTTP 200.
+
+    Gated by settings.telegram_public_posts_enabled.
+    Uses telegram_public_chat_id, falling back to telegram_chat_id.
+    Caller decides whether to retry; raises httpx.HTTPError on network failure
+    so Celery autoretry can kick in.
+    """
+    settings = get_settings()
+    if not settings.telegram_public_posts_enabled:
+        return False
+    chat_id = settings.telegram_public_chat_id or settings.telegram_chat_id
+    if not settings.telegram_bot_token or not chat_id:
+        logger.warning("Telegram public token/chat_id not configured, skipping post")
+        return False
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False,
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(url, json=payload)
+        if resp.status_code == 200:
+            return True
+        logger.error(
+            "Telegram public API error %s: %s", resp.status_code, resp.text[:300]
+        )
+        if 500 <= resp.status_code < 600 or resp.status_code == 429:
+            resp.raise_for_status()
+        return False
+
+
 def _format_contract_details(
     *,
     role: int | None = None,

@@ -18,6 +18,7 @@ class Broadcaster(Base):
     website: Mapped[str | None] = mapped_column(String(500))
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
+    telegram_prefix: Mapped[str | None] = mapped_column(String(8))  # emoji shown before name in tg posts
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

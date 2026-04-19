@@ -5,6 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.sql_types import PLAYER_ID_SQL_TYPE, GAME_ID_SQL_TYPE
+from app.utils.file_urls import FileUrlType
 from app.utils.timestamps import utcnow
 
 
@@ -80,6 +81,21 @@ class GameEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+
+    # Public Telegram post tracking (goals/red cards)
+    telegram_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Telegram message id of the goal text post — used as reply_to target
+    # when the video clip is attached asynchronously.
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    telegram_video_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Goal highlight clip (MinIO object name, resolved to full URL on read).
+    # Populated by goal_video_sync_service from Google Drive during live matches.
+    video_url: Mapped[str | None] = mapped_column(FileUrlType(), nullable=True)
 
     # Relationships
     game: Mapped["Game"] = relationship("Game", back_populates="events")

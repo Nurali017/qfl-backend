@@ -2,12 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 ENV PYTHONPATH=/app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     libpq-dev \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

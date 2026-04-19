@@ -988,3 +988,120 @@ async def list_sota_seasons(
             "date_end": season.get("date_end"),
         })
     return {"total": len(items), "items": items}
+
+
+# ==================== Telegram public posts — dev trigger ==================== #
+
+from datetime import date as _date_cls
+
+
+@router.post("/tg/test/match-start/{game_id}")
+async def tg_test_match_start(
+    game_id: int,
+    reset: bool = Query(default=False, description="Clear dedup flag before posting"),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    from app.services.telegram_posts import post_match_start
+
+    if reset:
+        game = await db.get(Game, game_id)
+        if game:
+            game.start_telegram_sent_at = None
+            await db.commit()
+    ok = await post_match_start(db, game_id)
+    return {"game_id": game_id, "sent": ok}
+
+
+@router.post("/tg/test/match-finish/{game_id}")
+async def tg_test_match_finish(
+    game_id: int,
+    reset: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    from app.services.telegram_posts import post_match_finish
+
+    if reset:
+        game = await db.get(Game, game_id)
+        if game:
+            game.finish_telegram_sent_at = None
+            await db.commit()
+    ok = await post_match_finish(db, game_id)
+    return {"game_id": game_id, "sent": ok}
+
+
+@router.post("/tg/test/game-event/{event_id}")
+async def tg_test_game_event(
+    event_id: int,
+    reset: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    from app.models import GameEvent
+    from app.services.telegram_posts import post_game_event
+
+    if reset:
+        ev = await db.get(GameEvent, event_id)
+        if ev:
+            ev.telegram_sent_at = None
+            await db.commit()
+    ok = await post_game_event(db, event_id)
+    return {"event_id": event_id, "sent": ok}
+
+
+@router.post("/tg/test/pregame-lineup/{game_id}")
+async def tg_test_pregame_lineup(
+    game_id: int,
+    reset: bool = Query(default=False),
+    skip_window: bool = Query(
+        default=True, description="Bypass the ±30 min window check (dev only)"
+    ),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    from app.services import telegram_posts as tp
+
+    if reset:
+        game = await db.get(Game, game_id)
+        if game:
+            game.lineup_telegram_sent_at = None
+            game.lineup_telegram_hash = None
+            await db.commit()
+
+    if skip_window:
+        # Monkey-patch the window check for this request only.
+        original = tp._within_pregame_window
+        tp._within_pregame_window = lambda _g: True
+        try:
+            ok = await tp.post_pregame_lineup(db, game_id)
+        finally:
+            tp._within_pregame_window = original
+    else:
+        ok = await tp.post_pregame_lineup(db, game_id)
+    return {"game_id": game_id, "sent": ok}
+
+
+@router.post("/tg/test/tour-announce")
+async def tg_test_tour_announce(
+    season_id: int = Query(...),
+    tour: int = Query(...),
+    for_date: _date_cls = Query(...),
+    reset: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    from app.services.telegram_posts import post_tour_announcement
+
+    if reset:
+        q = select(Game).where(
+            Game.season_id == season_id,
+            Game.tour == tour,
+            Game.date == for_date,
+        )
+        games = (await db.execute(q)).scalars().all()
+        for g in games:
+            g.announce_telegram_sent_at = None
+        await db.commit()
+    ok = await post_tour_announcement(db, season_id, tour, for_date)
+    return {"season_id": season_id, "tour": tour, "date": str(for_date), "sent": ok}

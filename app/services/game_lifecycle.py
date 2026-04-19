@@ -121,6 +121,7 @@ class GameLifecycleService:
         await self.db.commit()  # releases FOR UPDATE lock
         await set_live_flag()
         await _revalidate_match_page(game_id)
+        self._enqueue_telegram_start(game_id)
 
         # 2. Best-effort sync (outside lock — these have their own commits)
         if can_sync:
@@ -209,6 +210,7 @@ class GameLifecycleService:
 
         self._enqueue_post_finish(game)
         await _revalidate_match_page(game_id)
+        self._enqueue_telegram_finish(game_id)
         return {"game_id": game_id, "action": "finish_live"}
 
     async def start_second_half(self, game_id: int) -> dict:
@@ -319,6 +321,28 @@ class GameLifecycleService:
         except Exception:
             logger.exception(
                 "Failed to enqueue post_finish_followup for game %s", game.id
+            )
+
+    @staticmethod
+    def _enqueue_telegram_start(game_id: int) -> None:
+        try:
+            from app.tasks.telegram_tasks import post_match_start_task
+
+            post_match_start_task.delay(game_id)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue post_match_start_task for game %s", game_id
+            )
+
+    @staticmethod
+    def _enqueue_telegram_finish(game_id: int) -> None:
+        try:
+            from app.tasks.telegram_tasks import post_match_finish_task
+
+            post_match_finish_task.delay(game_id)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue post_match_finish_task for game %s", game_id
             )
 
     @staticmethod

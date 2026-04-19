@@ -22,6 +22,7 @@ from app.models.coach import Coach, TeamCoach, CoachRole
 from app.models.game_referee import GameReferee, RefereeRole
 from app.models.game_lineup import GameLineup, LineupType
 from app.models.game_event import GameEvent, GameEventType
+from app.models.game_live_input import GameLiveInput, GameLiveInputStatus
 from app.models.tour_sync_status import TourSyncStatus
 from app.models.fcms_roster_sync_log import FcmsRosterSyncLog
 
@@ -71,6 +72,8 @@ __all__ = [
     "LineupType",
     "GameEvent",
     "GameEventType",
+    "GameLiveInput",
+    "GameLiveInputStatus",
     "TourSyncStatus",
     "FcmsRosterSyncLog",
     # Legacy migration models
