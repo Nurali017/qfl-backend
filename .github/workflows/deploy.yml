@@ -9,7 +9,7 @@ jobs:
   build-and-deploy:
     name: Build & Deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -45,7 +45,7 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: 22
           timeout: 60s
-          command_timeout: 10m
+          command_timeout: 40m
           script: |
             set -e
             cd /home/debian/qfl
