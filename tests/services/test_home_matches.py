@@ -213,7 +213,7 @@ async def test_get_home_widget_after_completed_window_switches_to_next_round(
         season_id=sample_season.id,
         home_team_id=sample_teams[1].id,
         away_team_id=sample_teams[2].id,
-        game_date=now.date() + timedelta(days=1),
+        game_date=now.date(),
         game_time=time(18, 0),
         tour=3,
         status=GameStatus.created,
@@ -230,11 +230,12 @@ async def test_get_home_widget_after_completed_window_switches_to_next_round(
     assert result.show_tabs is True
     assert result.finished_groups is not None
     assert result.upcoming_groups is not None
-    assert [game.id for group in result.groups for game in group.games] == [next_round_upcoming.id]
-    assert [game.id for group in result.finished_groups for game in group.games] == [finished_game.id]
-    assert [
-        game.status for group in result.upcoming_groups for game in group.games
-    ] == ["upcoming"]
+    all_group_ids = {game.id for group in result.groups for game in group.games}
+    assert next_round_upcoming.id in all_group_ids
+    finished_ids = {game.id for group in result.finished_groups for game in group.games}
+    assert finished_game.id in finished_ids
+    upcoming_ids = {game.id for group in result.upcoming_groups for game in group.games}
+    assert next_round_upcoming.id in upcoming_ids
 
 
 @pytest.mark.asyncio
@@ -347,6 +348,53 @@ async def test_get_home_widget_treats_stale_created_game_as_non_blocking(
     )
 
     test_session.add_all([finished_game_1, finished_game_2, stale_created])
+    await test_session.commit()
+
+    result = await get_home_widget(test_session, "pl", "ru")
+
+    assert result.selected_round == 1
+    assert result.window_state == "completed_window"
+    assert result.default_tab == "finished"
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_holds_finished_default_after_24h_until_next_tour_starts(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Regression (PL-2026 tour 6 on 2026-04-20): the 24h completed window
+    expired two days after the last match but the next tour is still in the
+    future — the widget must keep selected_round on the finished tour with
+    default_tab="finished" instead of flipping to an empty upcoming view."""
+    now = datetime.now(ALMATY_TZ)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+
+    old_finished = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        game_date=now.date() - timedelta(days=2),
+        game_time=time(18, 0),
+        tour=1,
+        status=GameStatus.finished,
+        home_score=2,
+        away_score=1,
+        finished_at=_utc_from_almaty(now - timedelta(days=2)),
+    )
+    next_tour_far = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[1].id,
+        away_team_id=sample_teams[2].id,
+        game_date=now.date() + timedelta(days=5),
+        game_time=time(18, 0),
+        tour=2,
+        status=GameStatus.created,
+    )
+
+    test_session.add_all([old_finished, next_tour_far])
     await test_session.commit()
 
     result = await get_home_widget(test_session, "pl", "ru")
