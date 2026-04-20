@@ -45,15 +45,22 @@ async def get_season_attendance(
         db, season_id, season, max_round
     )
 
-    # Base filter: finished games with attendance data
+    # Base filter: finished games with attendance data.
+    #
+    # Only cap by tour when the caller explicitly passes ``max_round`` (used
+    # for cross-season "through tour N" comparisons on the stats page).  For
+    # the current-season default view we want to include every physically
+    # played match — a rescheduled fixture dropped into a far-off tour slot
+    # (e.g. PL-2026 tour 25 game #1081) still brought real visitors through
+    # the turnstiles.
     base_filter = [
         Game.season_id == season_id,
         Game.visitors.isnot(None),
         Game.visitors > 0,
         Game.status == GameStatus.finished,
     ]
-    if effective_max_round is not None:
-        base_filter.append(Game.tour <= effective_max_round)
+    if max_round is not None:
+        base_filter.append(Game.tour <= max_round)
 
     # --- 1. Summary ---
     summary_q = select(
