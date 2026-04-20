@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -93,3 +93,63 @@ async def test_download_and_link_persists_versioned_video_url(monkeypatch):
     upload_mock.assert_awaited_once()
     assert upload_mock.await_args.kwargs["object_name"] == event.video_url
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_download_and_link_posts_telegram_inline_from_payload(monkeypatch):
+    event = _event()
+    event.telegram_message_id = 555
+    drive_file = _drive_file(name="goal.mp4")
+    db = SimpleNamespace(commit=AsyncMock())
+    drive = SimpleNamespace(download_file=AsyncMock(return_value=b"goal-payload"))
+
+    monkeypatch.setattr(
+        gvs,
+        "get_settings",
+        lambda: SimpleNamespace(
+            goal_video_transcode_enabled=False,
+            goal_video_transcode_crf="20",
+            goal_video_transcode_preset="medium",
+        ),
+    )
+    monkeypatch.setattr(gvs.FileStorageService, "upload_file", AsyncMock())
+    monkeypatch.setattr(gvs, "_mark_processed", AsyncMock())
+    inline_mock = AsyncMock(return_value=True)
+    enqueue_mock = Mock()
+    monkeypatch.setattr(gvs, "_post_goal_video_from_payload", inline_mock)
+    monkeypatch.setattr(gvs, "_enqueue_goal_video_followup", enqueue_mock)
+
+    ok = await gvs._download_and_link(drive, db, drive_file, event)
+
+    assert ok is True
+    inline_mock.assert_awaited_once_with(db, drive_file, event, b"goal-payload")
+    enqueue_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_and_link_enqueues_fallback_when_inline_post_fails(monkeypatch):
+    event = _event()
+    event.telegram_message_id = 555
+    drive_file = _drive_file(name="goal.mp4")
+    db = SimpleNamespace(commit=AsyncMock())
+    drive = SimpleNamespace(download_file=AsyncMock(return_value=b"goal-payload"))
+
+    monkeypatch.setattr(
+        gvs,
+        "get_settings",
+        lambda: SimpleNamespace(
+            goal_video_transcode_enabled=False,
+            goal_video_transcode_crf="20",
+            goal_video_transcode_preset="medium",
+        ),
+    )
+    monkeypatch.setattr(gvs.FileStorageService, "upload_file", AsyncMock())
+    monkeypatch.setattr(gvs, "_mark_processed", AsyncMock())
+    monkeypatch.setattr(gvs, "_post_goal_video_from_payload", AsyncMock(return_value=False))
+    enqueue_mock = Mock()
+    monkeypatch.setattr(gvs, "_enqueue_goal_video_followup", enqueue_mock)
+
+    ok = await gvs._download_and_link(drive, db, drive_file, event)
+
+    assert ok is True
+    enqueue_mock.assert_called_once_with(event.id)

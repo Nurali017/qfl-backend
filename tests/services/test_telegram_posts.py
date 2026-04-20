@@ -241,6 +241,65 @@ async def test_post_game_event_goal_format(test_session, sample_public_game):
 
 
 @pytest.mark.asyncio
+async def test_post_game_event_enqueues_goal_video_when_video_already_present(
+    test_session,
+    sample_public_game,
+):
+    ev = GameEvent(
+        game_id=sample_public_game.id,
+        half=1,
+        minute=45,
+        event_type=GameEventType.goal,
+        player_name="Ivan Shushenachev",
+        team_id=sample_public_game.home_team_id,
+        video_url="goal_videos/1/2-demo.mp4",
+    )
+    test_session.add(ev)
+    await test_session.commit()
+
+    with patch(
+        "app.services.telegram_posts.send_public_telegram_message",
+        new=AsyncMock(return_value=987),
+    ), patch(
+        "app.tasks.telegram_tasks.post_goal_video_task.delay",
+    ) as delay_mock:
+        ok = await tp.post_game_event(test_session, ev.id)
+
+    assert ok is True
+    delay_mock.assert_called_once_with(ev.id)
+
+
+@pytest.mark.asyncio
+async def test_post_goal_video_from_file_updates_sent_timestamp(
+    test_session,
+    sample_public_game,
+):
+    ev = GameEvent(
+        game_id=sample_public_game.id,
+        half=1,
+        minute=12,
+        event_type=GameEventType.goal,
+        player_name="Ivan Shushenachev",
+        team_id=sample_public_game.home_team_id,
+        telegram_message_id=456,
+        video_url="goal_videos/1/2-demo.mp4",
+    )
+    test_session.add(ev)
+    await test_session.commit()
+
+    with patch(
+        "app.services.telegram_user_client.edit_public_user_message_media",
+        new=AsyncMock(return_value=True),
+    ) as edit_mock:
+        ok = await tp.post_goal_video_from_file(test_session, ev.id, "/tmp/goal.mp4")
+
+    assert ok is True
+    assert edit_mock.await_count == 1
+    await test_session.refresh(ev)
+    assert ev.telegram_video_sent_at is not None
+
+
+@pytest.mark.asyncio
 async def test_post_game_event_red_card_format(test_session, sample_public_game):
     ev = GameEvent(
         game_id=sample_public_game.id,

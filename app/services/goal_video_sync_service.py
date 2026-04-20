@@ -25,9 +25,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -350,6 +352,47 @@ def _object_name_for(event: GameEvent, drive_file: DriveFile, payload: bytes) ->
     return f"goal_videos/{event.game_id}/{event.id}-{version}.{ext}"
 
 
+def _temp_suffix_for(drive_file: DriveFile) -> str:
+    if "." in drive_file.name:
+        return "." + drive_file.name.rsplit(".", 1)[-1].lower()
+    guessed = mimetypes.guess_extension(drive_file.mime_type or "") or ".mp4"
+    return guessed if guessed.startswith(".") else f".{guessed}"
+
+
+def _enqueue_goal_video_followup(event_id: int) -> None:
+    try:
+        from app.tasks.telegram_tasks import post_goal_video_task
+
+        post_goal_video_task.delay(event_id)
+    except Exception:
+        logger.exception("failed to enqueue post_goal_video_task for %s", event_id)
+
+
+async def _post_goal_video_from_payload(
+    db: AsyncSession,
+    drive_file: DriveFile,
+    event: GameEvent,
+    payload: bytes,
+) -> bool:
+    from app.services.telegram_posts import post_goal_video_from_file
+
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            suffix=_temp_suffix_for(drive_file),
+            delete=False,
+        ) as tmp:
+            tmp.write(payload)
+            tmp_path = Path(tmp.name)
+        return await post_goal_video_from_file(db, event.id, tmp_path)
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                logger.debug("Cleanup of %s failed", tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # AI fallback (per-event) — when timing left something unmatched
 # ---------------------------------------------------------------------------
@@ -433,13 +476,20 @@ async def _download_and_link(
         len(payload) / 1024 / 1024,
     )
 
-    # Enqueue Telegram video attach if goal text was already posted.
+    # Attach the video on the media host while we still have the local payload.
+    # If that fails, fall back to the Celery retry path, which will re-read
+    # the clip from MinIO via event.video_url.
     if event.telegram_message_id and event.telegram_video_sent_at is None:
         try:
-            from app.tasks.telegram_tasks import post_goal_video_task
-            post_goal_video_task.delay(event.id)
+            inline_ok = await _post_goal_video_from_payload(db, drive_file, event, payload)
+            if not inline_ok:
+                _enqueue_goal_video_followup(event.id)
         except Exception:
-            logger.exception("failed to enqueue post_goal_video_task for %s", event.id)
+            logger.exception(
+                "inline goal video post failed for %s; enqueueing fallback",
+                event.id,
+            )
+            _enqueue_goal_video_followup(event.id)
     return True
 
 
