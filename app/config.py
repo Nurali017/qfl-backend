@@ -115,13 +115,6 @@ class Settings(BaseSettings):
     goal_video_transcode_crf: str = "20"
     goal_video_transcode_preset: str = "medium"
 
-    # Live streaming
-    livestream_enabled: bool = False
-    livestream_provider: str = "cloudflare"  # cloudflare | yandex | mock
-    cf_stream_account_id: str = ""
-    cf_stream_api_token: str = ""
-    cf_stream_subdomain: str = ""
-    cf_stream_allowed_origins: str = ""  # Comma-separated — restricts embed/playback origins
 
     class Config:
         env_file = ".env"
