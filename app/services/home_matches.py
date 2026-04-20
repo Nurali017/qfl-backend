@@ -143,7 +143,15 @@ async def get_home_widget(
             lang,
         )
         upcoming_groups = await _enrich_and_group(db, season_id, next_games, lang)
+        # Hold the "finished" view on the completed tour until the next tour
+        # actually begins.  Without this the widget would flip to an empty
+        # upcoming tab once the 24h window expires even though the next
+        # match-day is still days away.
         in_completed_window = completed_window_expires_at is not None
+        if not in_completed_window and _tour_is_fully_terminal(hint_games, today):
+            nearest = _nearest_upcoming_date(next_games)
+            if nearest is None or nearest > today:
+                in_completed_window = True
         return HomeMatchesWidgetResponse(
             frontend_code=frontend_code,
             season_id=season_id,
@@ -356,6 +364,15 @@ def _game_finished_at(game: Game) -> datetime | None:
     # Fallback: scheduled date+time (Almaty local)
     t = game.time if game.time is not None else time_type(23, 59, 59)
     return datetime.combine(game.date, t, tzinfo=ALMATY_TZ)
+
+
+def _nearest_upcoming_date(games: list[Game]) -> date | None:
+    """Earliest scheduled day among not-yet-played games in the collection."""
+    dates = [
+        g.date for g in games
+        if g.status in (GameStatus.created, GameStatus.live) and g.date is not None
+    ]
+    return min(dates) if dates else None
 
 
 def _recent_completion_expires(
@@ -600,6 +617,11 @@ async def _get_widget_group(
         )
         upcoming_groups = _group_widget_games(next_games, lang)
         in_completed_window = completed_window_expires_at is not None
+        # Hold finished tab until the next tour physically begins.
+        if not in_completed_window and _tour_is_fully_terminal(hint_games, today):
+            nearest = _nearest_upcoming_date(next_games)
+            if nearest is None or nearest > today:
+                in_completed_window = True
         return HomeMatchesWidgetResponse(
             frontend_code=frontend_code,
             season_id=season_id,
