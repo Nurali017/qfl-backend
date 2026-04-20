@@ -18,7 +18,7 @@ class AdminNewsTranslationPayload(BaseModel):
     championship_code: str | None = None
     article_type: str | None = None
     is_slider: bool = False
-    slider_order: int | None = None
+    slider_order: int | None = Field(default=None, gt=0)
     publish_date: date | None = None
     source_url: str | None = None
 
@@ -34,7 +34,7 @@ class AdminNewsTranslationPatchPayload(BaseModel):
     championship_code: str | None = None
     article_type: str | None = None
     is_slider: bool | None = None
-    slider_order: int | None = None
+    slider_order: int | None = Field(default=None, gt=0)
     publish_date: date | None = None
     source_url: str | None = None
 
