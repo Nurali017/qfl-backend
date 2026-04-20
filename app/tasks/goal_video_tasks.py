@@ -10,7 +10,9 @@ from app.utils.async_celery import run_async
 logger = logging.getLogger(__name__)
 
 _LOCK_KEY = "qfl:goal-video-sync"
-_LOCK_TTL = 120  # 2 min — matches the beat interval
+# 10 min — covers a cycle that transcodes several clips in series.
+# Short TTL lets next beat tick race with the running task on the same files.
+_LOCK_TTL = 600
 
 
 @celery_app.task(name="app.tasks.goal_video_tasks.sync_goal_videos_task")
