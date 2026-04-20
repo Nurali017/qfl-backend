@@ -185,6 +185,7 @@ async def edit_public_user_message_media(
             caption_text,
             file=file_path,
             formatting_entities=entities if entities else None,
+            supports_streaming=True,
         )
         return True
     except (
