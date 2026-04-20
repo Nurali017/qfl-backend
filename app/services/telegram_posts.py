@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import html
 import logging
-import os
 from pathlib import Path
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime, time, timedelta
@@ -360,10 +359,8 @@ async def post_tour_announcement(
 
     text = "\n".join(lines)
 
-    sent = await _post_tour_with_logo(games[0].season, text)
-    if not sent:
-        sent = await send_public_telegram_message(text)
-    if not sent:
+    ok = await send_public_telegram_message(text)
+    if not ok:
         return False
 
     now = utcnow()
@@ -371,45 +368,6 @@ async def post_tour_announcement(
         g.announce_telegram_sent_at = now
     await db.commit()
     return True
-
-
-async def _post_tour_with_logo(season: Season | None, caption_html: str) -> bool:
-    """Attach season.logo as a photo with the tour schedule as caption.
-
-    Returns True on success, False if there's no logo or fetch/upload fails —
-    caller should fall back to a plain text post.
-    """
-    if season is None or not season.logo:
-        return False
-    import tempfile
-    from pathlib import Path
-    import httpx
-    from app.services.telegram_user_client import send_public_user_photo
-
-    base_url = (
-        os.environ.get("FRONTEND_PUBLIC_URL")
-        or "https://kffleague.kz"
-    ).rstrip("/")
-    logo_path = season.logo if season.logo.startswith(("http://", "https://")) else (
-        base_url + ("" if season.logo.startswith("/") else "/") + season.logo
-    )
-    try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
-            r = await c.get(logo_path)
-        if r.status_code != 200 or not r.content:
-            logger.warning("Tour announce: logo fetch %s → %s", logo_path, r.status_code)
-            return False
-    except Exception:
-        logger.exception("Tour announce: logo fetch failed for %s", logo_path)
-        return False
-
-    tmp = Path(tempfile.mktemp(suffix=".png"))
-    try:
-        tmp.write_bytes(r.content)
-        msg_id = await send_public_user_photo(str(tmp), caption_html=caption_html)
-        return bool(msg_id)
-    finally:
-        tmp.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------- #
