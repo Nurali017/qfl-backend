@@ -446,6 +446,7 @@ async def _download_and_link(
                 payload,
                 crf=settings.goal_video_transcode_crf,
                 preset=settings.goal_video_transcode_preset,
+                threads=settings.goal_video_transcode_threads,
             )
             payload = result.data
         except Exception:

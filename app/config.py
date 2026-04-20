@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     goal_video_transcode_enabled: bool = True
     goal_video_transcode_crf: str = "20"
     goal_video_transcode_preset: str = "medium"
+    # "0" = let libx264 pick (usually all cores). On a dedicated media host we
+    # want all cores; on a shared box you may want to cap it.
+    goal_video_transcode_threads: str = "0"
 
 
     class Config:
