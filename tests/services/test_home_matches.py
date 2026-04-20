@@ -238,6 +238,124 @@ async def test_get_home_widget_after_completed_window_switches_to_next_round(
 
 
 @pytest.mark.asyncio
+async def test_get_home_widget_treats_postponed_tour_as_completed(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Regression (PL-2026 tour 6): a tour with all playable games finished and
+    one rescheduled fixture must open the 24h "finished" window, not stay
+    flagged as an active round."""
+    now = datetime.now(ALMATY_TZ)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+
+    finished_game_1 = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        game_date=now.date(),
+        game_time=time(18, 0),
+        tour=1,
+        status=GameStatus.finished,
+        home_score=2,
+        away_score=1,
+        finished_at=_utc_from_almaty(now - timedelta(hours=2)),
+    )
+    finished_game_2 = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[1].id,
+        away_team_id=sample_teams[2].id,
+        game_date=now.date(),
+        game_time=time(20, 0),
+        tour=1,
+        status=GameStatus.finished,
+        home_score=0,
+        away_score=0,
+        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
+    )
+    postponed_game = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[2].id,
+        away_team_id=sample_teams[0].id,
+        game_date=now.date(),
+        game_time=time(19, 0),
+        tour=1,
+        status=GameStatus.postponed,
+    )
+
+    test_session.add_all([finished_game_1, finished_game_2, postponed_game])
+    await test_session.commit()
+
+    result = await get_home_widget(test_session, "pl", "ru")
+
+    assert result.selected_round == 1
+    assert result.window_state == "completed_window"
+    assert result.default_tab == "finished"
+    assert result.completed_window_expires_at is not None
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_ignores_orphan_future_tour_fixture(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """A single fixture played in a far-off tour must not jump the hint forward.
+
+    Mirrors the PL-2026 scenario where one game was played in tour 25 while
+    tours 2..24 have not started yet — the widget should stay on tour 1.
+    """
+    now = datetime.now(ALMATY_TZ)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+
+    tour_1_finished = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        game_date=now.date(),
+        game_time=time(18, 0),
+        tour=1,
+        status=GameStatus.finished,
+        home_score=2,
+        away_score=0,
+        finished_at=_utc_from_almaty(now - timedelta(hours=3)),
+    )
+    tour_1_upcoming = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[1].id,
+        away_team_id=sample_teams[2].id,
+        game_date=now.date() + timedelta(days=1),
+        game_time=time(19, 0),
+        tour=1,
+        status=GameStatus.created,
+    )
+    orphan_future = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[2].id,
+        away_team_id=sample_teams[0].id,
+        game_date=now.date() - timedelta(days=5),
+        game_time=time(17, 0),
+        tour=25,
+        status=GameStatus.finished,
+        home_score=2,
+        away_score=0,
+        finished_at=_utc_from_almaty(now - timedelta(days=5)),
+    )
+
+    test_session.add_all([tour_1_finished, tour_1_upcoming, orphan_future])
+    await test_session.commit()
+
+    result = await get_home_widget(test_session, "pl", "ru")
+
+    assert result.selected_round == 1
+    assert result.window_state == "active_round"
+
+
+@pytest.mark.asyncio
 async def test_resolve_season_uses_almaty_today_helper(
     test_session,
     sample_championship,
