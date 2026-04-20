@@ -108,61 +108,56 @@ async def _apply_payload(
             )
             current_count = count_result.scalar_one()
             if current_count >= MAX_SLIDER_ITEMS:
-                # Auto-evict the lowest-priority slider item (highest slider_order)
+                # Auto-evict the lowest-priority item: prefer unpinned (NULL slider_order)
+                # and, within that group, the oldest publish_date.
                 oldest = (await db.execute(
                     select(News)
                     .where(News.is_slider == True, News.language == lang)
-                    .order_by(News.slider_order.desc())
+                    .order_by(
+                        News.slider_order.is_(None).desc(),
+                        News.slider_order.desc(),
+                        News.publish_date.asc(),
+                    )
                     .limit(1)
                 )).scalar_one_or_none()
                 if oldest:
-                    old_order = oldest.slider_order
                     oldest.is_slider = False
                     oldest.slider_order = None
-                    if old_order is not None:
-                        await db.execute(
-                            update(News)
-                            .where(
-                                News.is_slider == True,
-                                News.language == lang,
-                                News.slider_order > old_order,
-                            )
-                            .values(slider_order=News.slider_order - 1)
-                        )
 
-            # Transitioning to slider: auto-assign order if not explicitly provided
-            if not should_update("slider_order") or payload.slider_order is None:
-                max_order_result = await db.execute(
-                    select(func.max(News.slider_order)).where(
-                        News.is_slider == True,
-                        News.language == lang,
+            # Transitioning to slider: leave slider_order as NULL (auto by publish_date)
+            # unless an explicit positive order was provided in the payload.
+            if should_update("slider_order") and payload.slider_order is not None:
+                if payload.slider_order <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="slider_order must be a positive integer",
                     )
-                )
-                max_order = max_order_result.scalar_one_or_none() or 0
-                item.slider_order = max_order + 1
-            else:
-                # Explicit order: shift existing items to make room
+                # Explicit order: shift existing pins at or after this position
                 await db.execute(
                     update(News)
                     .where(
                         News.is_slider == True,
                         News.language == lang,
+                        News.slider_order.is_not(None),
                         News.slider_order >= payload.slider_order,
                     )
                     .values(slider_order=News.slider_order + 1)
                 )
                 item.slider_order = payload.slider_order
+            else:
+                item.slider_order = None
         elif not payload.is_slider and was_slider:
-            # Removing from slider: compact remaining orders
+            # Removing from slider: compact remaining pins above the old position
             old_order = item.slider_order
             item.slider_order = None
-            if old_order is not None:
+            if old_order is not None and old_order > 0:
                 lang = item.language
                 await db.execute(
                     update(News)
                     .where(
                         News.is_slider == True,
                         News.language == lang,
+                        News.slider_order.is_not(None),
                         News.slider_order > old_order,
                     )
                     .values(slider_order=News.slider_order - 1)
@@ -192,6 +187,11 @@ async def _apply_payload(
         # Only set explicit slider_order if is_slider transition didn't already handle it
         if not should_update("is_slider") or payload.is_slider == item.is_slider:
             new_order = payload.slider_order
+            if new_order is not None and new_order <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="slider_order must be a positive integer",
+                )
             old_order = item.slider_order
             if (
                 item.is_slider
@@ -206,6 +206,7 @@ async def _apply_payload(
                     .where(
                         News.is_slider == True,
                         News.language == lang,
+                        News.slider_order.is_not(None),
                         News.slider_order > old_order,
                         News.id != item.id,
                     )
@@ -217,12 +218,13 @@ async def _apply_payload(
                     .where(
                         News.is_slider == True,
                         News.language == lang,
+                        News.slider_order.is_not(None),
                         News.slider_order >= new_order,
                         News.id != item.id,
                     )
                     .values(slider_order=News.slider_order + 1)
                 )
-            item.slider_order = payload.slider_order
+            item.slider_order = new_order
     if should_update("publish_date"):
         item.publish_date = payload.publish_date
     if should_update("source_url"):

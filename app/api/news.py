@@ -218,7 +218,12 @@ async def get_slider_news(
     if championship_code:
         query = query.where(News.championship_code == championship_code)
 
-    query = query.order_by(asc(News.slider_order), desc(News.publish_date)).limit(limit)
+    # Manual pins (slider_order set to a positive integer) come first in ascending
+    # order; the rest fall back to newest-first by publish_date.
+    query = query.order_by(
+        asc(News.slider_order).nullslast(),
+        desc(News.publish_date),
+    ).limit(limit)
 
     result = await db.execute(query)
     return result.scalars().all()
