@@ -35,9 +35,28 @@ NON_BLOCKING_STATUSES = {GameStatus.postponed, GameStatus.cancelled}
 WINDOW_24H = timedelta(hours=24)
 
 
-def _is_playable(game: Game) -> bool:
-    """Game is part of the regular schedule (not postponed / cancelled)."""
-    return game.status not in NON_BLOCKING_STATUSES
+def _is_missed_schedule(game: Game, today: date) -> bool:
+    """Created game whose match-day has already passed.
+
+    Such a game is almost certainly a rescheduled fixture that was never
+    explicitly marked ``postponed``.  The widget treats it as non-blocking
+    so the rest of the tour can close.
+    """
+    if game.status != GameStatus.created:
+        return False
+    if game.date is None:
+        return False
+    return game.date < today
+
+
+def _is_playable(game: Game, today: date | None = None) -> bool:
+    """Game is part of the regular schedule (not postponed / cancelled /
+    stale-created past its match-day)."""
+    if game.status in NON_BLOCKING_STATUSES:
+        return False
+    if today is not None and _is_missed_schedule(game, today):
+        return False
+    return True
 
 _EAGER_OPTIONS = (
     selectinload(Game.home_team),
@@ -71,6 +90,7 @@ async def get_home_widget(
 
     hint = await _played_round_hint(db, season_id)
     now = _now_almaty()
+    today = now.date()
 
     # Rule 0: no played round → first upcoming tour
     if hint is None:
@@ -91,13 +111,13 @@ async def get_home_widget(
 
     # Rule 1: current tour is still ongoing → upcoming=current, finished=previous tour
     # "Ongoing" means the tour has at least one playable game that has not yet
-    # finished.  Postponed/cancelled games do not make a tour ongoing.
+    # finished.  Postponed/cancelled/missed-schedule games do not count.
     if hint_games and any(
-        g.status not in TERMINAL_STATUSES and _is_playable(g) for g in hint_games
+        g.status not in TERMINAL_STATUSES and _is_playable(g, today) for g in hint_games
     ):
         finished_groups = await _enrich_and_group(
             db, season_id,
-            previous_tour_games if _tour_is_fully_terminal(previous_tour_games) else [],
+            previous_tour_games if _tour_is_fully_terminal(previous_tour_games, today) else [],
             lang,
         )
         upcoming_groups = await _enrich_and_group(db, season_id, hint_games, lang)
@@ -115,11 +135,11 @@ async def get_home_widget(
         )
 
     # Rule 2: current tour already completed → upcoming=next tour, finished=current completed tour
-    completed_window_expires_at = _recent_completion_expires(hint_games, now)
+    completed_window_expires_at = _recent_completion_expires(hint_games, now, today)
     if next_games:
         finished_groups = await _enrich_and_group(
             db, season_id,
-            hint_games if _tour_is_fully_terminal(hint_games) else [],
+            hint_games if _tour_is_fully_terminal(hint_games, today) else [],
             lang,
         )
         upcoming_groups = await _enrich_and_group(db, season_id, next_games, lang)
@@ -172,21 +192,27 @@ def _finished_games(games: list[Game]) -> list[Game]:
     return [game for game in games if game.status in TERMINAL_STATUSES]
 
 
-def _unfinished_games(games: list[Game]) -> list[Game]:
-    """Playable games awaiting a result — postponed/cancelled are excluded."""
+def _unfinished_games(games: list[Game], today: date | None = None) -> list[Game]:
+    """Playable games awaiting a result.
+
+    Postponed/cancelled and stale-created games (scheduled day already passed)
+    are excluded — they do not represent fixtures that are still going to
+    happen on schedule.
+    """
     return [
         game for game in games
-        if game.status not in TERMINAL_STATUSES and _is_playable(game)
+        if game.status not in TERMINAL_STATUSES and _is_playable(game, today)
     ]
 
 
-def _tour_is_fully_terminal(games: list[Game]) -> bool:
+def _tour_is_fully_terminal(games: list[Game], today: date | None = None) -> bool:
     """Tour is done when every playable game is terminal and at least one is.
 
-    Postponed/cancelled games are skipped — a rescheduled fixture must not
-    keep the tour appearing "in progress" forever.
+    Postponed/cancelled and stale-created games are skipped — a rescheduled
+    fixture (whether formally marked or just missed from the calendar) must
+    not keep the tour appearing "in progress" forever.
     """
-    playable = [g for g in games if _is_playable(g)]
+    playable = [g for g in games if _is_playable(g, today)]
     if not playable:
         return False
     return all(g.status in TERMINAL_STATUSES for g in playable)
@@ -332,8 +358,10 @@ def _game_finished_at(game: Game) -> datetime | None:
     return datetime.combine(game.date, t, tzinfo=ALMATY_TZ)
 
 
-def _recent_completion_expires(games: list[Game], now: datetime) -> datetime | None:
-    if not _tour_is_fully_terminal(games):
+def _recent_completion_expires(
+    games: list[Game], now: datetime, today: date | None = None,
+) -> datetime | None:
+    if not _tour_is_fully_terminal(games, today):
         return None
     finished_times = [_game_finished_at(game) for game in games]
     valid = [finished_at for finished_at in finished_times if finished_at is not None]
@@ -522,6 +550,7 @@ async def _get_widget_group(
 
     hint = await _played_round_hint_for_group(db, season_id, team_ids)
     now = _now_almaty()
+    today = now.date()
 
     # Rule 0: no played round → first upcoming tour
     if hint is None:
@@ -542,10 +571,10 @@ async def _get_widget_group(
 
     # Rule 1: current tour is still ongoing (has a playable, not-yet-finished game)
     if hint_games and any(
-        g.status not in TERMINAL_STATUSES and _is_playable(g) for g in hint_games
+        g.status not in TERMINAL_STATUSES and _is_playable(g, today) for g in hint_games
     ):
         finished_groups = _group_widget_games(
-            previous_tour_games if _tour_is_fully_terminal(previous_tour_games) else [],
+            previous_tour_games if _tour_is_fully_terminal(previous_tour_games, today) else [],
             lang,
         )
         upcoming_groups = _group_widget_games(hint_games, lang)
@@ -563,10 +592,10 @@ async def _get_widget_group(
         )
 
     # Rule 2: current tour completed, next tour exists
-    completed_window_expires_at = _recent_completion_expires(hint_games, now)
+    completed_window_expires_at = _recent_completion_expires(hint_games, now, today)
     if next_games:
         finished_groups = _group_widget_games(
-            hint_games if _tour_is_fully_terminal(hint_games) else [],
+            hint_games if _tour_is_fully_terminal(hint_games, today) else [],
             lang,
         )
         upcoming_groups = _group_widget_games(next_games, lang)
