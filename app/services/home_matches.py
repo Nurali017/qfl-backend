@@ -7,8 +7,12 @@ Selection rules:
 0. played_round_hint is null  → first upcoming tour
 1. hint has non-terminal games → upcoming=current tour, finished=previous tour
 2. hint fully terminal + next tour exists → upcoming=next tour, finished=hint
-3. hint fully terminal in 24h window → default finished for 24h
+3. hint fully terminal in 48h window → default finished for 48h
 4. fallback                   → nearest available games
+
+"Completed window" (48h) controls default_tab after the last terminal match
+in a tour: within 48h → default_tab="finished"; past 48h → default_tab=
+"upcoming" (next tour).
 """
 
 import logging
@@ -32,7 +36,7 @@ logger = logging.getLogger(__name__)
 ALMATY_TZ = ZoneInfo("Asia/Almaty")
 TERMINAL_STATUSES = {GameStatus.finished, GameStatus.technical_defeat}
 NON_BLOCKING_STATUSES = {GameStatus.postponed, GameStatus.cancelled}
-WINDOW_24H = timedelta(hours=24)
+COMPLETED_WINDOW = timedelta(hours=48)
 
 
 OUTLIER_FUTURE_THRESHOLD = timedelta(days=14)
@@ -186,15 +190,7 @@ async def get_home_widget(
             lang,
         )
         upcoming_groups = await _enrich_and_group(db, season_id, next_games, lang)
-        # Hold the "finished" view on the completed tour until the next tour
-        # actually begins.  Without this the widget would flip to an empty
-        # upcoming tab once the 24h window expires even though the next
-        # match-day is still days away.
         in_completed_window = completed_window_expires_at is not None
-        if not in_completed_window and _tour_is_fully_terminal(hint_games, today):
-            nearest = _nearest_upcoming_date(next_games)
-            if nearest is None or nearest > today:
-                in_completed_window = True
         return HomeMatchesWidgetResponse(
             frontend_code=frontend_code,
             season_id=season_id,
@@ -413,26 +409,22 @@ def _game_finished_at(game: Game) -> datetime | None:
     return datetime.combine(game.date, t, tzinfo=ALMATY_TZ)
 
 
-def _nearest_upcoming_date(games: list[Game]) -> date | None:
-    """Earliest scheduled day among not-yet-played games in the collection."""
-    dates = [
-        g.date for g in games
-        if g.status in (GameStatus.created, GameStatus.live) and g.date is not None
-    ]
-    return min(dates) if dates else None
-
-
 def _recent_completion_expires(
     games: list[Game], now: datetime, today: date | None = None,
 ) -> datetime | None:
+    """Expiry of the 48h "completed" window anchored on the last terminal
+    match of the tour.  Postponed / cancelled / stale-created games are
+    ignored when picking the anchor — otherwise a fixture rescheduled to
+    September would keep the window open for months."""
     if not _tour_is_fully_terminal(games, today):
         return None
-    finished_times = [_game_finished_at(game) for game in games]
+    terminal_games = [g for g in games if g.status in TERMINAL_STATUSES]
+    finished_times = [_game_finished_at(game) for game in terminal_games]
     valid = [finished_at for finished_at in finished_times if finished_at is not None]
     if not valid:
         return None
     last_finished_at = max(valid)
-    expires_at = last_finished_at + WINDOW_24H
+    expires_at = last_finished_at + COMPLETED_WINDOW
     return expires_at if expires_at > now else None
 
 
@@ -666,11 +658,6 @@ async def _get_widget_group(
         )
         upcoming_groups = _group_widget_games(next_games, lang)
         in_completed_window = completed_window_expires_at is not None
-        # Hold finished tab until the next tour physically begins.
-        if not in_completed_window and _tour_is_fully_terminal(hint_games, today):
-            nearest = _nearest_upcoming_date(next_games)
-            if nearest is None or nearest > today:
-                in_completed_window = True
         return HomeMatchesWidgetResponse(
             frontend_code=frontend_code,
             season_id=season_id,

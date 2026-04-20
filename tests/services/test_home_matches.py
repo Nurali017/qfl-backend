@@ -201,13 +201,13 @@ async def test_get_home_widget_after_completed_window_switches_to_next_round(
         season_id=sample_season.id,
         home_team_id=sample_teams[0].id,
         away_team_id=sample_teams[1].id,
-        game_date=(now - timedelta(days=2)).date(),
+        game_date=(now - timedelta(days=3)).date(),
         game_time=time(16, 0),
         tour=2,
         status=GameStatus.finished,
         home_score=1,
         away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(hours=30)),
+        finished_at=_utc_from_almaty(now - timedelta(hours=60)),
     )
     next_round_upcoming = _make_game(
         season_id=sample_season.id,
@@ -358,31 +358,30 @@ async def test_get_home_widget_treats_stale_created_game_as_non_blocking(
 
 
 @pytest.mark.asyncio
-async def test_get_home_widget_holds_finished_default_after_24h_until_next_tour_starts(
+async def test_get_home_widget_stays_in_completed_window_within_48h(
     test_session,
     sample_season,
     sample_teams,
 ):
-    """Regression (PL-2026 tour 6 on 2026-04-20): the 24h completed window
-    expired two days after the last match but the next tour is still in the
-    future — the widget must keep selected_round on the finished tour with
-    default_tab="finished" instead of flipping to an empty upcoming view."""
+    """Completed tour stays on default_tab=finished for 48h after the last
+    terminal match, then flips to upcoming (regardless of when the next
+    tour physically starts)."""
     now = datetime.now(ALMATY_TZ)
 
     sample_season.frontend_code = "pl"
     sample_season.is_current = True
 
-    old_finished = _make_game(
+    recent_finished = _make_game(
         season_id=sample_season.id,
         home_team_id=sample_teams[0].id,
         away_team_id=sample_teams[1].id,
-        game_date=now.date() - timedelta(days=2),
+        game_date=now.date() - timedelta(days=1),
         game_time=time(18, 0),
         tour=1,
         status=GameStatus.finished,
         home_score=2,
         away_score=1,
-        finished_at=_utc_from_almaty(now - timedelta(days=2)),
+        finished_at=_utc_from_almaty(now - timedelta(hours=40)),
     )
     next_tour_far = _make_game(
         season_id=sample_season.id,
@@ -394,7 +393,7 @@ async def test_get_home_widget_holds_finished_default_after_24h_until_next_tour_
         status=GameStatus.created,
     )
 
-    test_session.add_all([old_finished, next_tour_far])
+    test_session.add_all([recent_finished, next_tour_far])
     await test_session.commit()
 
     result = await get_home_widget(test_session, "pl", "ru")
