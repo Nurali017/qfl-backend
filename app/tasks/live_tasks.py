@@ -451,12 +451,17 @@ async def _post_finish_followup(game_id: int):
                     except Exception:
                         logger.exception("Tour completion check dispatch failed")
 
-                # 2b. Team-of-week sync: all games in tour completed?
+                # 2b. Team-of-week sync: all playable games in tour completed?
+                # Postponed/cancelled matches are treated as non-blocking so a
+                # rescheduled fixture cannot stall tour-of-week generation.
                 try:
                     TERMINAL = {GameStatus.finished, GameStatus.technical_defeat}
+                    NON_BLOCKING = (GameStatus.postponed, GameStatus.cancelled)
                     tour_check = await db.execute(
                         select(
-                            func.count().label("total"),
+                            func.count(case(
+                                (Game.status.notin_(NON_BLOCKING), 1),
+                            )).label("total"),
                             func.count(case(
                                 (
                                     Game.status.in_(TERMINAL)

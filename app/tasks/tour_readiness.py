@@ -7,9 +7,11 @@ from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Game
+from app.models import Game, GameStatus
 from app.models.tour_sync_status import TourSyncStatus
 from app.utils.timestamps import utcnow
+
+NON_BLOCKING_STATUSES = (GameStatus.postponed, GameStatus.cancelled)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -43,15 +45,21 @@ async def maybe_trigger_tour_revalidation(
     """
     from app.tasks.sync_tasks import trigger_stats_revalidation
 
-    # Condition 1+2: game-level completeness
+    # Condition 1+2: game-level completeness.  Postponed/cancelled games are
+    # excluded from the total — a rescheduled fixture must not block the rest
+    # of the tour from being marked ready.
+    playable = Game.status.notin_(NON_BLOCKING_STATUSES)
     row = (await db.execute(
         select(
-            func.count().label("total"),
+            func.count(case((playable, 1))).label("total"),
             func.count(case((
-                Game.home_score.isnot(None) & Game.away_score.isnot(None), 1
+                playable
+                & Game.home_score.isnot(None)
+                & Game.away_score.isnot(None),
+                1,
             ))).label("scored"),
             func.count(case((
-                Game.extended_stats_synced_at.isnot(None), 1
+                playable & Game.extended_stats_synced_at.isnot(None), 1
             ))).label("ext_synced"),
         ).where(Game.season_id == season_id, Game.tour == tour)
     )).one()

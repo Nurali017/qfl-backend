@@ -124,27 +124,9 @@ async def get_seasons(db: AsyncSession = Depends(get_db)):
     seasons = result.scalars().all()
 
     # Batch-compute current_round for all seasons
-    played_round_by_season: dict[int, int] = {}
+    from app.services.season_scope import compute_current_rounds
     season_ids = [s.id for s in seasons]
-    if season_ids:
-        played_round_result = await db.execute(
-            select(
-                Game.season_id,
-                func.max(Game.tour).label("max_played_tour"),
-            )
-            .where(
-                Game.season_id.in_(season_ids),
-                Game.tour.isnot(None),
-                Game.home_score.isnot(None),
-                Game.away_score.isnot(None),
-            )
-            .group_by(Game.season_id)
-        )
-        played_round_by_season = {
-            sid: int(mt)
-            for sid, mt in played_round_result.all()
-            if sid is not None and mt is not None
-        }
+    played_round_by_season = await compute_current_rounds(db, season_ids)
 
     items = []
     for s in seasons:
@@ -176,16 +158,10 @@ async def update_season_sync(
     await db.commit()
     await db.refresh(season)
 
-    played_round = (await db.execute(
-        select(func.max(Game.tour)).where(
-            Game.season_id == season_id,
-            Game.tour.isnot(None),
-            Game.home_score.isnot(None),
-            Game.away_score.isnot(None),
-        )
-    )).scalar()
+    from app.services.season_scope import compute_current_rounds
+    played_round_by_season = await compute_current_rounds(db, [season_id])
 
-    return _build_season_response(season, current_round=int(played_round) if played_round is not None else None)
+    return _build_season_response(season, current_round=played_round_by_season.get(season_id))
 
 
 @router.get("/{season_id}", response_model=SeasonResponse)
@@ -204,16 +180,10 @@ async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
-    played_round = (await db.execute(
-        select(func.max(Game.tour)).where(
-            Game.season_id == season_id,
-            Game.tour.isnot(None),
-            Game.home_score.isnot(None),
-            Game.away_score.isnot(None),
-        )
-    )).scalar()
+    from app.services.season_scope import compute_current_rounds
+    played_round_by_season = await compute_current_rounds(db, [season_id])
 
-    return _build_season_response(season, current_round=int(played_round) if played_round is not None else None)
+    return _build_season_response(season, current_round=played_round_by_season.get(season_id))
 
 
 # ──────────────────────────────────────────
