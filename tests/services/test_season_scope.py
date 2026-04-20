@@ -294,7 +294,7 @@ async def test_current_rounds_ignores_orphan_early_played_fixture(
 
 
 @pytest.mark.asyncio
-async def test_current_rounds_falls_back_to_max_finished_when_all_played(
+async def test_current_rounds_returns_max_consecutive_played_tour(
     test_session, sample_season, sample_teams,
 ):
     """If every tour is fully played, current_round = max finished tour."""
@@ -317,6 +317,60 @@ async def test_current_rounds_falls_back_to_max_finished_when_all_played(
 
     result = await compute_current_rounds(test_session, [sample_season.id])
     assert result == {sample_season.id: 2}
+
+
+@pytest.mark.asyncio
+async def test_current_rounds_omits_season_with_no_played_games(
+    test_session, sample_season, sample_teams,
+):
+    """Season whose matches are all pending is not included in the mapping."""
+    sample_season.has_table = True
+    sample_season.tournament_format = "round_robin"
+
+    test_session.add_all([
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=None, away_score=None, status=GameStatus.created,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=2,
+            home_score=None, away_score=None, status=GameStatus.created,
+        ),
+    ])
+    await test_session.commit()
+
+    result = await compute_current_rounds(test_session, [sample_season.id])
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_current_rounds_stops_at_first_gap(
+    test_session, sample_season, sample_teams,
+):
+    """Tour 1 finished, tour 2 has no finished game, tour 3 finished → current = 1."""
+    sample_season.has_table = True
+    sample_season.tournament_format = "round_robin"
+
+    test_session.add_all([
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=1, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=2,
+            home_score=None, away_score=None, status=GameStatus.created,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=3,
+            home_score=3, away_score=2, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+    ])
+    await test_session.commit()
+
+    result = await compute_current_rounds(test_session, [sample_season.id])
+    assert result == {sample_season.id: 1}
 
 
 @pytest.mark.asyncio

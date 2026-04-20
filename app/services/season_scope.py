@@ -108,39 +108,45 @@ async def compute_current_rounds(
     db: AsyncSession,
     season_ids: list[int],
 ) -> dict[int, int]:
-    """Return ``{season_id: current_round}`` for round-robin-style seasons.
+    """Return ``{season_id: current_round}`` for tour-based seasons.
 
-    ``current_round`` is the first tour that still has at least one playable
-    game (``status in (created, live)``).  If every tour has been fully played,
-    falls back to the highest tour with a terminal game.  This formulation
-    ignores "orphan" future-tour matches (e.g. a rescheduled fixture assigned
-    to a much later tour), which would otherwise pull ``current_round``
-    forward and desync the UI.
+    ``current_round`` is the highest tour T such that for every k in
+    ``[min_tour, T]`` at least one match in tour k has reached a terminal
+    status (``finished`` / ``technical_defeat``).  Tours beyond the first
+    consecutive gap are ignored — this drops "orphan" future-tour fixtures
+    (e.g. a rescheduled match assigned to tour 25 while tour 7 has not yet
+    started) that previously pulled ``current_round`` forward and desynced
+    the UI.
+
+    Returns nothing for seasons that have no terminal games yet.
     """
     if not season_ids:
         return {}
 
-    playable = Game.status.in_((GameStatus.created, GameStatus.live))
-    terminal = Game.status.in_((GameStatus.finished, GameStatus.technical_defeat))
-
     result = await db.execute(
-        select(
-            Game.season_id,
-            func.min(case((playable, Game.tour))).label("min_active"),
-            func.max(case((terminal, Game.tour))).label("max_finished"),
-        )
+        select(Game.season_id, Game.tour)
         .where(
             Game.season_id.in_(season_ids),
             Game.tour.isnot(None),
+            Game.status.in_((GameStatus.finished, GameStatus.technical_defeat)),
         )
-        .group_by(Game.season_id)
+        .distinct()
     )
 
-    out: dict[int, int] = {}
-    for sid, min_active, max_finished in result.all():
-        if sid is None:
+    tours_by_season: dict[int, set[int]] = {}
+    for sid, tour in result.all():
+        if sid is None or tour is None:
             continue
-        value = min_active if min_active is not None else max_finished
-        if value is not None:
-            out[sid] = int(value)
+        tours_by_season.setdefault(sid, set()).add(int(tour))
+
+    out: dict[int, int] = {}
+    for sid, tours in tours_by_season.items():
+        ordered = sorted(tours)
+        current = ordered[0]
+        for t in ordered[1:]:
+            if t == current + 1:
+                current = t
+            else:
+                break
+        out[sid] = current
     return out
