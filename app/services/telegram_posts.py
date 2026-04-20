@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import html
 import logging
+from pathlib import Path
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime, time, timedelta
 
@@ -491,25 +492,19 @@ async def post_game_event(db: AsyncSession, event_id: int) -> bool:
     event.telegram_message_id = msg_id
     await db.commit()
 
-    # If video already present, fire the video post right after the text
-    # (non-blocking from the caller's perspective — still awaited here for
-    # local testing, but in prod it is queued via its own Celery task).
+    # If video already present, queue the video attach on its dedicated worker.
     if getattr(event, "video_url", None):
         try:
-            await post_goal_video(db, event.id)
+            from app.tasks.telegram_tasks import post_goal_video_task
+
+            post_goal_video_task.delay(event.id)
         except Exception:
-            logger.exception("failed to post goal video for event %s", event.id)
+            logger.exception("failed to enqueue goal video for event %s", event.id)
 
     return True
 
 
-async def post_goal_video(db: AsyncSession, event_id: int) -> bool:
-    """Attach the goal clip to the existing text goal post via edit_message."""
-    import httpx
-    import tempfile
-    from pathlib import Path
-    from app.services.telegram_user_client import edit_public_user_message_media
-
+async def _load_goal_video_event(db: AsyncSession, event_id: int) -> GameEvent | None:
     q = (
         select(GameEvent)
         .where(GameEvent.id == event_id)
@@ -518,23 +513,10 @@ async def post_goal_video(db: AsyncSession, event_id: int) -> bool:
             selectinload(GameEvent.game).selectinload(Game.away_team),
         )
     )
-    event = (await db.execute(q)).scalar_one_or_none()
-    if event is None:
-        return False
-    if event.event_type not in GOAL_TYPES:
-        return False
-    if event.telegram_video_sent_at is not None:
-        return False
-    if not event.telegram_message_id:
-        return False
-    video_url = getattr(event, "video_url", None)
-    if not video_url:
-        return False
+    return (await db.execute(q)).scalar_one_or_none()
 
-    # Rebuild the caption (same template as the original text post).
-    game = event.game
-    if game is None:
-        return False
+
+def _goal_video_caption_html(event: GameEvent, game: Game) -> str:
     home_e = _team_emoji(game.home_team)
     away_e = _team_emoji(game.away_team)
     score = (
@@ -545,11 +527,66 @@ async def post_goal_video(db: AsyncSession, event_id: int) -> bool:
     scorer_team_emoji = _team_emoji_for_event(event, game)
     surname = _esc(_surname(event.player_name))
     tag = _goal_tag(event)
-    caption_html = (
+    return (
         f"{GOAL_EMOJI_HTML}ГООООЛ\n\n"
         f"{scorer_team_emoji} {surname} {event.minute}'{tag}\n\n"
         f"{score}"
     )
+
+
+async def _post_goal_video_with_file(
+    db: AsyncSession,
+    event: GameEvent,
+    file_path: str,
+) -> bool:
+    from app.services.telegram_user_client import edit_public_user_message_media
+
+    if event is None:
+        return False
+    if event.event_type not in GOAL_TYPES:
+        return False
+    if event.telegram_video_sent_at is not None:
+        return False
+    if not event.telegram_message_id:
+        return False
+    game = event.game
+    if game is None:
+        return False
+    ok = await edit_public_user_message_media(
+        event.telegram_message_id,
+        file_path,
+        caption_html=_goal_video_caption_html(event, game),
+    )
+
+    if not ok:
+        return False
+
+    event.telegram_video_sent_at = utcnow()
+    await db.commit()
+    return True
+
+
+async def post_goal_video_from_file(
+    db: AsyncSession,
+    event_id: int,
+    file_path: str | Path,
+) -> bool:
+    """Attach the goal clip using a local file already present on this host."""
+    event = await _load_goal_video_event(db, event_id)
+    return await _post_goal_video_with_file(db, event, str(file_path))
+
+
+async def post_goal_video(db: AsyncSession, event_id: int) -> bool:
+    """Attach the goal clip to the existing text goal post via edit_message."""
+    import httpx
+    import tempfile
+
+    event = await _load_goal_video_event(db, event_id)
+    if event is None:
+        return False
+    video_url = getattr(event, "video_url", None)
+    if not video_url:
+        return False
 
     tmp_path: Path | None = None
     try:
@@ -562,24 +599,13 @@ async def post_goal_video(db: AsyncSession, event_id: int) -> bool:
                     async for chunk in r.aiter_bytes(chunk_size=1 << 20):
                         f.write(chunk)
 
-        ok = await edit_public_user_message_media(
-            event.telegram_message_id,
-            str(tmp_path),
-            caption_html=caption_html,
-        )
+        return await _post_goal_video_with_file(db, event, str(tmp_path))
     finally:
         if tmp_path is not None:
             try:
                 tmp_path.unlink(missing_ok=True)
             except Exception:
                 pass
-
-    if not ok:
-        return False
-
-    event.telegram_video_sent_at = utcnow()
-    await db.commit()
-    return True
 
 
 # ---------------------------------------------------------------------- #

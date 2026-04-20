@@ -32,6 +32,7 @@ celery_app.conf.update(
     task_soft_time_limit=600,
     task_time_limit=660,
     task_routes={
+        "app.tasks.goal_video_tasks.sync_goal_videos_task": {"queue": "media"},
         "app.tasks.live_tasks.sync_live_game_events": {"queue": "live"},
         "app.tasks.live_tasks.sync_single_game": {"queue": "live"},
         "app.tasks.live_tasks.auto_start_live_games": {"queue": "live"},
@@ -41,7 +42,7 @@ celery_app.conf.update(
         "app.tasks.telegram_tasks.post_match_finish_task": {"queue": "telegram"},
         "app.tasks.telegram_tasks.post_game_event_task": {"queue": "telegram"},
         "app.tasks.telegram_tasks.post_pregame_lineup_task": {"queue": "telegram"},
-        "app.tasks.telegram_tasks.post_goal_video_task": {"queue": "telegram"},
+        "app.tasks.telegram_tasks.post_goal_video_task": {"queue": "media"},
         "app.tasks.telegram_tasks.tour_announce_daily": {"queue": "telegram"},
     },
 )
