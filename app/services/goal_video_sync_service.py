@@ -22,6 +22,7 @@ Matching strategy (timing-first — filenames are unreliable):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import mimetypes
 from collections import defaultdict
@@ -333,14 +334,20 @@ def _optimal_time_match(
 # MinIO upload helpers
 # ---------------------------------------------------------------------------
 
-def _object_name_for(event: GameEvent, drive_file: DriveFile) -> str:
+def _content_hash(payload: bytes) -> str:
+    """Return a short stable hash for versioned goal-video object names."""
+    return hashlib.blake2b(payload, digest_size=8).hexdigest()
+
+
+def _object_name_for(event: GameEvent, drive_file: DriveFile, payload: bytes) -> str:
     ext = ""
     if "." in drive_file.name:
         ext = drive_file.name.rsplit(".", 1)[-1].lower()
     if not ext:
         guessed = mimetypes.guess_extension(drive_file.mime_type or "") or ".mp4"
         ext = guessed.lstrip(".")
-    return f"goal_videos/{event.game_id}/{event.id}.{ext}"
+    version = _content_hash(payload)
+    return f"goal_videos/{event.game_id}/{event.id}-{version}.{ext}"
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +408,7 @@ async def _download_and_link(
         except Exception:
             logger.exception("Transcode step failed for %s — uploading original", drive_file.id)
 
-    object_name = _object_name_for(event, drive_file)
+    object_name = _object_name_for(event, drive_file, payload)
     content_type = drive_file.mime_type or "video/mp4"
     try:
         await FileStorageService.upload_file(
