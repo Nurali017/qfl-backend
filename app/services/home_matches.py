@@ -31,7 +31,13 @@ logger = logging.getLogger(__name__)
 
 ALMATY_TZ = ZoneInfo("Asia/Almaty")
 TERMINAL_STATUSES = {GameStatus.finished, GameStatus.technical_defeat}
+NON_BLOCKING_STATUSES = {GameStatus.postponed, GameStatus.cancelled}
 WINDOW_24H = timedelta(hours=24)
+
+
+def _is_playable(game: Game) -> bool:
+    """Game is part of the regular schedule (not postponed / cancelled)."""
+    return game.status not in NON_BLOCKING_STATUSES
 
 _EAGER_OPTIONS = (
     selectinload(Game.home_team),
@@ -84,7 +90,11 @@ async def get_home_widget(
     next_games = by_tour.get(next_tour, [])
 
     # Rule 1: current tour is still ongoing → upcoming=current, finished=previous tour
-    if hint_games and any(g.status not in TERMINAL_STATUSES for g in hint_games):
+    # "Ongoing" means the tour has at least one playable game that has not yet
+    # finished.  Postponed/cancelled games do not make a tour ongoing.
+    if hint_games and any(
+        g.status not in TERMINAL_STATUSES and _is_playable(g) for g in hint_games
+    ):
         finished_groups = await _enrich_and_group(
             db, season_id,
             previous_tour_games if _tour_is_fully_terminal(previous_tour_games) else [],
@@ -163,11 +173,23 @@ def _finished_games(games: list[Game]) -> list[Game]:
 
 
 def _unfinished_games(games: list[Game]) -> list[Game]:
-    return [game for game in games if game.status not in TERMINAL_STATUSES]
+    """Playable games awaiting a result — postponed/cancelled are excluded."""
+    return [
+        game for game in games
+        if game.status not in TERMINAL_STATUSES and _is_playable(game)
+    ]
 
 
 def _tour_is_fully_terminal(games: list[Game]) -> bool:
-    return bool(games) and all(game.status in TERMINAL_STATUSES for game in games)
+    """Tour is done when every playable game is terminal and at least one is.
+
+    Postponed/cancelled games are skipped — a rescheduled fixture must not
+    keep the tour appearing "in progress" forever.
+    """
+    playable = [g for g in games if _is_playable(g)]
+    if not playable:
+        return False
+    return all(g.status in TERMINAL_STATUSES for g in playable)
 
 
 def _group_widget_games(games: list[Game], lang: str):
@@ -274,17 +296,17 @@ async def _resolve_season(db: AsyncSession, frontend_code: str) -> Season | None
 
 
 async def _played_round_hint(db: AsyncSession, season_id: int) -> int | None:
-    """Max tour where both scores are set (same as front-map current_round)."""
-    result = await db.execute(
-        select(func.max(Game.tour)).where(
-            Game.season_id == season_id,
-            Game.tour.isnot(None),
-            Game.home_score.isnot(None),
-            Game.away_score.isnot(None),
-        )
-    )
-    val = result.scalar()
-    return int(val) if val is not None else None
+    """Highest tour reached through consecutive play.
+
+    Uses the same max-consecutive-played-tour semantic as the public
+    ``current_round`` helper so the home widget does not jump to an orphan
+    future-tour fixture (e.g. a rescheduled match dropped into tour 25 while
+    tours 7..24 have not started yet).
+    """
+    from app.services.season_scope import compute_current_rounds
+
+    rounds = await compute_current_rounds(db, [season_id])
+    return rounds.get(season_id)
 
 
 async def _load_tours(
@@ -518,8 +540,10 @@ async def _get_widget_group(
     next_tour = hint + 1
     next_games = by_tour.get(next_tour, [])
 
-    # Rule 1: current tour is still ongoing
-    if hint_games and any(g.status not in TERMINAL_STATUSES for g in hint_games):
+    # Rule 1: current tour is still ongoing (has a playable, not-yet-finished game)
+    if hint_games and any(
+        g.status not in TERMINAL_STATUSES and _is_playable(g) for g in hint_games
+    ):
         finished_groups = _group_widget_games(
             previous_tour_games if _tour_is_fully_terminal(previous_tour_games) else [],
             lang,
