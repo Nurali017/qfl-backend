@@ -297,6 +297,66 @@ async def test_get_home_widget_treats_postponed_tour_as_completed(
 
 
 @pytest.mark.asyncio
+async def test_get_home_widget_treats_stale_created_game_as_non_blocking(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Regression (PL-2026 tour 6 live state): tour has finished games plus a
+    created fixture whose match-day has already passed — the match-day has
+    slipped but it was never explicitly marked postponed.  The widget must
+    treat the tour as closed for UI purposes (completed_window), not as an
+    active round dragging on forever."""
+    now = datetime.now(ALMATY_TZ)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+
+    finished_game_1 = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        game_date=now.date(),
+        game_time=time(16, 0),
+        tour=1,
+        status=GameStatus.finished,
+        home_score=2,
+        away_score=1,
+        finished_at=_utc_from_almaty(now - timedelta(hours=2)),
+    )
+    finished_game_2 = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[1].id,
+        away_team_id=sample_teams[2].id,
+        game_date=now.date(),
+        game_time=time(18, 0),
+        tour=1,
+        status=GameStatus.finished,
+        home_score=0,
+        away_score=0,
+        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
+    )
+    stale_created = _make_game(
+        season_id=sample_season.id,
+        home_team_id=sample_teams[2].id,
+        away_team_id=sample_teams[0].id,
+        game_date=now.date() - timedelta(days=3),
+        game_time=time(19, 0),
+        tour=1,
+        status=GameStatus.created,
+    )
+
+    test_session.add_all([finished_game_1, finished_game_2, stale_created])
+    await test_session.commit()
+
+    result = await get_home_widget(test_session, "pl", "ru")
+
+    assert result.selected_round == 1
+    assert result.window_state == "completed_window"
+    assert result.default_tab == "finished"
+
+
+@pytest.mark.asyncio
 async def test_get_home_widget_ignores_orphan_future_tour_fixture(
     test_session,
     sample_season,
