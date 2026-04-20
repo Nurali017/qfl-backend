@@ -726,6 +726,14 @@ async def get_season_statistics(
     # For knockout cups the game stats sync path is different and the column is
     # often NULL — we still want matches_played/goals/attendance from Game rows,
     # and fall back to None for GameTeamStats-derived fields when unavailable.
+    #
+    # We intentionally do NOT cap by ``Game.tour <= effective_max_round`` here.
+    # A rescheduled fixture played early and dropped into a far-off tour (e.g.
+    # tour 25) is still a real played match between two of this season's
+    # teams and must count towards matches_played / goals / discipline — the
+    # tour-number in the DB is bookkeeping, not physical reality.  Capping by
+    # tour would under-count any such orphan fixture and desync /statistics
+    # from /table which already aggregates all terminal games.
     game_base_filters = [
         Game.season_id == season_id,
         Game.home_score.isnot(None),
@@ -733,8 +741,6 @@ async def get_season_statistics(
     ]
     if not is_knockout:
         game_base_filters.append(Game.extended_stats_synced_at.isnot(None))
-    if effective_max_round is not None:
-        game_base_filters.append(Game.tour <= effective_max_round)
 
     # Query 1: Match stats from Game table
     game_stats_query = select(
@@ -773,14 +779,14 @@ async def get_season_statistics(
     penalties = team_row.penalties or 0
 
     def _event_count_filters(event_type: GameEventType):
+        # Intentionally not capping by ``Game.tour <= effective_max_round`` —
+        # see matching note at game_base_filters.
         filters = [
             Game.season_id == season_id,
             GameEvent.event_type == event_type,
         ]
         if not is_knockout:
             filters.append(Game.extended_stats_synced_at.isnot(None))
-        if effective_max_round is not None:
-            filters.append(Game.tour <= effective_max_round)
         return filters
 
     penalty_scored_query = select(func.count()).select_from(GameEvent).join(
@@ -879,6 +885,7 @@ async def get_season_statistics(
     shots_on_target_pct = round(total_shots_on_goal / total_shots * 100, 1) if total_shots > 0 else 0.0
 
     # Query 5: Clean sheets — count of 0-0 draws
+    # Intentionally not capping by tour — see game_base_filters note.
     clean_sheets_filters = [
         Game.season_id == season_id,
         Game.home_score == 0,
@@ -886,8 +893,6 @@ async def get_season_statistics(
     ]
     if not is_knockout:
         clean_sheets_filters.append(Game.extended_stats_synced_at.isnot(None))
-    if effective_max_round is not None:
-        clean_sheets_filters.append(Game.tour <= effective_max_round)
     clean_sheets_query = select(
         func.count().label("clean_sheets"),
     ).where(*clean_sheets_filters)
@@ -1004,10 +1009,10 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
     if not season:
         raise HTTPException(status_code=404, detail="Season not found")
 
-    _, effective_max_round = await compute_season_stats_scope(db, season_id, season)
-
     is_knockout = season.tournament_format == "knockout" or season.has_table is False
 
+    # Intentionally not capping by tour — see game_base_filters note in the
+    # /statistics endpoint above.
     game_filters = [
         Game.season_id == season_id,
         Game.home_score.isnot(None),
@@ -1015,8 +1020,6 @@ async def get_goals_by_period(season_id: int, db: AsyncSession = Depends(get_db)
     ]
     if not is_knockout:
         game_filters.append(Game.extended_stats_synced_at.isnot(None))
-    if effective_max_round is not None:
-        game_filters.append(Game.tour <= effective_max_round)
 
     matches_played_result = await db.execute(
         select(func.count()).select_from(Game).where(*game_filters)
