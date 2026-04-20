@@ -5,9 +5,12 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import Championship, Game, Season
+from app.models import Championship, Game, GameStatus, Season
 from app.models.tour_sync_status import TourSyncStatus
-from app.services.season_scope import compute_season_stats_scope
+from app.services.season_scope import (
+    compute_current_rounds,
+    compute_season_stats_scope,
+)
 
 EXT_SYNCED = datetime(2026, 3, 10, 12, 0, 0)
 
@@ -19,6 +22,7 @@ def _make_game(
     home_score: int | None = None,
     away_score: int | None = None,
     extended_stats_synced_at: datetime | None = None,
+    status: GameStatus = GameStatus.finished,
 ) -> Game:
     return Game(
         sota_id=uuid4(),
@@ -31,6 +35,7 @@ def _make_game(
         home_score=home_score,
         away_score=away_score,
         extended_stats_synced_at=extended_stats_synced_at,
+        status=status,
     )
 
 
@@ -198,6 +203,120 @@ async def test_scores_present_but_ext_stats_missing(test_session, sample_season,
     # Tour 2 has scores but missing ext stats → incomplete → max_completed = 1
     assert mcr == 1
     assert emr == 1
+
+
+@pytest.mark.asyncio
+async def test_postponed_match_does_not_block_tour_completion(
+    test_session, sample_season, sample_teams,
+):
+    """Regression: a postponed game must not keep the tour marked incomplete.
+
+    Scenario from PL-2026 tour 6: 7 matches finished + 1 rescheduled.  The
+    tour should still count as complete once the aggregate sync marker lands.
+    """
+    sample_season.has_table = True
+    sample_season.tournament_format = "round_robin"
+
+    test_session.add_all([
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=0, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+        # Postponed match — has no score and no ext stats, but must be skipped.
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=None, away_score=None,
+            status=GameStatus.postponed,
+        ),
+        _make_tss(sample_season.id, 1),
+    ])
+    await test_session.commit()
+
+    mcr, emr = await compute_season_stats_scope(
+        test_session, sample_season.id, sample_season,
+    )
+    assert mcr == 1
+    assert emr == 1
+
+
+@pytest.mark.asyncio
+async def test_current_rounds_ignores_orphan_early_played_fixture(
+    test_session, sample_season, sample_teams,
+):
+    """A single fixture played in a distant future tour must not jump current_round.
+
+    Scenario from PL-2026: match Qairat vs Kaspiy from tour 6 was moved to
+    tour 25 where it was played early while other tour-25 games stay upcoming.
+    Pre-fix the API returned current_round=25 (MAX(tour WHERE scored)); the
+    helper must return the first tour with pending/live play (6) instead.
+    """
+    sample_season.has_table = True
+    sample_season.tournament_format = "round_robin"
+
+    test_session.add_all([
+        # Tour 5: all played
+        _make_game(
+            season_id=sample_season.id, tour=5,
+            home_score=1, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+        # Tour 6: one still pending
+        _make_game(
+            season_id=sample_season.id, tour=6,
+            home_score=2, away_score=1, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=6,
+            home_score=None, away_score=None, status=GameStatus.created,
+        ),
+        # Tour 25: only the moved fixture played, the rest are upcoming
+        _make_game(
+            season_id=sample_season.id, tour=25,
+            home_score=2, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=25,
+            home_score=None, away_score=None, status=GameStatus.created,
+        ),
+    ])
+    await test_session.commit()
+
+    result = await compute_current_rounds(test_session, [sample_season.id])
+    assert result == {sample_season.id: 6}
+
+
+@pytest.mark.asyncio
+async def test_current_rounds_falls_back_to_max_finished_when_all_played(
+    test_session, sample_season, sample_teams,
+):
+    """If every tour is fully played, current_round = max finished tour."""
+    sample_season.has_table = True
+    sample_season.tournament_format = "round_robin"
+
+    test_session.add_all([
+        _make_game(
+            season_id=sample_season.id, tour=1,
+            home_score=1, away_score=0, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+        _make_game(
+            season_id=sample_season.id, tour=2,
+            home_score=2, away_score=2, extended_stats_synced_at=EXT_SYNCED,
+            status=GameStatus.finished,
+        ),
+    ])
+    await test_session.commit()
+
+    result = await compute_current_rounds(test_session, [sample_season.id])
+    assert result == {sample_season.id: 2}
 
 
 @pytest.mark.asyncio

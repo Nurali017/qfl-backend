@@ -3,7 +3,9 @@
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Game, Season, TourSyncStatus
+from app.models import Game, GameStatus, Season, TourSyncStatus
+
+NON_BLOCKING_STATUSES = (GameStatus.postponed, GameStatus.cancelled)
 
 
 async def compute_season_stats_scope(
@@ -21,9 +23,11 @@ async def compute_season_stats_scope(
     For knockout seasons the scope stays uncapped unless ``max_round`` is passed.
     """
 
-    # 1. First incomplete tour: min tour where not all games have scores
-    #    AND extended_stats_synced_at.  This ensures matches_played in the
-    #    statistics response always equals the expected total for tours 1..N.
+    # 1. First incomplete tour: min tour where not all *playable* games have
+    #    scores AND extended_stats_synced_at.  Postponed/cancelled games are
+    #    excluded from the total — a postponed match must not block the rest
+    #    of the tour from being considered complete.
+    playable_predicate = Game.status.notin_(NON_BLOCKING_STATUSES)
     incomplete_sq = (
         select(Game.tour)
         .where(
@@ -32,13 +36,14 @@ async def compute_season_stats_scope(
         )
         .group_by(Game.tour)
         .having(
-            func.count()
+            func.count(case((playable_predicate, 1)))
             != func.count(
                 case(
                     (
                         Game.home_score.isnot(None)
                         & Game.away_score.isnot(None)
-                        & Game.extended_stats_synced_at.isnot(None),
+                        & Game.extended_stats_synced_at.isnot(None)
+                        & playable_predicate,
                         1,
                     )
                 )
@@ -97,3 +102,45 @@ async def compute_season_stats_scope(
         effective_max_round = None
 
     return max_completed_round, effective_max_round
+
+
+async def compute_current_rounds(
+    db: AsyncSession,
+    season_ids: list[int],
+) -> dict[int, int]:
+    """Return ``{season_id: current_round}`` for round-robin-style seasons.
+
+    ``current_round`` is the first tour that still has at least one playable
+    game (``status in (created, live)``).  If every tour has been fully played,
+    falls back to the highest tour with a terminal game.  This formulation
+    ignores "orphan" future-tour matches (e.g. a rescheduled fixture assigned
+    to a much later tour), which would otherwise pull ``current_round``
+    forward and desync the UI.
+    """
+    if not season_ids:
+        return {}
+
+    playable = Game.status.in_((GameStatus.created, GameStatus.live))
+    terminal = Game.status.in_((GameStatus.finished, GameStatus.technical_defeat))
+
+    result = await db.execute(
+        select(
+            Game.season_id,
+            func.min(case((playable, Game.tour))).label("min_active"),
+            func.max(case((terminal, Game.tour))).label("max_finished"),
+        )
+        .where(
+            Game.season_id.in_(season_ids),
+            Game.tour.isnot(None),
+        )
+        .group_by(Game.season_id)
+    )
+
+    out: dict[int, int] = {}
+    for sid, min_active, max_finished in result.all():
+        if sid is None:
+            continue
+        value = min_active if min_active is not None else max_finished
+        if value is not None:
+            out[sid] = int(value)
+    return out
