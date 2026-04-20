@@ -477,6 +477,14 @@ async def _download_and_link(
         len(payload) / 1024 / 1024,
     )
 
+    # Bust the ISR cache of the match page so the fresh video_url is picked up
+    # by the public site without waiting for the revalidate interval.
+    try:
+        from app.services.game_lifecycle import _revalidate_match_page
+        await _revalidate_match_page(event.game_id)
+    except Exception:
+        logger.exception("revalidate match page failed for game %s", event.game_id)
+
     # Attach the video on the media host while we still have the local payload.
     # If that fails, fall back to the Celery retry path, which will re-read
     # the clip from MinIO via event.video_url.
