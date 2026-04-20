@@ -379,11 +379,22 @@ async def get_league_performance(
             int(x.strip()) for x in team_ids.split(",") if x.strip().isdigit()
         }
 
+    # Load both terminal games (for scoring) and postponed games (for the
+    # makeup-mapping below).  A rescheduled fixture played in a far-off tour
+    # slot should appear in the dynamics chart at the original tour it was
+    # supposed to be played in, not the placeholder slot it currently sits
+    # at (PL-2026: Qairat vs Kaspiy game #1081 in tour 25 is the makeup for
+    # postponed tour 6 game #926).
     query = (
         select(Game)
         .where(
             Game.season_id == season_id,
-            Game.status.in_([GameStatus.finished, GameStatus.technical_defeat, GameStatus.live]),
+            Game.status.in_([
+                GameStatus.finished,
+                GameStatus.technical_defeat,
+                GameStatus.live,
+                GameStatus.postponed,
+            ]),
             Game.tour.isnot(None),
         )
         .options(selectinload(Game.home_team), selectinload(Game.away_team))
@@ -396,11 +407,41 @@ async def get_league_performance(
     if not games:
         return {"season_id": season_id, "max_tour": 0, "total_rounds": total_rounds, "teams": []}
 
-    max_tour = max(g.tour for g in games)
+    # Build makeup map: earliest postponed-tour for each team pair.  If a
+    # later-tour terminal game between the same two teams exists, it is
+    # almost always the rescheduled makeup and belongs in the earlier slot.
+    postponed_tour_by_pair: dict[frozenset[int], int] = {}
+    for g in games:
+        if g.status != GameStatus.postponed:
+            continue
+        if g.home_team_id is None or g.away_team_id is None:
+            continue
+        pair = frozenset((g.home_team_id, g.away_team_id))
+        existing = postponed_tour_by_pair.get(pair)
+        if existing is None or g.tour < existing:
+            postponed_tour_by_pair[pair] = g.tour
 
+    def _effective_tour(g) -> int:
+        if g.home_team_id is None or g.away_team_id is None:
+            return g.tour
+        pair = frozenset((g.home_team_id, g.away_team_id))
+        makeup_tour = postponed_tour_by_pair.get(pair)
+        if makeup_tour is not None and g.tour > makeup_tour:
+            return makeup_tour
+        return g.tour
+
+    # Terminal games go into their effective tour; postponed games contribute
+    # nothing to positions (no score) so they are skipped entirely.
     games_by_tour: dict[int, list] = defaultdict(list)
     for g in games:
-        games_by_tour[g.tour].append(g)
+        if g.status == GameStatus.postponed:
+            continue
+        games_by_tour[_effective_tour(g)].append(g)
+
+    if not games_by_tour:
+        return {"season_id": season_id, "max_tour": 0, "total_rounds": total_rounds, "teams": []}
+
+    max_tour = max(games_by_tour.keys())
 
     # Collect all team IDs and info
     team_info: dict[int, dict] = {}
