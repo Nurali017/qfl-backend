@@ -35,6 +35,9 @@ NON_BLOCKING_STATUSES = {GameStatus.postponed, GameStatus.cancelled}
 WINDOW_24H = timedelta(hours=24)
 
 
+OUTLIER_FUTURE_THRESHOLD = timedelta(days=14)
+
+
 def _is_missed_schedule(game: Game, today: date) -> bool:
     """Created game whose match-day has already passed.
 
@@ -49,12 +52,50 @@ def _is_missed_schedule(game: Game, today: date) -> bool:
     return game.date < today
 
 
-def _is_playable(game: Game, today: date | None = None) -> bool:
-    """Game is part of the regular schedule (not postponed / cancelled /
-    stale-created past its match-day)."""
+def _tour_terminal_last_date(games: list[Game]) -> date | None:
+    """Latest scheduled date among already-played games in the collection."""
+    dates = [
+        g.date for g in games
+        if g.status in TERMINAL_STATUSES and g.date is not None
+    ]
+    return max(dates) if dates else None
+
+
+def _is_outlier_future(game: Game, tour_anchor: date | None) -> bool:
+    """Created game whose scheduled date is far beyond the tour's main cluster.
+
+    Covers the "admin pushed the fixture to a placeholder date two months
+    out" pattern: the tour has a tight match-day window but one fixture
+    sits well outside it.  Such a game is effectively rescheduled and must
+    not keep the tour appearing in progress.
+    """
+    if tour_anchor is None:
+        return False
+    if game.status != GameStatus.created:
+        return False
+    if game.date is None:
+        return False
+    return (game.date - tour_anchor) > OUTLIER_FUTURE_THRESHOLD
+
+
+def _is_playable(
+    game: Game,
+    today: date | None = None,
+    tour_anchor: date | None = None,
+) -> bool:
+    """Game is part of the regular schedule.
+
+    Excluded:
+    - postponed / cancelled
+    - stale-created past its match-day (``today`` required)
+    - created fixtures scheduled far outside the tour cluster
+      (``tour_anchor`` required)
+    """
     if game.status in NON_BLOCKING_STATUSES:
         return False
     if today is not None and _is_missed_schedule(game, today):
+        return False
+    if tour_anchor is not None and _is_outlier_future(game, tour_anchor):
         return False
     return True
 
@@ -111,9 +152,11 @@ async def get_home_widget(
 
     # Rule 1: current tour is still ongoing → upcoming=current, finished=previous tour
     # "Ongoing" means the tour has at least one playable game that has not yet
-    # finished.  Postponed/cancelled/missed-schedule games do not count.
+    # finished.  Postponed/cancelled/missed-schedule/outlier-future games do not count.
+    hint_tour_anchor = _tour_terminal_last_date(hint_games)
     if hint_games and any(
-        g.status not in TERMINAL_STATUSES and _is_playable(g, today) for g in hint_games
+        g.status not in TERMINAL_STATUSES and _is_playable(g, today, hint_tour_anchor)
+        for g in hint_games
     ):
         finished_groups = await _enrich_and_group(
             db, season_id,
@@ -203,24 +246,28 @@ def _finished_games(games: list[Game]) -> list[Game]:
 def _unfinished_games(games: list[Game], today: date | None = None) -> list[Game]:
     """Playable games awaiting a result.
 
-    Postponed/cancelled and stale-created games (scheduled day already passed)
-    are excluded — they do not represent fixtures that are still going to
-    happen on schedule.
+    Postponed/cancelled, stale-created, and outlier-future games are
+    excluded — they do not represent fixtures still going to happen on
+    schedule.
     """
+    tour_anchor = _tour_terminal_last_date(games)
     return [
         game for game in games
-        if game.status not in TERMINAL_STATUSES and _is_playable(game, today)
+        if game.status not in TERMINAL_STATUSES
+        and _is_playable(game, today, tour_anchor)
     ]
 
 
 def _tour_is_fully_terminal(games: list[Game], today: date | None = None) -> bool:
     """Tour is done when every playable game is terminal and at least one is.
 
-    Postponed/cancelled and stale-created games are skipped — a rescheduled
-    fixture (whether formally marked or just missed from the calendar) must
-    not keep the tour appearing "in progress" forever.
+    Postponed/cancelled, stale-created, and outlier-future games are
+    skipped — a rescheduled fixture (whether marked explicitly, missed on
+    the calendar, or moved far beyond the tour cluster) must not keep the
+    tour appearing "in progress" forever.
     """
-    playable = [g for g in games if _is_playable(g, today)]
+    tour_anchor = _tour_terminal_last_date(games)
+    playable = [g for g in games if _is_playable(g, today, tour_anchor)]
     if not playable:
         return False
     return all(g.status in TERMINAL_STATUSES for g in playable)
@@ -587,8 +634,10 @@ async def _get_widget_group(
     next_games = by_tour.get(next_tour, [])
 
     # Rule 1: current tour is still ongoing (has a playable, not-yet-finished game)
+    hint_tour_anchor = _tour_terminal_last_date(hint_games)
     if hint_games and any(
-        g.status not in TERMINAL_STATUSES and _is_playable(g, today) for g in hint_games
+        g.status not in TERMINAL_STATUSES and _is_playable(g, today, hint_tour_anchor)
+        for g in hint_games
     ):
         finished_groups = _group_widget_games(
             previous_tour_games if _tour_is_fully_terminal(previous_tour_games, today) else [],
