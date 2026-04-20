@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_CRF = "20"
 _DEFAULT_PRESET = "medium"
 _DEFAULT_AUDIO_BITRATE = "128k"
-# Cap ffmpeg CPU use so it doesn't starve Postgres/MinIO/backend on a 4 vCPU box.
-_DEFAULT_THREADS = "2"
+# "0" asks libx264 to auto-pick based on available cores; overridable via
+# GOAL_VIDEO_TRANSCODE_THREADS for shared hosts that need a cap.
+_DEFAULT_THREADS = "0"
 # Per-clip hard cap — well above a normal 30-sec clip transcode on 4 vCPU.
 _TRANSCODE_TIMEOUT_SECONDS = 15 * 60
 
