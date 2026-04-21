@@ -64,6 +64,10 @@ _UPLOAD_DELAY_MINUTES = 7
 _MATCH_WINDOW_MINUTES = 15
 _HALFTIME_BREAK_MINUTES = 15
 _DEFAULT_LOOKBACK_MINUTES = 24 * 60
+# Drive indexes ``modifiedTime`` with a few-minute lag, so we query with a
+# time window that overlaps the previously-seen pointer. ``_is_processed``
+# keeps this idempotent even when the same file shows up twice.
+_SINCE_OVERLAP_MINUTES = 15
 
 
 @dataclass
@@ -503,6 +507,32 @@ async def _download_and_link(
 
 
 # ---------------------------------------------------------------------------
+# Pointer advancement
+# ---------------------------------------------------------------------------
+
+def _compute_next_sync_pointer(
+    videos: list[DriveFile],
+    previous: datetime,
+) -> datetime:
+    """Pick the next ``last-sync`` cursor from what Drive returned.
+
+    Never advance past the latest ``modifiedTime`` we actually saw; if
+    Drive returned nothing, leave the pointer alone. Otherwise a file
+    whose Drive index arrives late (after our tick that would have
+    spotted it) falls off the horizon forever.
+    """
+    if not videos:
+        return previous
+    max_mod = max(
+        (v.modified_time for v in videos if v.modified_time),
+        default=None,
+    )
+    if max_mod is None:
+        return previous
+    return max(previous, max_mod)
+
+
+# ---------------------------------------------------------------------------
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
@@ -518,15 +548,15 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
 
     actives = await _load_active_games(db)
     if not actives:
-        await _store_last_sync(datetime.now(timezone.utc) - timedelta(minutes=5))
         return result
 
-    since = await _load_last_sync()
+    last_seen = await _load_last_sync()
+    since_query = last_seen - timedelta(minutes=_SINCE_OVERLAP_MINUTES)
     drive = get_drive_client()
     try:
         # max_depth=3 to support root → tour → [optional date] → match → clips.
         videos = await drive.list_recent_videos_recursive(
-            settings.google_drive_goals_folder_id, since=since, max_depth=3
+            settings.google_drive_goals_folder_id, since=since_query, max_depth=3
         )
     except Exception:
         logger.exception("Failed to list Drive videos")
@@ -535,15 +565,24 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
 
     result.listed = len(videos)
     if not videos:
-        await _store_last_sync(datetime.now(timezone.utc))
         return result
 
-    # Group videos by their match-folder label (deepest ancestor).
+    # Group videos by their match-folder label (deepest ancestor) and drop
+    # already-processed files up front — otherwise the folder→game AI
+    # matcher fires every tick for stale buckets that only carry overlap
+    # re-reads.
     buckets: dict[str, list[DriveFile]] = defaultdict(list)
     for v in videos:
         if not v.ancestor_names:
             continue
+        if await _is_processed(v.id):
+            result.skipped_already_processed += 1
+            continue
         buckets[v.ancestor_names[-1]].append(v)
+
+    if not buckets:
+        await _store_last_sync(_compute_next_sync_pointer(videos, last_seen))
+        return result
 
     ai = get_ai_matcher()
     all_candidates = [
@@ -577,22 +616,11 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
         folder_to_game[folder_name] = game
 
     # Phase 2: timing-based matching inside each folder.
-    for folder_name, folder_videos in buckets.items():
+    for folder_name, fresh_videos in buckets.items():
         active = folder_to_game.get(folder_name)
         if active is None:
-            logger.info("No game for folder %r (%d videos)", folder_name, len(folder_videos))
-            result.skipped_no_game += len(folder_videos)
-            continue
-
-        # Prune already-processed early (per file) to save API & bandwidth.
-        fresh_videos: list[DriveFile] = []
-        for v in folder_videos:
-            if await _is_processed(v.id):
-                result.skipped_already_processed += 1
-                continue
-            fresh_videos.append(v)
-
-        if not fresh_videos:
+            logger.info("No game for folder %r (%d videos)", folder_name, len(fresh_videos))
+            result.skipped_no_game += len(fresh_videos)
             continue
 
         # Timing pairs (with optional player-surname tiebreaker).
@@ -644,5 +672,5 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
                 )
                 result.unmatched += 1
 
-    await _store_last_sync(datetime.now(timezone.utc))
+    await _store_last_sync(_compute_next_sync_pointer(videos, last_seen))
     return result
