@@ -330,19 +330,26 @@ async def _fetch_pregame_lineups():
                     result = await service.sync_pregame_lineup(game.id, sota_only=True)
                     results.append(result)
                     lineup_count = result.get("lineup_count", 0)
-                    if lineup_count > 0:
-                        logger.info(
-                            "Pre-fetched lineup for game %s: %d players",
-                            game.id, lineup_count,
+                    logger.info(
+                        "Pre-fetched lineup for game %s: added=%d positions=%d",
+                        game.id,
+                        lineup_count,
+                        result.get("positions_updated", 0),
+                    )
+                    # Enqueue unconditionally. `lineup_count` counts only NEWLY
+                    # added players in this sync tick; it returns 0 when the
+                    # lineup was already populated earlier (prior SOTA tick,
+                    # FCMS dump, or manual admin entry). `post_pregame_lineup`
+                    # has its own gates (has_lineup, starters, pregame window,
+                    # hash dedupe) so re-queuing is safe.
+                    try:
+                        from app.tasks.telegram_tasks import post_pregame_lineup_task
+                        post_pregame_lineup_task.delay(game.id)
+                    except Exception:
+                        logger.exception(
+                            "Failed to enqueue post_pregame_lineup_task for %s",
+                            game.id,
                         )
-                        try:
-                            from app.tasks.telegram_tasks import post_pregame_lineup_task
-                            post_pregame_lineup_task.delay(game.id)
-                        except Exception:
-                            logger.exception(
-                                "Failed to enqueue post_pregame_lineup_task for %s",
-                                game.id,
-                            )
                 except Exception as e:
                     logger.warning(
                         "Failed to pre-fetch lineup for game %s: %s",
