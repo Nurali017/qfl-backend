@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from app.main import app
 from app.database import Base
 from app.api.deps import get_db  # Import from where routes actually use it
+from app.utils.cache import cache_clear
 from app.services.season_visibility import invalidate_season_cache
 from app.models import (
     Season, Team, Player, PlayerTeam,
@@ -114,6 +115,15 @@ async def client(test_session) -> AsyncGenerator[AsyncClient, None]:
         yield ac
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def clear_runtime_caches():
+    cache_clear()
+    invalidate_season_cache()
+    yield
+    cache_clear()
+    invalidate_season_cache()
 
 
 # --- Data Fixtures ---

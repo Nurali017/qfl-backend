@@ -5,12 +5,22 @@ Handles synchronization of player season statistics from SOTA API.
 Player profiles (top_role) are managed locally — no longer synced from SOTA.
 """
 import logging
+import time
+
+import httpx
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
+from app.services.sync.guardrails import (
+    DeadSeasonCounters,
+    SyncTimingMetrics,
+    is_dead_season_pair,
+    mark_dead_season_pair,
+)
 from app.services.sync.base import BaseSyncService, PLAYER_SEASON_STATS_FIELDS
+from app.config import get_settings
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
@@ -24,6 +34,10 @@ class PlayerSyncService(BaseSyncService):
     - Best players (goals/assists from lightweight endpoint)
     - Player season statistics (50+ metrics from v2 API)
     """
+
+    @staticmethod
+    def _has_useful_stats(stats: dict) -> bool:
+        return bool(stats and stats.get("games_played"))
 
     async def sync_best_players(self, season_id: int) -> int:
         """
@@ -183,16 +197,67 @@ class PlayerSyncService(BaseSyncService):
 
         # Resolve all SOTA season IDs (usually 1, but 2L has SW+NE)
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
+        dead_counters = {sid: DeadSeasonCounters() for sid in sota_season_ids}
+        dead_sota_ids: set[int] = set()
+        logged_dead_pairs: set[tuple[int, int]] = set()
+        settings = get_settings()
+        timings = SyncTimingMetrics(enabled=settings.debug_sync_timings)
 
         count = 0
         for player_id, team_id, sota_id in player_teams:
+            timings.players_processed += 1
             try:
                 # Try each SOTA season ID until we get stats (player belongs to one conference)
                 stats = {}
                 for sid in sota_season_ids:
-                    stats = await self.client.get_player_season_stats(str(sota_id), sid)
-                    if stats and stats.get("games_played"):
+                    pair = (season_id, sid)
+                    if sid in dead_sota_ids or await is_dead_season_pair(season_id, sid):
+                        dead_sota_ids.add(sid)
+                        if pair not in logged_dead_pairs:
+                            logger.info(
+                                "Skipping dead SOTA pair for player season stats local=%s sota=%s",
+                                season_id,
+                                sid,
+                            )
+                            logged_dead_pairs.add(pair)
+                        continue
+
+                    fetch_started = time.monotonic()
+                    try:
+                        stats = await self.client.get_player_season_stats(str(sota_id), sid)
+                    except httpx.HTTPStatusError as exc:
+                        timings.add_fetch(time.monotonic() - fetch_started)
+                        if exc.response is not None and exc.response.status_code == 404:
+                            counters = dead_counters[sid]
+                            counters.record_not_found()
+                            timings.not_found_count += 1
+                            if counters.should_mark_dead():
+                                await mark_dead_season_pair(season_id, sid)
+                                dead_sota_ids.add(sid)
+                                if pair not in logged_dead_pairs:
+                                    logger.warning(
+                                        "Marked dead SOTA pair for player season stats local=%s sota=%s attempted=%s not_found=%s",
+                                        season_id,
+                                        sid,
+                                        counters.attempted,
+                                        counters.not_found,
+                                    )
+                                    logged_dead_pairs.add(pair)
+                            continue
+                        raise
+                    else:
+                        timings.add_fetch(time.monotonic() - fetch_started)
+                        if self._has_useful_stats(stats):
+                            dead_counters[sid].record_success()
+                            timings.success_count += 1
+                        else:
+                            dead_counters[sid].record_empty()
+
+                    if self._has_useful_stats(stats):
                         break
+
+                if not stats:
+                    continue
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}
@@ -349,12 +414,15 @@ class PlayerSyncService(BaseSyncService):
                         "updated_at": stmt.excluded.updated_at,
                     },
                 )
+                db_started = time.monotonic()
                 await self.db.execute(stmt)
+                timings.add_db(time.monotonic() - db_started)
                 count += 1
             except Exception as e:
                 logger.warning(f"Failed to sync player season stats for player {player_id}: {e}")
                 continue  # Skip players without v2 stats
 
         await self.db.commit()
+        timings.log_summary(service="player_season_stats", season_id=season_id)
         logger.info(f"Synced {count} player season stats for season {season_id}")
         return count

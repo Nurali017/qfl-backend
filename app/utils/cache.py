@@ -38,3 +38,16 @@ def cache_set(key: str, value: bytes, ttl: int) -> None:
             oldest_key = min(_cache, key=lambda k: _cache[k][0])
             del _cache[oldest_key]
         _cache[key] = (time.monotonic() + ttl, value)
+
+
+def cache_delete(key: str) -> None:
+    with _lock:
+        if key in _cache:
+            del _cache[key]
+            logger.debug("cache delete: %s", key)
+
+
+def cache_clear() -> None:
+    with _lock:
+        _cache.clear()
+        logger.debug("cache clear")
