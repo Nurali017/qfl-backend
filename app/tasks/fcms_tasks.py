@@ -47,6 +47,15 @@ async def _fetch_fcms_pregame_lineups() -> dict:
             try:
                 result = await service.sync_fcms_lineup(game.id)
                 results.append(result)
+                if result.get("lineup_count", 0) > 0:
+                    try:
+                        from app.tasks.telegram_tasks import post_pregame_lineup_task
+                        post_pregame_lineup_task.delay(game.id)
+                    except Exception:
+                        logger.exception(
+                            "Failed to enqueue post_pregame_lineup_task for game %d",
+                            game.id,
+                        )
             except Exception:
                 logger.exception("Failed to sync FCMS lineup for game %d", game.id)
 
