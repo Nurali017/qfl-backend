@@ -648,7 +648,7 @@ async def post_match_finish(db: AsyncSession, game_id: int) -> bool:
     # Optional recap (AI-generated preview_kz reused if set)
     recap = (game.preview_kz or "").strip()
     if recap:
-        parts.append(f"⚡ <b>{_esc(recap)}</b>")
+        parts.append(f"⚡ <b><i>{_esc(recap)}</i></b>")
         parts.append("")
     parts.append(score_line)
 
