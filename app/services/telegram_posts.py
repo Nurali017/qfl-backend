@@ -469,7 +469,7 @@ async def post_game_event(db: AsyncSession, event_id: int) -> bool:
         tag = _goal_tag(event)
         text = (
             f"{GOAL_EMOJI_HTML}ГООООЛ\n\n"
-            f"{scorer_team_emoji} {surname} {event.minute}'{tag}\n\n"
+            f"{scorer_team_emoji} <b>{surname}</b> {event.minute}'{tag}\n\n"
             f"{score}"
         )
     else:  # red / second_yellow
@@ -663,7 +663,7 @@ async def post_match_finish(db: AsyncSession, game_id: int) -> bool:
                 suffix = " (пен.)"
             elif ev.event_type == GameEventType.own_goal:
                 suffix = " (автогол)"
-            parts.append(f"{GOAL_EMOJI_HTML}{surname} {ev.minute}'{suffix}")
+            parts.append(f"{GOAL_EMOJI_HTML}<b>{surname}</b> {ev.minute}'{suffix}")
 
     text = "\n".join(parts)
 
