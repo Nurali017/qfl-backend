@@ -534,9 +534,6 @@ async def _trigger_stats_revalidation(season_id: int | None = None, tour: int | 
             resp.raise_for_status()
             result = resp.json()
             logger.info("Stats revalidation triggered: %s (season=%s tour=%s)", result, season_id, tour)
-            await send_telegram_message(
-                f"✅ Stats pages revalidated (season {season_id} tour {tour})"
-            )
             return result
     except Exception as e:
         logger.error("Stats revalidation failed: %s", e)
