@@ -5,13 +5,23 @@ Syncs cumulative per-tour player statistics from SOTA API v2.
 """
 import asyncio
 import logging
+import time
+
+import httpx
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.config import get_settings
 from app.models import Player, PlayerTeam
 from app.models.player_tour_stats import PlayerTourStats
 from app.services.sync.base import BaseSyncService, PLAYER_SEASON_STATS_FIELDS
+from app.services.sync.guardrails import (
+    DeadSeasonCounters,
+    SyncTimingMetrics,
+    is_dead_season_pair,
+    mark_dead_season_pair,
+)
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
@@ -28,6 +38,10 @@ PLAYER_TOUR_STATS_COLUMNS = {
 
 class PlayerTourStatsSyncService(BaseSyncService):
     """Service for syncing per-tour player statistics from SOTA v2."""
+
+    @staticmethod
+    def _has_useful_stats(stats: dict) -> bool:
+        return bool(stats and stats.get("games_played"))
 
     async def sync_tour(self, season_id: int, tour: int) -> int:
         """
@@ -52,17 +66,65 @@ class PlayerTourStatsSyncService(BaseSyncService):
             return 0
 
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
+        dead_counters = {sid: DeadSeasonCounters() for sid in sota_season_ids}
+        dead_sota_ids: set[int] = set()
+        logged_dead_pairs: set[tuple[int, int]] = set()
+        settings = get_settings()
+        timings = SyncTimingMetrics(enabled=settings.debug_sync_timings)
 
         count = 0
         for player_id, team_id, sota_id in player_teams:
+            timings.players_processed += 1
             try:
                 # Try each SOTA season ID (player belongs to one conference)
                 stats = {}
                 for sid in sota_season_ids:
-                    stats = await self.client.get_player_game_stats_v2_by_tour(
-                        str(sota_id), sid, tour
-                    )
-                    if stats and stats.get("games_played"):
+                    pair = (season_id, sid)
+                    if sid in dead_sota_ids or await is_dead_season_pair(season_id, sid):
+                        dead_sota_ids.add(sid)
+                        if pair not in logged_dead_pairs:
+                            logger.info(
+                                "Skipping dead SOTA pair for player tour stats local=%s sota=%s",
+                                season_id,
+                                sid,
+                            )
+                            logged_dead_pairs.add(pair)
+                        continue
+
+                    fetch_started = time.monotonic()
+                    try:
+                        stats = await self.client.get_player_game_stats_v2_by_tour(
+                            str(sota_id), sid, tour
+                        )
+                    except httpx.HTTPStatusError as exc:
+                        timings.add_fetch(time.monotonic() - fetch_started)
+                        if exc.response is not None and exc.response.status_code == 404:
+                            counters = dead_counters[sid]
+                            counters.record_not_found()
+                            timings.not_found_count += 1
+                            if counters.should_mark_dead():
+                                await mark_dead_season_pair(season_id, sid)
+                                dead_sota_ids.add(sid)
+                                if pair not in logged_dead_pairs:
+                                    logger.warning(
+                                        "Marked dead SOTA pair for player tour stats local=%s sota=%s attempted=%s not_found=%s",
+                                        season_id,
+                                        sid,
+                                        counters.attempted,
+                                        counters.not_found,
+                                    )
+                                    logged_dead_pairs.add(pair)
+                            continue
+                        raise
+                    else:
+                        timings.add_fetch(time.monotonic() - fetch_started)
+                        if self._has_useful_stats(stats):
+                            dead_counters[sid].record_success()
+                            timings.success_count += 1
+                        else:
+                            dead_counters[sid].record_empty()
+
+                    if self._has_useful_stats(stats):
                         break
 
                 if not stats:
@@ -115,7 +177,9 @@ class PlayerTourStatsSyncService(BaseSyncService):
                         "updated_at": stmt.excluded.updated_at,
                     },
                 )
+                db_started = time.monotonic()
                 await self.db.execute(stmt)
+                timings.add_db(time.monotonic() - db_started)
                 count += 1
             except Exception as e:
                 logger.warning(
@@ -124,9 +188,16 @@ class PlayerTourStatsSyncService(BaseSyncService):
                 )
                 continue
 
+            sleep_started = time.monotonic()
             await asyncio.sleep(0.15)
+            timings.add_sleep(time.monotonic() - sleep_started)
 
         await self.db.commit()
+        timings.log_summary(
+            service="player_tour_stats",
+            season_id=season_id,
+            extra={"tour": tour},
+        )
         logger.info(
             "Synced %d player tour stats for season %d, tour %d",
             count, season_id, tour,

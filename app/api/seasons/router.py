@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -11,7 +11,13 @@ from app.api.deps import get_db
 from app.models import Season, Game, Stage, SeasonParticipant
 from app.services.season_participants import resolve_season_participants
 from app.services.cup_rounds import build_playoff_bracket_from_rounds, build_schedule_rounds
+from app.services.season_api_cache import (
+    SEASONS_LIST_CACHE_KEY,
+    invalidate_season_api_cache,
+    season_detail_cache_key,
+)
 from app.services.season_visibility import ensure_visible_season_or_404, is_season_visible_clause
+from app.utils.cache import cache_get, cache_set
 from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.schemas.season import SeasonListResponse, SeasonResponse, SeasonSyncUpdate
@@ -115,6 +121,10 @@ def _get_goal_period_index(half: int | None, minute: int | None) -> int:
 @router.get("", response_model=SeasonListResponse)
 async def get_seasons(db: AsyncSession = Depends(get_db)):
     """Get all seasons."""
+    cached = cache_get(SEASONS_LIST_CACHE_KEY)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     result = await db.execute(
         select(Season)
         .where(is_season_visible_clause())
@@ -132,7 +142,10 @@ async def get_seasons(db: AsyncSession = Depends(get_db)):
     for s in seasons:
         items.append(_build_season_response(s, current_round=played_round_by_season.get(s.id)))
 
-    return SeasonListResponse(items=items, total=len(items))
+    response = SeasonListResponse(items=items, total=len(items))
+    json_bytes = response.model_dump_json().encode()
+    cache_set(SEASONS_LIST_CACHE_KEY, json_bytes, 60)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.patch("/{season_id}/sync", response_model=SeasonResponse)
@@ -157,6 +170,7 @@ async def update_season_sync(
     season.sync_enabled = body.sync_enabled
     await db.commit()
     await db.refresh(season)
+    invalidate_season_api_cache(season_id)
 
     from app.services.season_scope import compute_current_rounds
     played_round_by_season = await compute_current_rounds(db, [season_id])
@@ -167,6 +181,11 @@ async def update_season_sync(
 @router.get("/{season_id}", response_model=SeasonResponse)
 async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
     """Get season by ID."""
+    cache_key = season_detail_cache_key(season_id)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     result = await db.execute(
         select(Season)
         .where(
@@ -183,7 +202,10 @@ async def get_season(season_id: int, db: AsyncSession = Depends(get_db)):
     from app.services.season_scope import compute_current_rounds
     played_round_by_season = await compute_current_rounds(db, [season_id])
 
-    return _build_season_response(season, current_round=played_round_by_season.get(season_id))
+    response = _build_season_response(season, current_round=played_round_by_season.get(season_id))
+    json_bytes = response.model_dump_json().encode()
+    cache_set(cache_key, json_bytes, 60)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 # ──────────────────────────────────────────

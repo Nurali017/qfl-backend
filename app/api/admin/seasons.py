@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
 from app.models import Championship, Season
+from app.services.season_api_cache import invalidate_season_api_cache
 from app.services.season_visibility import invalidate_season_cache, is_season_visible_clause
 from app.schemas.admin.seasons import (
     AdminSeasonCreateRequest,
@@ -82,6 +83,7 @@ async def create_season(
 
     await db.refresh(obj)
     invalidate_season_cache()
+    invalidate_season_api_cache(obj.id)
     return AdminSeasonResponse.model_validate(obj)
 
 
@@ -112,4 +114,5 @@ async def update_season(
     await db.commit()
     await db.refresh(obj)
     invalidate_season_cache()
+    invalidate_season_api_cache(obj.id)
     return AdminSeasonResponse.model_validate(obj)

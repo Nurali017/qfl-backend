@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     database_pool_size: int = 5
     database_max_overflow: int = 10
     database_pool_class: str = ""  # "" = QueuePool (default), "null" = NullPool
+    web_statement_timeout_ms: int = 30000
 
     # MinIO (S3-compatible object storage)
     minio_endpoint: str = "localhost:9000"
@@ -108,7 +109,7 @@ class Settings(BaseSettings):
     google_drive_goals_folder_id: str = ""
     goal_video_ai_fallback_enabled: bool = True
     goal_video_ai_model: str = "claude-haiku-4-5-20251001"
-    goal_video_sync_interval_minutes: int = 2
+    goal_video_sync_interval_minutes: int = 5
     # Re-encode incoming clips with ffmpeg (libx264 CRF 20) before uploading to
     # MinIO — roughly halves the file size without perceptible quality loss.
     goal_video_transcode_enabled: bool = True
@@ -117,6 +118,12 @@ class Settings(BaseSettings):
     # "0" = let libx264 pick (usually all cores). On a dedicated media host we
     # want all cores; on a shared box you may want to cap it.
     goal_video_transcode_threads: str = "0"
+
+    # SOTA sync guardrails / diagnostics
+    sota_dead_season_min_404: int = 30
+    sota_dead_season_404_ratio: float = 0.8
+    sota_dead_season_ttl_seconds: int = 3600
+    debug_sync_timings: bool = False
 
 
     class Config:
