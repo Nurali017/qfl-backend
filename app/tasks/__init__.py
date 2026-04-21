@@ -43,6 +43,7 @@ celery_app.conf.update(
         "app.tasks.live_tasks.auto_start_live_games": {"queue": "live"},
         "app.tasks.live_tasks.auto_end_finished_games": {"queue": "live"},
         "app.tasks.live_tasks.fetch_pregame_lineups": {"queue": "live"},
+        "app.tasks.live_tasks.backfill_sota_game_ids": {"queue": "live"},
         "app.tasks.telegram_tasks.post_match_start_task": {"queue": "telegram"},
         "app.tasks.telegram_tasks.post_match_finish_task": {"queue": "telegram"},
         "app.tasks.telegram_tasks.post_game_event_task": {"queue": "telegram"},
@@ -77,6 +78,10 @@ if settings.sota_enabled:
         "fetch-pregame-lineups": {
             "task": "app.tasks.live_tasks.fetch_pregame_lineups",
             "schedule": crontab(minute="*/3"),
+        },
+        "backfill-sota-game-ids-hourly": {
+            "task": "app.tasks.live_tasks.backfill_sota_game_ids",
+            "schedule": crontab(minute="17"),
         },
         "sync-extended-stats-nightly": {
             "task": "app.tasks.sync_tasks.sync_extended_stats",
