@@ -9,13 +9,21 @@ This module provides the pure-function matcher used both by
 periodic live-sync hook that picks up new SOTA matches as they're
 registered.
 
-Strategy per local game:
-  1. Date must match (Asia/Almaty day).
-  2. Team-ID match — SOTA team.id == local team_id. Works for Премьер-Лига
-     where SOTA IDs == local IDs.
-  3. Team-name match (normalized) — fallback for 2Л/Кубок where SOTA and
-     local team IDs diverge. Uses the same normalization as the rest of
-     the sync code (`app.utils.team_name_matcher`).
+Strategy per local game (date must match in every tier):
+  1. Both team IDs match — SOTA home/away IDs == local home/away IDs.
+     Works for Премьер-Лига where SOTA IDs == local IDs.
+  2. One team ID matches — in 2Л/Кубок some teams share IDs with SOTA
+     (those that were created via SOTA sync first) and some don't
+     (FCMS-imported later). If exactly one local team_id coincides with
+     a SOTA team_id AND the date matches AND no other SOTA game on that
+     date involves any of our team IDs, that's an unambiguous match.
+  3. Both team names match (normalized) — last-resort fallback using
+     `app.utils.team_name_matcher`. Often fails for 2Л because SOTA
+     returns names in Latin ("Jas Qyran") while local stores Cyrillic
+     ("Жас Қыран") with sometimes-empty name_en.
+
+Returns `multiple_matches` if tiers 1 or 2 produce >1 candidate. We
+never guess — only unambiguous matches are written.
 
 Women's league (season 205) has no sota_season_id, so the caller skips
 it naturally — SOTA doesn't cover women's football in Kazakhstan.
@@ -44,12 +52,16 @@ def match_game_to_sota(
     SOTA games list.
 
     Reason values:
-      - "matched_by_id"       : unambiguous match on team IDs + date
-      - "matched_by_name"     : unambiguous match on team names + date
-      - "no_match"            : no SOTA game matched
-      - "multiple_matches"    : more than one candidate (ambiguous, needs review)
-      - "missing_date"        : local game has no date — can't match
-      - "missing_teams"       : local game has no home/away team id
+      - "matched_by_both_ids"  : unambiguous match on both team IDs + date
+      - "matched_by_one_id"    : unambiguous match on date + one of the
+                                  team IDs; other team ID differs (typical
+                                  2Л/Кубок where a subset of teams has
+                                  divergent SOTA vs local IDs)
+      - "matched_by_name"      : unambiguous match on team names + date
+      - "no_match"             : no SOTA game matched
+      - "multiple_matches"     : more than one candidate (ambiguous)
+      - "missing_date"         : local game has no date
+      - "missing_teams"        : local game has no home/away team id
     """
     if not local_game.date:
         return None, "missing_date"
@@ -59,7 +71,8 @@ def match_game_to_sota(
     home_names = _collect_team_names(home_team) if home_team else set()
     away_names = _collect_team_names(away_team) if away_team else set()
 
-    id_matches: list[dict[str, Any]] = []
+    both_id_matches: list[dict[str, Any]] = []
+    one_id_matches: list[dict[str, Any]] = []
     name_matches: list[dict[str, Any]] = []
 
     for sg in sota_games:
@@ -78,11 +91,18 @@ def match_game_to_sota(
         sg_home_id = sg_home.get("id")
         sg_away_id = sg_away.get("id")
 
-        if (
-            sg_home_id == local_game.home_team_id
-            and sg_away_id == local_game.away_team_id
-        ):
-            id_matches.append(sg)
+        home_id_eq = sg_home_id == local_game.home_team_id
+        away_id_eq = sg_away_id == local_game.away_team_id
+
+        if home_id_eq and away_id_eq:
+            both_id_matches.append(sg)
+            continue
+
+        # At least one side matches on id — strong signal when combined
+        # with date. SOTA team IDs diverge from local for lower leagues,
+        # but not for every team, so a one-side id hit is common.
+        if home_id_eq or away_id_eq:
+            one_id_matches.append(sg)
             continue
 
         sg_home_name = normalize_team_name(sg_home.get("name"))
@@ -93,9 +113,13 @@ def match_game_to_sota(
         ):
             name_matches.append(sg)
 
-    if len(id_matches) == 1:
-        return _parse_sota_id(id_matches[0]), "matched_by_id"
-    if len(id_matches) > 1:
+    if len(both_id_matches) == 1:
+        return _parse_sota_id(both_id_matches[0]), "matched_by_both_ids"
+    if len(both_id_matches) > 1:
+        return None, "multiple_matches"
+    if len(one_id_matches) == 1:
+        return _parse_sota_id(one_id_matches[0]), "matched_by_one_id"
+    if len(one_id_matches) > 1:
         return None, "multiple_matches"
     if len(name_matches) == 1:
         return _parse_sota_id(name_matches[0]), "matched_by_name"
