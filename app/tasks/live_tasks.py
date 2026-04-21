@@ -400,6 +400,96 @@ def fetch_pregame_lineups():
     return run_async(_fetch_pregame_lineups())
 
 
+# ==================== Periodic SOTA game-id backfill ====================
+
+
+async def _backfill_sota_game_ids_for_upcoming() -> dict:
+    """Try to fill Game.sota_id for upcoming games (next 14 days) that still
+    lack it. Matches against SOTA `get_games(season_id)` by date + team ids +
+    team names.
+
+    SOTA sometimes registers matches after we've created them locally via
+    FCMS or admin entry, so this task picks up those mappings over time.
+    Seasons without sota_season_id (Women's League) are skipped.
+    """
+    from datetime import date as date_cls, timedelta as _td
+    from collections import defaultdict
+    from sqlalchemy.orm import selectinload
+
+    from app.models import Season
+    from app.services.sync.sota_id_matcher import (
+        fetch_sota_games_for_season,
+        match_game_to_sota,
+    )
+
+    today = date_cls.today()
+    horizon = today + _td(days=14)
+
+    async with AsyncSessionLocal() as db:
+        q = (
+            select(Game)
+            .options(selectinload(Game.home_team), selectinload(Game.away_team))
+            .where(
+                Game.sota_id.is_(None),
+                Game.date >= today,
+                Game.date <= horizon,
+            )
+        )
+        games = (await db.execute(q)).scalars().all()
+        if not games:
+            return {"checked": 0, "matched": 0}
+
+        by_season: dict[int, list[Game]] = defaultdict(list)
+        for g in games:
+            if g.season_id:
+                by_season[g.season_id].append(g)
+
+        client = get_sota_client()
+        matched = 0
+        try:
+            for local_season_id, season_games in by_season.items():
+                season = await db.get(Season, local_season_id)
+                if not season or not season.sota_season_id:
+                    continue
+                try:
+                    sota_games = await fetch_sota_games_for_season(
+                        client, season.sota_season_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "SOTA get_games failed for sota_season_id=%s",
+                        season.sota_season_id,
+                    )
+                    continue
+                for g in season_games:
+                    sid, reason = match_game_to_sota(
+                        g, g.home_team, g.away_team, sota_games
+                    )
+                    if sid:
+                        g.sota_id = sid
+                        matched += 1
+                        logger.info(
+                            "backfill_sota_game_id game=%s → %s (%s)",
+                            g.id, sid, reason,
+                        )
+            if matched:
+                await db.commit()
+        finally:
+            if hasattr(client, "close"):
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+
+        return {"checked": len(games), "matched": matched}
+
+
+@celery_app.task(name="app.tasks.live_tasks.backfill_sota_game_ids")
+def backfill_sota_game_ids():
+    """Celery task: Hourly backfill of Game.sota_id for upcoming games."""
+    return run_async(_backfill_sota_game_ids_for_upcoming())
+
+
 # ==================== Post-finish follow-up ====================
 
 
