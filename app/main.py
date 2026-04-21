@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,12 +8,16 @@ from starlette.middleware.gzip import GZipMiddleware
 from app.config import get_settings
 from app.database import engine
 from app.minio_client import init_minio
+from app.utils.feature_flags import log_feature_flags
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log_feature_flags(logger, service="backend")
     await init_minio()
     yield
     await engine.dispose()

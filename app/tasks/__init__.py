@@ -1,8 +1,13 @@
+import logging
+
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_shutdown
+from celery.signals import worker_ready, worker_shutdown
 
 from app.config import get_settings
+from app.utils.feature_flags import log_feature_flags
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -153,6 +158,13 @@ if settings.youtube_api_key:
         "task": "app.tasks.youtube_tasks.sync_view_counts_media",
         "schedule": crontab(minute="*/30"),
     }
+
+@worker_ready.connect
+def on_worker_ready(sender=None, **kwargs):
+    queues = sorted(q.name for q in sender.app.amqp.queues.consume_from.values()) if sender else []
+    logger.info("celery_worker_ready queues=%s", queues)
+    log_feature_flags(logger, service="celery_worker")
+
 
 @worker_shutdown.connect
 def on_worker_shutdown(**kwargs):
