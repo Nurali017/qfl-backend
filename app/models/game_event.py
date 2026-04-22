@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Enum, Index, text
+from sqlalchemy import Boolean, Integer, String, DateTime, ForeignKey, Enum, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -76,6 +76,9 @@ class GameEvent(Base):
     # Assist info (only for goal events)
     assist_player_id: Mapped[int | None] = mapped_column(PLAYER_ID_SQL_TYPE, ForeignKey("players.id"))
     assist_player_name: Mapped[str | None] = mapped_column(String(255))
+    assist_manual_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

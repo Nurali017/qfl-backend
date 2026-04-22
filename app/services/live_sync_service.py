@@ -21,6 +21,7 @@ from app.models import Game, GameEvent, GameEventType, GameLineup, GamePlayerSta
 from app.services.sota_client import SotaClient
 from app.services.sync.lineup_sync import LineupSyncService
 from app.services.telegram import send_telegram_message
+from app.utils.game_event_assists import is_assist_supported_event_type, sync_event_assist
 from app.utils.live_flag import get_redis
 from app.utils.team_name_matcher import TeamNameMatcher
 from app.utils.timestamps import combine_almaty_local_to_utc, ensure_utc, utcnow
@@ -1074,6 +1075,20 @@ class LiveSyncService:
                     if old_value != value:
                         changed = True
                         setattr(matched_event, field, value)
+                if not is_assist_supported_event_type(matched_event.event_type):
+                    before_assist = (
+                        matched_event.assist_player_id,
+                        matched_event.assist_player_name,
+                        matched_event.assist_manual_override,
+                    )
+                    sync_event_assist(matched_event, None)
+                    after_assist = (
+                        matched_event.assist_player_id,
+                        matched_event.assist_player_name,
+                        matched_event.assist_manual_override,
+                    )
+                    if before_assist != after_assist:
+                        changed = True
                 if changed:
                     updated += 1
                 if event_type in (GameEventType.goal, GameEventType.penalty):
@@ -1101,12 +1116,19 @@ class LiveSyncService:
         for event in all_goal_events:
             key = (event.half, event.minute, event.team_id)
             assist_info = assists_map.get(key)
-            if assist_info:
-                event.assist_player_id = assist_info["player_id"]
-                event.assist_player_name = assist_info["player_name"]
-            else:
-                event.assist_player_id = None
-                event.assist_player_name = None
+            before_assist = (
+                event.assist_player_id,
+                event.assist_player_name,
+                event.assist_manual_override,
+            )
+            sync_event_assist(event, assist_info)
+            after_assist = (
+                event.assist_player_id,
+                event.assist_player_name,
+                event.assist_manual_override,
+            )
+            if before_assist != after_assist:
+                updated += 1
 
         if added or updated or deleted or assists_map:
             await self.db.commit()

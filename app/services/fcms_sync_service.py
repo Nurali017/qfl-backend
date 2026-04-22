@@ -14,6 +14,7 @@ from app.models import Game, GameEvent, GameEventType, GameLineup, GameStatus, L
 from app.services.fcms_client import FcmsClient
 from app.services.file_storage import FileStorageService
 from app.services.telegram import send_telegram_document, send_telegram_message
+from app.utils.game_event_assists import sync_event_assist
 from app.utils.fcms_pdf_parser import parse_pre_match_lineup, extract_attendance_from_match_report
 from app.utils.timestamps import utcnow
 
@@ -583,9 +584,13 @@ class FcmsSyncService:
                 "player_name": player_name,
                 "player2_id": player2_id,
                 "player2_name": player2_name,
-                "assist_player_id": assist_player_id,
-                "assist_player_name": assist_player_name,
             }
+            assist_info = None
+            if assist_player_id is not None or assist_player_name:
+                assist_info = {
+                    "player_id": assist_player_id,
+                    "player_name": assist_player_name,
+                }
 
             if matched:
                 matched_db_ids.add(matched.id)
@@ -598,10 +603,25 @@ class FcmsSyncService:
                     elif old_value != value:
                         setattr(matched, field, value)
                         updated += 1
+                before_assist = (
+                    matched.assist_player_id,
+                    matched.assist_player_name,
+                    matched.assist_manual_override,
+                )
+                sync_event_assist(matched, assist_info)
+                after_assist = (
+                    matched.assist_player_id,
+                    matched.assist_player_name,
+                    matched.assist_manual_override,
+                )
+                if before_assist != after_assist:
+                    updated += 1
             else:
                 event = GameEvent(
                     game_id=game_id,
                     source="fcms",
+                    assist_player_id=assist_player_id,
+                    assist_player_name=assist_player_name,
                     **fields,
                 )
                 self.db.add(event)

@@ -41,6 +41,7 @@ from app.services.game_lifecycle import (
     InvalidTransition,
     VALID_ACTIONS,
 )
+from app.utils.game_event_assists import is_assist_supported_event_type
 from app.utils.has_stats import enrich_games_has_stats, compute_single_has_stats
 
 router = APIRouter(
@@ -877,6 +878,7 @@ async def add_event(game_id: int, body: AdminEventAddRequest, db: AsyncSession =
         player2_name=body.player2_name,
         assist_player_id=body.assist_player_id,
         assist_player_name=body.assist_player_name,
+        assist_manual_override=bool(body.assist_player_id is not None or body.assist_player_name),
         source="manual",
     )
     db.add(ev)
@@ -956,14 +958,47 @@ async def update_event(game_id: int, event_id: int, body: AdminEventUpdateReques
     ev = result.scalar_one_or_none()
     if not ev:
         raise HTTPException(status_code=404, detail="Event not found")
-    for field in ["half", "minute", "team_id", "player_id", "player_name",
-                  "player_number", "player2_id", "player2_name",
-                  "assist_player_id", "assist_player_name"]:
-        val = getattr(body, field)
-        if val is not None:
-            setattr(ev, field, val)
-    if body.event_type is not None:
-        ev.event_type = GameEventType(body.event_type)
+
+    provided_fields = body.model_fields_set
+    previous_assist_player_id = ev.assist_player_id
+    previous_assist_player_name = ev.assist_player_name
+    next_event_type = ev.event_type
+    if "event_type" in provided_fields and body.event_type is not None:
+        next_event_type = GameEventType(body.event_type)
+
+    assist_id_provided = "assist_player_id" in provided_fields
+    assist_name_provided = "assist_player_name" in provided_fields
+    assist_fields_provided = assist_id_provided or assist_name_provided
+    next_assist_player_id = body.assist_player_id if assist_id_provided else ev.assist_player_id
+    next_assist_player_name = body.assist_player_name if assist_name_provided else ev.assist_player_name
+
+    for field in [
+        "half",
+        "minute",
+        "team_id",
+        "player_id",
+        "player_name",
+        "player_number",
+        "player2_id",
+        "player2_name",
+        "assist_player_id",
+        "assist_player_name",
+    ]:
+        if field in provided_fields:
+            setattr(ev, field, getattr(body, field))
+
+    if "event_type" in provided_fields and body.event_type is not None:
+        ev.event_type = next_event_type
+
+    if not is_assist_supported_event_type(ev.event_type):
+        ev.assist_player_id = None
+        ev.assist_player_name = None
+        ev.assist_manual_override = False
+    elif assist_fields_provided and (
+        previous_assist_player_id != next_assist_player_id
+        or previous_assist_player_name != next_assist_player_name
+    ):
+        ev.assist_manual_override = True
     await db.commit()
     await db.refresh(ev)
     return AdminEventItem(
