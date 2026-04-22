@@ -37,6 +37,7 @@ from app.models.cup_draw import CupDraw
 from app.models.broadcaster import Broadcaster
 from app.models.game_broadcaster import GameBroadcaster
 from app.models.media_video import MediaVideo
+from app.models.telegram_daily_result_post import TelegramDailyResultPost
 
 __all__ = [
     "Season",
@@ -85,4 +86,5 @@ __all__ = [
     "Broadcaster",
     "GameBroadcaster",
     "MediaVideo",
+    "TelegramDailyResultPost",
 ]

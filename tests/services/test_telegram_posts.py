@@ -233,7 +233,7 @@ async def test_post_game_event_goal_format(test_session, sample_public_game):
     assert ok is True
     text = send_mock.await_args.args[0]
     assert "ГООООЛ" in text
-    assert "Shushenachev 45' (пен.)" in text
+    assert "<b>Shushenachev</b> 45' (пен.)" in text
     assert "1:0" in text
 
     await test_session.refresh(ev)
@@ -345,8 +345,8 @@ async def test_post_match_finish_includes_scorer_summary(test_session, sample_pu
     assert ok is True
     text = send_mock.await_args.args[0]
     assert "Гол авторлары" in text
-    assert "Ivanov 12'" in text
-    assert "Ivanov 67'" in text
+    assert "<b>Ivanov</b> 12'" in text
+    assert "67'" in text
 
 
 @pytest.mark.asyncio

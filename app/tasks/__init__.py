@@ -50,6 +50,7 @@ celery_app.conf.update(
         "app.tasks.telegram_tasks.post_pregame_lineup_task": {"queue": "telegram"},
         "app.tasks.telegram_tasks.post_goal_video_task": {"queue": "media"},
         "app.tasks.telegram_tasks.tour_announce_daily": {"queue": "telegram"},
+        "app.tasks.telegram_tasks.scan_daily_results_cards": {"queue": "telegram"},
     },
 )
 
@@ -104,6 +105,12 @@ if settings.telegram_public_posts_enabled and settings.telegram_tour_announce_en
     celery_app.conf.beat_schedule["tour-announce-daily-21-ala"] = {
         "task": "app.tasks.telegram_tasks.tour_announce_daily",
         "schedule": crontab(minute="0", hour="21"),
+    }
+
+if settings.telegram_public_posts_enabled:
+    celery_app.conf.beat_schedule["telegram-daily-results-scan-5min"] = {
+        "task": "app.tasks.telegram_tasks.scan_daily_results_cards",
+        "schedule": crontab(minute="*/5"),
     }
 
 celery_app.conf.beat_schedule["search-tickets-twice-daily"] = {

@@ -1105,3 +1105,40 @@ async def tg_test_tour_announce(
         await db.commit()
     ok = await post_tour_announcement(db, season_id, tour, for_date)
     return {"season_id": season_id, "tour": tour, "date": str(for_date), "sent": ok}
+
+
+@router.post("/tg/test/daily-results")
+async def tg_test_daily_results(
+    season_id: int = Query(...),
+    for_date: _date_cls = Query(...),
+    locale: str = Query(default="kz", pattern="^(kz|ru|en)$"),
+    reset: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    _admin: AdminUser = Depends(require_roles("superadmin", "operator")),
+):
+    from app.models import TelegramDailyResultPost
+    from app.services.telegram_posts import post_daily_results_digest
+
+    if reset:
+        q = select(TelegramDailyResultPost).where(
+            TelegramDailyResultPost.season_id == season_id,
+            TelegramDailyResultPost.for_date == for_date,
+            TelegramDailyResultPost.locale == locale,
+        )
+        rows = (await db.execute(q)).scalars().all()
+        for row in rows:
+            await db.delete(row)
+        await db.commit()
+
+    ok = await post_daily_results_digest(
+        db,
+        season_id=season_id,
+        for_date=for_date,
+        locale=locale,
+    )
+    return {
+        "season_id": season_id,
+        "date": str(for_date),
+        "locale": locale,
+        "sent": ok,
+    }

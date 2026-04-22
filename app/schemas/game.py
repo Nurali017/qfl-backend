@@ -202,6 +202,42 @@ class MatchCenterResponse(BaseModel):
     tentative_tour_dates: dict[int, list[str]] = {}
 
 
+class DailyResultsCardTeam(BaseModel):
+    id: int
+    name: str
+    logo_url: str | None = None
+
+
+class DailyResultsCardGame(BaseModel):
+    id: int
+    time: ShortTime | None = None
+    home_team: DailyResultsCardTeam
+    away_team: DailyResultsCardTeam
+    home_score: int
+    away_score: int
+
+
+class DailyResultsCardSection(BaseModel):
+    key: str
+    label: str | None = None
+    games: list[DailyResultsCardGame]
+
+
+class DailyResultsCardPayload(BaseModel):
+    season_id: int
+    frontend_code: str | None = None
+    for_date: date
+    locale: str
+    brand_label: str
+    tournament_name: str
+    headline: str
+    date_label: str
+    tour: int | None = None
+    season_logo_url: str | None = None
+    sections: list[DailyResultsCardSection]
+    game_count: int
+
+
 # Per-endpoint response schemas
 
 class GameListItem(BaseModel):

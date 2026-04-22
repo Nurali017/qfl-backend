@@ -15,7 +15,9 @@ from app.database import AsyncSessionLocal
 from app.models import Game
 from app.models.game import GameStatus
 from app.services.telegram_posts import (
+    find_ready_daily_results_payloads,
     post_game_event,
+    post_daily_results_digest,
     post_goal_video,
     post_match_finish,
     post_match_start,
@@ -88,6 +90,55 @@ async def _post_pregame_lineup(game_id: int) -> bool:
 @celery_app.task(name="app.tasks.telegram_tasks.post_pregame_lineup_task", **_RETRY_KW)
 def post_pregame_lineup_task(game_id: int):
     return run_async(_post_pregame_lineup(game_id))
+
+
+async def _scan_daily_results_cards(locale: str = "kz") -> dict:
+    today = date_cls.today()
+    date_from = today - timedelta(days=1)
+    async with AsyncSessionLocal() as db:
+        payloads = await find_ready_daily_results_payloads(
+            db,
+            locale=locale,
+            date_from=date_from,
+            date_to=today,
+        )
+        posted: list[tuple[int, str]] = []
+        skipped: list[tuple[int, str]] = []
+        for payload in payloads:
+            try:
+                ok = await post_daily_results_digest(
+                    db,
+                    season_id=payload.season_id,
+                    for_date=payload.for_date,
+                    locale=locale,
+                    payload=payload,
+                )
+                target = (payload.season_id, str(payload.for_date))
+                (posted if ok else skipped).append(target)
+            except httpx.HTTPError:
+                raise
+            except Exception:
+                logger.exception(
+                    "daily results digest failed for season=%s date=%s",
+                    payload.season_id,
+                    payload.for_date,
+                )
+                skipped.append((payload.season_id, str(payload.for_date)))
+        return {
+            "locale": locale,
+            "posted": posted,
+            "skipped": skipped,
+        }
+
+
+@celery_app.task(
+    name="app.tasks.telegram_tasks.scan_daily_results_cards",
+    autoretry_for=(httpx.HTTPError, TelegramTransientError),
+    retry_backoff=True,
+    max_retries=3,
+)
+def scan_daily_results_cards(locale: str = "kz"):
+    return run_async(_scan_daily_results_cards(locale))
 
 
 # ---------------------------------------------------------------------- #
