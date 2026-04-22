@@ -11,22 +11,44 @@ from __future__ import annotations
 import hashlib
 import html
 import logging
-from pathlib import Path
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
+import tempfile
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Broadcaster, Game, GameBroadcaster, GameEvent, GameLineup, Player, Team
+from app.models import (
+    Broadcaster,
+    Game,
+    GameBroadcaster,
+    GameEvent,
+    GameLineup,
+    Player,
+    SeasonParticipant,
+    Team,
+    TelegramDailyResultPost,
+)
 from app.models.game import GameStatus
 from app.models.game_event import GameEventType
 from app.models.game_lineup import LineupType
 from app.models.season import Season
 from app.models.championship import Championship
 from app.models.stadium import Stadium
+from app.schemas.game import (
+    DailyResultsCardGame,
+    DailyResultsCardPayload,
+    DailyResultsCardSection,
+    DailyResultsCardTeam,
+)
+from app.services.daily_results_renderer import render_daily_results_card_png
 from app.services.telegram_user_client import send_public_user_message as send_public_telegram_message
+from app.services.telegram_user_client import send_public_user_photo
+from app.utils.localization import get_localized_field
+from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
@@ -83,6 +105,67 @@ AMPLUA_LINE: dict[str, str] = {
 }
 LINE_ORDER = ("GK", "DEF", "MID", "FWD")
 LINE_PREFIX = {"GK": "🧤", "DEF": "🛡", "MID": "🎯", "FWD": "⚔"}
+
+DAILY_RESULTS_BRAND_LABEL = "KFF LEAGUE"
+DAILY_RESULTS_TERMINAL_STATUSES = {
+    GameStatus.finished,
+    GameStatus.technical_defeat,
+    GameStatus.postponed,
+    GameStatus.cancelled,
+}
+_MONTH_NAMES: dict[str, tuple[str, ...]] = {
+    "kz": (
+        "қаңтар",
+        "ақпан",
+        "наурыз",
+        "сәуір",
+        "мамыр",
+        "маусым",
+        "шілде",
+        "тамыз",
+        "қыркүйек",
+        "қазан",
+        "қараша",
+        "желтоқсан",
+    ),
+    "ru": (
+        "января",
+        "февраля",
+        "марта",
+        "апреля",
+        "мая",
+        "июня",
+        "июля",
+        "августа",
+        "сентября",
+        "октября",
+        "ноября",
+        "декабря",
+    ),
+    "en": (
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ),
+}
+_GENERIC_GROUP_LABELS: dict[str, str] = {
+    "kz": "{group} конференциясы",
+    "ru": "Конференция {group}",
+    "en": "Conference {group}",
+}
+_SECOND_LEAGUE_2026_GROUP_LABELS: dict[str, str] = {
+    "A": "Оңтүстік-Батыс конференциясы",
+    "B": "Солтүстік-Шығыс конференциясы",
+}
 
 
 # ---------------------------------------------------------------------- #
@@ -295,6 +378,333 @@ def _player_surname(player) -> str:
         or (player.last_name or "").strip()
         or _surname(getattr(player, "first_name", None))
     )
+
+
+def _is_daily_result_terminal(game: Game) -> bool:
+    return game.status in DAILY_RESULTS_TERMINAL_STATUSES
+
+
+def _is_daily_result_publishable(game: Game) -> bool:
+    return (
+        game.status in {GameStatus.finished, GameStatus.technical_defeat}
+        and game.home_score is not None
+        and game.away_score is not None
+    )
+
+
+def _format_date_label(for_date: date, locale: str) -> str:
+    months = _MONTH_NAMES.get(locale) or _MONTH_NAMES["kz"]
+    return f"{for_date.day} {months[for_date.month - 1]}"
+
+
+def _competition_label(season: Season | None, locale: str) -> str:
+    if season is None:
+        return ""
+    championship = season.championship if season.championship else None
+    if championship:
+        short_name = get_localized_field(championship, "short_name", locale)
+        if short_name:
+            return short_name
+        full_name = get_localized_field(championship, "name", locale)
+        if full_name:
+            return full_name
+    return get_localized_field(season, "name", locale) or season.name or ""
+
+
+def _build_daily_results_headline(
+    season: Season | None,
+    locale: str,
+    tour: int | None,
+    for_date: date,
+) -> str:
+    competition = _competition_label(season, locale)
+    if locale == "ru":
+        if tour is not None:
+            return f"{competition}. Результаты матчей {tour}-го тура"
+        return f"{competition}. Результаты матчей за {_format_date_label(for_date, locale)}"
+    if locale == "en":
+        if tour is not None:
+            return f"{competition}. Match results from round {tour}"
+        return f"{competition}. Match results for {_format_date_label(for_date, locale)}"
+    if tour is not None:
+        return f"{competition}. {tour}-турда өткен матчтардың нәтижесі"
+    return f"{competition}. {_format_date_label(for_date, locale)} күнгі матчтардың нәтижесі"
+
+
+def _is_second_league_2026(season: Season | None) -> bool:
+    if season is None:
+        return False
+    names = " ".join(
+        value
+        for value in (season.name, season.name_kz, season.name_en)
+        if value
+    )
+    return season.id == 203 or (season.frontend_code == "2l" and "2026" in names)
+
+
+def _daily_result_group_label(
+    season: Season | None,
+    group_name: str,
+    locale: str,
+) -> str:
+    group_name = group_name.strip()
+    if _is_second_league_2026(season):
+        special = _SECOND_LEAGUE_2026_GROUP_LABELS.get(group_name)
+        if special:
+            return special
+    template = _GENERIC_GROUP_LABELS.get(locale) or _GENERIC_GROUP_LABELS["kz"]
+    return template.format(group=group_name)
+
+
+def _resolve_daily_result_group(
+    game: Game,
+    team_groups: dict[int, str],
+) -> str | None:
+    home_group = team_groups.get(game.home_team_id or -1)
+    away_group = team_groups.get(game.away_team_id or -1)
+    if home_group and away_group and home_group != away_group:
+        return None
+    return home_group or away_group
+
+
+def _daily_result_section_sort_key(section_key: str) -> tuple[int, str]:
+    if not section_key:
+        return (99, "")
+    if len(section_key) == 1 and section_key.isalpha():
+        return (0, section_key.upper())
+    return (1, section_key)
+
+
+def _daily_result_team_payload(team: Team | None, locale: str) -> DailyResultsCardTeam:
+    team_id = getattr(team, "id", None) or 0
+    name = get_localized_field(team, "name", locale) if team is not None else ""
+    return DailyResultsCardTeam(
+        id=team_id,
+        name=name or "",
+        logo_url=resolve_team_logo_url(team),
+    )
+
+
+async def build_daily_results_card_payload(
+    db: AsyncSession,
+    season_id: int,
+    for_date: date,
+    locale: str = "kz",
+) -> DailyResultsCardPayload | None:
+    q = (
+        select(Game)
+        .where(
+            Game.season_id == season_id,
+            Game.date == for_date,
+        )
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+            selectinload(Game.season).selectinload(Season.championship),
+        )
+        .order_by(Game.time.nullslast(), Game.id)
+    )
+    games = (await db.execute(q)).scalars().all()
+    if not games:
+        return None
+
+    if any(not _is_daily_result_terminal(game) for game in games):
+        return None
+
+    visual_games = [game for game in games if _is_daily_result_publishable(game)]
+    if not visual_games:
+        return None
+
+    team_ids = {
+        team_id
+        for game in games
+        for team_id in (game.home_team_id, game.away_team_id)
+        if team_id is not None
+    }
+    team_groups: dict[int, str] = {}
+    if team_ids:
+        participant_q = select(
+            SeasonParticipant.team_id,
+            SeasonParticipant.group_name,
+        ).where(
+            SeasonParticipant.season_id == season_id,
+            SeasonParticipant.team_id.in_(team_ids),
+            SeasonParticipant.group_name.is_not(None),
+        )
+        participant_rows = (await db.execute(participant_q)).all()
+        team_groups = {
+            team_id: group_name
+            for team_id, group_name in participant_rows
+            if group_name
+        }
+
+    sections_map: dict[str, list[DailyResultsCardGame]] = defaultdict(list)
+    section_labels: dict[str, str | None] = {}
+    season = games[0].season
+    for game in visual_games:
+        group_key = _resolve_daily_result_group(game, team_groups) or ""
+        if group_key and group_key not in section_labels:
+            section_labels[group_key] = _daily_result_group_label(
+                season,
+                group_key,
+                locale,
+            )
+        sections_map[group_key].append(
+            DailyResultsCardGame(
+                id=game.id,
+                time=game.time,
+                home_team=_daily_result_team_payload(game.home_team, locale),
+                away_team=_daily_result_team_payload(game.away_team, locale),
+                home_score=game.home_score or 0,
+                away_score=game.away_score or 0,
+            )
+        )
+
+    ordered_keys = sorted(sections_map.keys(), key=_daily_result_section_sort_key)
+    sections = [
+        DailyResultsCardSection(
+            key=section_key or "all",
+            label=section_labels.get(section_key),
+            games=sections_map[section_key],
+        )
+        for section_key in ordered_keys
+    ]
+
+    tour_values = {game.tour for game in visual_games if game.tour is not None}
+    common_tour = next(iter(tour_values)) if len(tour_values) == 1 else None
+
+    return DailyResultsCardPayload(
+        season_id=season_id,
+        frontend_code=season.frontend_code if season is not None else None,
+        for_date=for_date,
+        locale=locale,
+        brand_label=DAILY_RESULTS_BRAND_LABEL,
+        tournament_name=_competition_label(season, locale),
+        headline=_build_daily_results_headline(season, locale, common_tour, for_date),
+        date_label=_format_date_label(for_date, locale),
+        tour=common_tour,
+        season_logo_url=season.logo if season is not None else None,
+        sections=sections,
+        game_count=len(visual_games),
+    )
+
+
+async def find_ready_daily_results_payloads(
+    db: AsyncSession,
+    *,
+    locale: str = "kz",
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> list[DailyResultsCardPayload]:
+    q = (
+        select(Game.season_id, Game.date)
+        .where(Game.season_id.is_not(None))
+        .distinct()
+        .order_by(Game.date, Game.season_id)
+    )
+    if date_from is not None:
+        q = q.where(Game.date >= date_from)
+    if date_to is not None:
+        q = q.where(Game.date <= date_to)
+
+    rows = (await db.execute(q)).all()
+    if not rows:
+        return []
+
+    sent_q = select(
+        TelegramDailyResultPost.season_id,
+        TelegramDailyResultPost.for_date,
+    ).where(TelegramDailyResultPost.locale == locale)
+    if date_from is not None:
+        sent_q = sent_q.where(TelegramDailyResultPost.for_date >= date_from)
+    if date_to is not None:
+        sent_q = sent_q.where(TelegramDailyResultPost.for_date <= date_to)
+    sent_rows = (await db.execute(sent_q)).all()
+    sent_scopes = {(season_id, for_date) for season_id, for_date in sent_rows}
+
+    ready_payloads: list[DailyResultsCardPayload] = []
+    for season_id, for_date in rows:
+        scope = (season_id, for_date)
+        if scope in sent_scopes:
+            continue
+        payload = await build_daily_results_card_payload(
+            db,
+            season_id=season_id,
+            for_date=for_date,
+            locale=locale,
+        )
+        if payload is not None:
+            ready_payloads.append(payload)
+    return ready_payloads
+
+
+async def post_daily_results_digest(
+    db: AsyncSession,
+    season_id: int,
+    for_date: date,
+    locale: str = "kz",
+    payload: DailyResultsCardPayload | None = None,
+) -> bool:
+    existing = await db.execute(
+        select(TelegramDailyResultPost.id).where(
+            TelegramDailyResultPost.season_id == season_id,
+            TelegramDailyResultPost.for_date == for_date,
+            TelegramDailyResultPost.locale == locale,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return False
+
+    payload = payload or await build_daily_results_card_payload(
+        db,
+        season_id=season_id,
+        for_date=for_date,
+        locale=locale,
+    )
+    if payload is None:
+        return False
+
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+
+        rendered = await render_daily_results_card_png(
+            season_id=season_id,
+            for_date=for_date,
+            out_path=tmp_path,
+            locale=locale,
+        )
+        if rendered is None:
+            return False
+
+        msg_id = await send_public_user_photo(str(rendered))
+        if not msg_id:
+            return False
+
+        db.add(
+            TelegramDailyResultPost(
+                season_id=season_id,
+                for_date=for_date,
+                locale=locale,
+                message_id=msg_id,
+                tour=payload.tour,
+                game_count=payload.game_count,
+                sent_at=utcnow(),
+            )
+        )
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            return False
+        return True
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------- #
