@@ -48,6 +48,7 @@ async def _create_season(
     *,
     name_kz: str,
     frontend_code: str | None = None,
+    tg_custom_emoji_id: str | None = None,
 ) -> Season:
     season = Season(
         id=season_id,
@@ -55,6 +56,7 @@ async def _create_season(
         name_kz=name_kz,
         championship_id=championship.id,
         frontend_code=frontend_code,
+        tg_custom_emoji_id=tg_custom_emoji_id,
         is_visible=True,
     )
     test_session.add(season)
@@ -68,8 +70,14 @@ async def _create_team(
     team_id: int,
     *,
     name_kz: str,
+    tg_custom_emoji_id: str | None = None,
 ) -> Team:
-    team = Team(id=team_id, name=name_kz, name_kz=name_kz)
+    team = Team(
+        id=team_id,
+        name=name_kz,
+        name_kz=name_kz,
+        tg_custom_emoji_id=tg_custom_emoji_id,
+    )
     test_session.add(team)
     await test_session.commit()
     await test_session.refresh(team)
@@ -161,7 +169,12 @@ async def test_daily_results_payload_ready_when_all_games_terminal(test_session)
         frontend_code="2l",
     )
     home = await _create_team(test_session, 1011, name_kz="Жас Қыран")
-    away = await _create_team(test_session, 1012, name_kz="Талас")
+    away = await _create_team(
+        test_session,
+        1012,
+        name_kz="Талас",
+        tg_custom_emoji_id="1111111111111111111",
+    )
 
     match_date = date(2026, 4, 21)
     await _create_game(
@@ -183,6 +196,10 @@ async def test_daily_results_payload_ready_when_all_games_terminal(test_session)
     assert "3-тур" in payload.headline
     assert payload.game_count == 1
     assert payload.sections[0].games[0].home_team_name == "Жас Қыран"
+    assert payload.sections[0].games[0].home_team_emoji == ""
+    assert payload.sections[0].games[0].away_team_emoji == (
+        '<tg-emoji emoji-id="1111111111111111111">⚽</tg-emoji>'
+    )
     assert payload.sections[0].games[0].home_score == 3
     assert payload.sections[0].label is None
 
@@ -376,9 +393,20 @@ async def test_post_daily_results_digest_is_idempotent(test_session):
         championship,
         name_kz="Премьер-Лига 2026",
         frontend_code="pl",
+        tg_custom_emoji_id="4444444444444444444",
     )
-    home = await _create_team(test_session, 1401, name_kz="Астана")
-    away = await _create_team(test_session, 1402, name_kz="Қайрат")
+    home = await _create_team(
+        test_session,
+        1401,
+        name_kz="Астана",
+        tg_custom_emoji_id="2222222222222222222",
+    )
+    away = await _create_team(
+        test_session,
+        1402,
+        name_kz="Қайрат",
+        tg_custom_emoji_id="3333333333333333333",
+    )
     match_date = date(2026, 4, 24)
     await _create_game(
         test_session,
@@ -396,9 +424,16 @@ async def test_post_daily_results_digest_is_idempotent(test_session):
     assert payload is not None
     text = build_daily_results_digest_text(payload)
     assert "<b>KFF LEAGUE</b>" in text
-    assert "<b>Премьер-Лига. 3-турда өткен матчтардың нәтижесі</b>" in text
+    assert (
+        '<tg-emoji emoji-id="4444444444444444444">🏆</tg-emoji> '
+        "<b>Премьер-Лига. 3-турда өткен матчтардың нәтижесі</b>"
+    ) in text
     assert "⚡ <b>24 сәуір:</b>" in text
-    assert "Астана 1:0 Қайрат" in text
+    assert (
+        '<tg-emoji emoji-id="2222222222222222222">⚽</tg-emoji> '
+        'Астана 1:0 Қайрат '
+        '<tg-emoji emoji-id="3333333333333333333">⚽</tg-emoji>'
+    ) in text
 
     with patch(
         "app.services.telegram_posts.send_public_telegram_message",
