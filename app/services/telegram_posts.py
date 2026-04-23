@@ -695,7 +695,10 @@ def build_daily_results_digest_text(payload: DailyResultsDigestPayload) -> str:
             "",
             _build_daily_results_section_heading(payload, section),
         ])
-        lines.extend(_build_daily_results_match_line(game) for game in section.games)
+        for index, game in enumerate(section.games):
+            lines.append(_build_daily_results_match_line(game))
+            if index < len(section.games) - 1:
+                lines.append("")
     return "\n".join(lines)
 
 

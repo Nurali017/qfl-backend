@@ -407,6 +407,8 @@ async def test_post_daily_results_digest_is_idempotent(test_session):
         name_kz="Қайрат",
         tg_custom_emoji_id="3333333333333333333",
     )
+    second_home = await _create_team(test_session, 1403, name_kz="Тобыл")
+    second_away = await _create_team(test_session, 1404, name_kz="Ордабасы")
     match_date = date(2026, 4, 24)
     await _create_game(
         test_session,
@@ -419,6 +421,17 @@ async def test_post_daily_results_digest_is_idempotent(test_session):
         home_score=1,
         away_score=0,
     )
+    await _create_game(
+        test_session,
+        game_id=9052,
+        season_id=season.id,
+        match_date=match_date,
+        home_team_id=second_home.id,
+        away_team_id=second_away.id,
+        status=GameStatus.finished,
+        home_score=2,
+        away_score=2,
+    )
 
     payload = await build_daily_results_digest_payload(test_session, season.id, match_date)
     assert payload is not None
@@ -429,11 +442,15 @@ async def test_post_daily_results_digest_is_idempotent(test_session):
         "<b>Премьер-Лига. 3-турда өткен матчтардың нәтижесі</b>"
     ) in text
     assert "⚡ <b>24 сәуір:</b>" in text
-    assert (
+    first_match_line = (
         '<tg-emoji emoji-id="2222222222222222222">⚽</tg-emoji> '
         'Астана 1:0 Қайрат '
         '<tg-emoji emoji-id="3333333333333333333">⚽</tg-emoji>'
-    ) in text
+    )
+    second_match_line = "Тобыл 2:2 Ордабасы"
+    assert first_match_line in text
+    assert second_match_line in text
+    assert f"{first_match_line}\n\n{second_match_line}" in text
 
     with patch(
         "app.services.telegram_posts.send_public_telegram_message",
