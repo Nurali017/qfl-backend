@@ -163,7 +163,9 @@ _SECOND_LEAGUE_2026_GROUP_LABELS: dict[str, str] = {
 class DailyResultsDigestGame:
     id: int
     time: time | None
+    home_team_emoji: str
     home_team_name: str
+    away_team_emoji: str
     away_team_name: str
     home_score: int
     away_score: int
@@ -181,6 +183,7 @@ class DailyResultsDigestPayload:
     season_id: int
     for_date: date
     locale: str
+    competition_emoji: str
     headline: str
     date_label: str
     tour: int | None
@@ -499,6 +502,16 @@ def _daily_result_team_name(team: Team | None, locale: str) -> str:
     return (get_localized_field(team, "name", locale) if team is not None else "") or ""
 
 
+def _daily_result_team_emoji(team: Team | None) -> str:
+    """Inline team sticker for the daily text card; empty when not configured."""
+    if team is None or not team.tg_custom_emoji_id:
+        return ""
+    return (
+        f'<tg-emoji emoji-id="{html.escape(team.tg_custom_emoji_id, quote=True)}">'
+        f'⚽</tg-emoji>'
+    )
+
+
 async def build_daily_results_digest_payload(
     db: AsyncSession,
     season_id: int,
@@ -567,7 +580,9 @@ async def build_daily_results_digest_payload(
             DailyResultsDigestGame(
                 id=game.id,
                 time=game.time,
+                home_team_emoji=_daily_result_team_emoji(game.home_team),
                 home_team_name=_daily_result_team_name(game.home_team, locale),
+                away_team_emoji=_daily_result_team_emoji(game.away_team),
                 away_team_name=_daily_result_team_name(game.away_team, locale),
                 home_score=game.home_score or 0,
                 away_score=game.away_score or 0,
@@ -591,6 +606,7 @@ async def build_daily_results_digest_payload(
         season_id=season_id,
         for_date=for_date,
         locale=locale,
+        competition_emoji=_league_emoji(season),
         headline=_build_daily_results_headline(season, locale, common_tour, for_date),
         date_label=_format_date_label(for_date, locale),
         tour=common_tour,
@@ -658,16 +674,21 @@ def _build_daily_results_section_heading(
 
 
 def _build_daily_results_match_line(game: DailyResultsDigestGame) -> str:
+    home_emoji = f"{game.home_team_emoji} " if game.home_team_emoji else ""
+    away_emoji = f" {game.away_team_emoji}" if game.away_team_emoji else ""
     return (
-        f"{_esc(game.home_team_name)} {game.home_score}:{game.away_score} "
-        f"{_esc(game.away_team_name)}"
+        f"{home_emoji}{_esc(game.home_team_name)} {game.home_score}:{game.away_score} "
+        f"{_esc(game.away_team_name)}{away_emoji}"
     )
 
 
 def build_daily_results_digest_text(payload: DailyResultsDigestPayload) -> str:
+    headline = f"<b>{_esc(payload.headline)}</b>"
+    if payload.competition_emoji:
+        headline = f"{payload.competition_emoji} {headline}"
     lines = [
         f"<b>{DAILY_RESULTS_BRAND_LABEL}</b>",
-        f"<b>{_esc(payload.headline)}</b>",
+        headline,
     ]
     for section in payload.sections:
         lines.extend([
