@@ -1,5 +1,4 @@
 from datetime import date, time
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,7 +14,8 @@ from app.models import (
 )
 from app.models.game import GameStatus
 from app.services.telegram_posts import (
-    build_daily_results_card_payload,
+    build_daily_results_digest_payload,
+    build_daily_results_digest_text,
     find_ready_daily_results_payloads,
     post_daily_results_digest,
 )
@@ -146,7 +146,7 @@ async def test_daily_results_payload_not_ready_while_any_game_is_live(test_sessi
         away_score=1,
     )
 
-    payload = await build_daily_results_card_payload(test_session, season.id, match_date)
+    payload = await build_daily_results_digest_payload(test_session, season.id, match_date)
     assert payload is None
 
 
@@ -176,13 +176,13 @@ async def test_daily_results_payload_ready_when_all_games_terminal(test_session)
         away_score=0,
     )
 
-    payload = await build_daily_results_card_payload(test_session, season.id, match_date)
+    payload = await build_daily_results_digest_payload(test_session, season.id, match_date)
 
     assert payload is not None
     assert payload.tour == 3
     assert "3-тур" in payload.headline
     assert payload.game_count == 1
-    assert payload.sections[0].games[0].home_team.name == "Жас Қыран"
+    assert payload.sections[0].games[0].home_team_name == "Жас Қыран"
     assert payload.sections[0].games[0].home_score == 3
     assert payload.sections[0].label is None
 
@@ -237,7 +237,7 @@ async def test_daily_results_grouped_sections_use_generic_labels(test_session):
         away_score=1,
     )
 
-    payload = await build_daily_results_card_payload(test_session, season.id, match_date)
+    payload = await build_daily_results_digest_payload(test_session, season.id, match_date)
 
     assert payload is not None
     assert [section.label for section in payload.sections] == [
@@ -296,7 +296,7 @@ async def test_daily_results_second_league_2026_uses_special_group_labels(test_s
         away_score=2,
     )
 
-    payload = await build_daily_results_card_payload(test_session, season.id, match_date)
+    payload = await build_daily_results_digest_payload(test_session, season.id, match_date)
 
     assert payload is not None
     assert [section.label for section in payload.sections] == [
@@ -392,11 +392,16 @@ async def test_post_daily_results_digest_is_idempotent(test_session):
         away_score=0,
     )
 
+    payload = await build_daily_results_digest_payload(test_session, season.id, match_date)
+    assert payload is not None
+    text = build_daily_results_digest_text(payload)
+    assert "<b>KFF LEAGUE</b>" in text
+    assert "<b>Премьер-Лига. 3-турда өткен матчтардың нәтижесі</b>" in text
+    assert "⚡ <b>24 сәуір:</b>" in text
+    assert "Астана 1:0 Қайрат" in text
+
     with patch(
-        "app.services.telegram_posts.render_daily_results_card_png",
-        new=AsyncMock(return_value=Path("/tmp/daily-card.png")),
-    ), patch(
-        "app.services.telegram_posts.send_public_user_photo",
+        "app.services.telegram_posts.send_public_telegram_message",
         new=AsyncMock(return_value=777),
     ) as send_mock:
         first = await post_daily_results_digest(test_session, season.id, match_date)

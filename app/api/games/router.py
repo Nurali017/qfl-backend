@@ -18,9 +18,8 @@ from app.models.news import NewsGame
 from app.schemas.news import NewsListItem
 from app.schemas.game import (
     BroadcasterInfo, GameDetailItem, GameListItem, MatchCenterResponse,
-    StadiumInfo, TeamInMatchCenter, DailyResultsCardPayload,
+    StadiumInfo, TeamInMatchCenter,
 )
-from app.services.telegram_posts import build_daily_results_card_payload
 from app.schemas.team import TeamInGame
 from app.utils.localization import get_localized_field
 from app.utils.team_logo_fallback import resolve_team_logo_url
@@ -316,26 +315,6 @@ async def get_games(
         ))
 
     return {"items": items, "total": total}
-
-
-@router.get("/daily-results-card", response_model=DailyResultsCardPayload)
-async def get_daily_results_card_payload(
-    season_id: int = Query(...),
-    for_date: date_type = Query(...),
-    locale: str = Query(default="kz", pattern="^(kz|ru|en)$"),
-    db: AsyncSession = Depends(get_db),
-):
-    await ensure_visible_season_or_404(db, season_id)
-    payload = await build_daily_results_card_payload(
-        db,
-        season_id=season_id,
-        for_date=for_date,
-        locale=locale,
-    )
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Daily results card is not available")
-    return payload
-
 
 @router.get("/home-widget")
 async def home_widget(
