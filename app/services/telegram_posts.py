@@ -11,10 +11,9 @@ from __future__ import annotations
 import hashlib
 import html
 import logging
+from dataclasses import dataclass
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime, time, timedelta
-from pathlib import Path
-import tempfile
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -38,17 +37,9 @@ from app.models.game_lineup import LineupType
 from app.models.season import Season
 from app.models.championship import Championship
 from app.models.stadium import Stadium
-from app.schemas.game import (
-    DailyResultsCardGame,
-    DailyResultsCardPayload,
-    DailyResultsCardSection,
-    DailyResultsCardTeam,
-)
-from app.services.daily_results_renderer import render_daily_results_card_png
 from app.services.telegram_user_client import send_public_user_message as send_public_telegram_message
 from app.services.telegram_user_client import send_public_user_photo
 from app.utils.localization import get_localized_field
-from app.utils.team_logo_fallback import resolve_team_logo_url
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
@@ -166,6 +157,35 @@ _SECOND_LEAGUE_2026_GROUP_LABELS: dict[str, str] = {
     "A": "Оңтүстік-Батыс конференциясы",
     "B": "Солтүстік-Шығыс конференциясы",
 }
+
+
+@dataclass
+class DailyResultsDigestGame:
+    id: int
+    time: time | None
+    home_team_name: str
+    away_team_name: str
+    home_score: int
+    away_score: int
+
+
+@dataclass
+class DailyResultsDigestSection:
+    key: str
+    label: str | None
+    games: list[DailyResultsDigestGame]
+
+
+@dataclass
+class DailyResultsDigestPayload:
+    season_id: int
+    for_date: date
+    locale: str
+    headline: str
+    date_label: str
+    tour: int | None
+    sections: list[DailyResultsDigestSection]
+    game_count: int
 
 
 # ---------------------------------------------------------------------- #
@@ -475,22 +495,16 @@ def _daily_result_section_sort_key(section_key: str) -> tuple[int, str]:
     return (1, section_key)
 
 
-def _daily_result_team_payload(team: Team | None, locale: str) -> DailyResultsCardTeam:
-    team_id = getattr(team, "id", None) or 0
-    name = get_localized_field(team, "name", locale) if team is not None else ""
-    return DailyResultsCardTeam(
-        id=team_id,
-        name=name or "",
-        logo_url=resolve_team_logo_url(team),
-    )
+def _daily_result_team_name(team: Team | None, locale: str) -> str:
+    return (get_localized_field(team, "name", locale) if team is not None else "") or ""
 
 
-async def build_daily_results_card_payload(
+async def build_daily_results_digest_payload(
     db: AsyncSession,
     season_id: int,
     for_date: date,
     locale: str = "kz",
-) -> DailyResultsCardPayload | None:
+) -> DailyResultsDigestPayload | None:
     q = (
         select(Game)
         .where(
@@ -538,7 +552,7 @@ async def build_daily_results_card_payload(
             if group_name
         }
 
-    sections_map: dict[str, list[DailyResultsCardGame]] = defaultdict(list)
+    sections_map: dict[str, list[DailyResultsDigestGame]] = defaultdict(list)
     section_labels: dict[str, str | None] = {}
     season = games[0].season
     for game in visual_games:
@@ -550,11 +564,11 @@ async def build_daily_results_card_payload(
                 locale,
             )
         sections_map[group_key].append(
-            DailyResultsCardGame(
+            DailyResultsDigestGame(
                 id=game.id,
                 time=game.time,
-                home_team=_daily_result_team_payload(game.home_team, locale),
-                away_team=_daily_result_team_payload(game.away_team, locale),
+                home_team_name=_daily_result_team_name(game.home_team, locale),
+                away_team_name=_daily_result_team_name(game.away_team, locale),
                 home_score=game.home_score or 0,
                 away_score=game.away_score or 0,
             )
@@ -562,7 +576,7 @@ async def build_daily_results_card_payload(
 
     ordered_keys = sorted(sections_map.keys(), key=_daily_result_section_sort_key)
     sections = [
-        DailyResultsCardSection(
+        DailyResultsDigestSection(
             key=section_key or "all",
             label=section_labels.get(section_key),
             games=sections_map[section_key],
@@ -573,17 +587,13 @@ async def build_daily_results_card_payload(
     tour_values = {game.tour for game in visual_games if game.tour is not None}
     common_tour = next(iter(tour_values)) if len(tour_values) == 1 else None
 
-    return DailyResultsCardPayload(
+    return DailyResultsDigestPayload(
         season_id=season_id,
-        frontend_code=season.frontend_code if season is not None else None,
         for_date=for_date,
         locale=locale,
-        brand_label=DAILY_RESULTS_BRAND_LABEL,
-        tournament_name=_competition_label(season, locale),
         headline=_build_daily_results_headline(season, locale, common_tour, for_date),
         date_label=_format_date_label(for_date, locale),
         tour=common_tour,
-        season_logo_url=season.logo if season is not None else None,
         sections=sections,
         game_count=len(visual_games),
     )
@@ -595,7 +605,7 @@ async def find_ready_daily_results_payloads(
     locale: str = "kz",
     date_from: date | None = None,
     date_to: date | None = None,
-) -> list[DailyResultsCardPayload]:
+) -> list[DailyResultsDigestPayload]:
     q = (
         select(Game.season_id, Game.date)
         .where(Game.season_id.is_not(None))
@@ -622,12 +632,12 @@ async def find_ready_daily_results_payloads(
     sent_rows = (await db.execute(sent_q)).all()
     sent_scopes = {(season_id, for_date) for season_id, for_date in sent_rows}
 
-    ready_payloads: list[DailyResultsCardPayload] = []
+    ready_payloads: list[DailyResultsDigestPayload] = []
     for season_id, for_date in rows:
         scope = (season_id, for_date)
         if scope in sent_scopes:
             continue
-        payload = await build_daily_results_card_payload(
+        payload = await build_daily_results_digest_payload(
             db,
             season_id=season_id,
             for_date=for_date,
@@ -638,12 +648,42 @@ async def find_ready_daily_results_payloads(
     return ready_payloads
 
 
+def _build_daily_results_section_heading(
+    payload: DailyResultsDigestPayload,
+    section: DailyResultsDigestSection,
+) -> str:
+    if section.label:
+        return f"⚡ <b>{_esc(section.label)}. {payload.date_label}:</b>"
+    return f"⚡ <b>{payload.date_label}:</b>"
+
+
+def _build_daily_results_match_line(game: DailyResultsDigestGame) -> str:
+    return (
+        f"{_esc(game.home_team_name)} {game.home_score}:{game.away_score} "
+        f"{_esc(game.away_team_name)}"
+    )
+
+
+def build_daily_results_digest_text(payload: DailyResultsDigestPayload) -> str:
+    lines = [
+        f"<b>{DAILY_RESULTS_BRAND_LABEL}</b>",
+        f"<b>{_esc(payload.headline)}</b>",
+    ]
+    for section in payload.sections:
+        lines.extend([
+            "",
+            _build_daily_results_section_heading(payload, section),
+        ])
+        lines.extend(_build_daily_results_match_line(game) for game in section.games)
+    return "\n".join(lines)
+
+
 async def post_daily_results_digest(
     db: AsyncSession,
     season_id: int,
     for_date: date,
     locale: str = "kz",
-    payload: DailyResultsCardPayload | None = None,
+    payload: DailyResultsDigestPayload | None = None,
 ) -> bool:
     existing = await db.execute(
         select(TelegramDailyResultPost.id).where(
@@ -655,7 +695,7 @@ async def post_daily_results_digest(
     if existing.scalar_one_or_none() is not None:
         return False
 
-    payload = payload or await build_daily_results_card_payload(
+    payload = payload or await build_daily_results_digest_payload(
         db,
         season_id=season_id,
         for_date=for_date,
@@ -664,47 +704,28 @@ async def post_daily_results_digest(
     if payload is None:
         return False
 
-    tmp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
+    text = build_daily_results_digest_text(payload)
+    msg_id = await send_public_telegram_message(text)
+    if not msg_id:
+        return False
 
-        rendered = await render_daily_results_card_png(
+    db.add(
+        TelegramDailyResultPost(
             season_id=season_id,
             for_date=for_date,
-            out_path=tmp_path,
             locale=locale,
+            message_id=msg_id,
+            tour=payload.tour,
+            game_count=payload.game_count,
+            sent_at=utcnow(),
         )
-        if rendered is None:
-            return False
-
-        msg_id = await send_public_user_photo(str(rendered))
-        if not msg_id:
-            return False
-
-        db.add(
-            TelegramDailyResultPost(
-                season_id=season_id,
-                for_date=for_date,
-                locale=locale,
-                message_id=msg_id,
-                tour=payload.tour,
-                game_count=payload.game_count,
-                sent_at=utcnow(),
-            )
-        )
-        try:
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            return False
-        return True
-    finally:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+    )
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------- #

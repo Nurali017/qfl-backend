@@ -1,5 +1,4 @@
 from datetime import date, time
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -80,10 +79,7 @@ async def test_admin_daily_results_trigger_reset_allows_resend(
     headers = {"Authorization": f"Bearer {token}"}
 
     with patch(
-        "app.services.telegram_posts.render_daily_results_card_png",
-        new=AsyncMock(return_value=Path("/tmp/daily-card.png")),
-    ), patch(
-        "app.services.telegram_posts.send_public_user_photo",
+        "app.services.telegram_posts.send_public_telegram_message",
         new=AsyncMock(return_value=915),
     ) as send_mock:
         first = await client.post(
