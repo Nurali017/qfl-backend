@@ -577,23 +577,25 @@ def backfill_player_tour_stats_task(season_id: int, max_tour: int):
 async def _retry_missing_team_of_week():
     """Retry team-of-week sync for completed tours that are still missing data.
 
-    Finds tours where all games finished within the last 48 hours but
+    Finds tours where all playable games finished within the last 7 days but
     team-of-week hasn't been synced (for either locale). Dispatches
     sync_team_of_week_for_tour for each missing tour.
     """
     TERMINAL = {GameStatus.finished, GameStatus.technical_defeat}
-    cutoff = utcnow() - timedelta(hours=48)
+    NON_BLOCKING = (GameStatus.postponed, GameStatus.cancelled)
+    cutoff = utcnow() - timedelta(days=7)
     dispatched = []
 
     async with AsyncSessionLocal() as db:
         for season_id in settings.sync_season_ids:
             if season_id not in settings.extended_stats_season_ids:
                 continue
-            # Find tours with all games finished, where the latest finish is within 48h
+            # Find tours where all playable (non-postponed/cancelled) games finished
+            # within the last 7 days. Postponed/cancelled games are non-blocking.
             tour_query = await db.execute(
                 select(
                     Game.tour,
-                    func.count().label("total"),
+                    func.count(case((Game.status.notin_(NON_BLOCKING), 1))).label("total"),
                     func.count(case(
                         (Game.status.in_(TERMINAL) & Game.home_score.isnot(None) & Game.away_score.isnot(None), 1),
                     )).label("completed"),
@@ -642,5 +644,5 @@ async def _retry_missing_team_of_week():
 
 @celery_app.task(name="app.tasks.sync_tasks.retry_missing_team_of_week")
 def retry_missing_team_of_week():
-    """Celery task: Retry team-of-week for completed tours missing data (within 48h)."""
+    """Celery task: Retry team-of-week for completed tours missing data (within 7 days)."""
     return run_async(_retry_missing_team_of_week())
