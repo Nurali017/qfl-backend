@@ -1208,11 +1208,7 @@ class LiveSyncService:
         if not team_candidates:
             return None, None
 
-        name_match = or_(
-            and_(Player.first_name == first_name, Player.last_name == last_name),
-            and_(Player.first_name_kz == first_name, Player.last_name_kz == last_name),
-            and_(Player.first_name_en == first_name, Player.last_name_en == last_name),
-        )
+        name_match = self._player_name_match_clause(first_name, last_name)
         result = await self.db.execute(
             select(PlayerTeam.team_id, PlayerTeam.player_id)
             .join(Player, Player.id == PlayerTeam.player_id)
@@ -1231,6 +1227,22 @@ class LiveSyncService:
             return team_id, player_id
         return None, None
 
+    @staticmethod
+    def _player_name_match_clause(first_name: str, last_name: str):
+        """Match player on first_name AND last_name allowing mixed locales (SOTA
+        sometimes sends KZ first name with RU last name or vice versa)."""
+        first_match = or_(
+            Player.first_name == first_name,
+            Player.first_name_kz == first_name,
+            Player.first_name_en == first_name,
+        )
+        last_match = or_(
+            Player.last_name == last_name,
+            Player.last_name_kz == last_name,
+            Player.last_name_en == last_name,
+        )
+        return and_(first_match, last_match)
+
     async def _find_player_id(
         self, first_name: str, last_name: str, game_id: int, team_id: int | None = None
     ) -> int | None:
@@ -1238,11 +1250,7 @@ class LiveSyncService:
         if not first_name and not last_name:
             return None
 
-        name_match = or_(
-            and_(Player.first_name == first_name, Player.last_name == last_name),
-            and_(Player.first_name_kz == first_name, Player.last_name_kz == last_name),
-            and_(Player.first_name_en == first_name, Player.last_name_en == last_name),
-        )
+        name_match = self._player_name_match_clause(first_name, last_name)
 
         query = (
             select(Player.id)
