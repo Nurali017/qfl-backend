@@ -58,7 +58,7 @@ _TEAM_STOPWORDS = {
 
 _WALLTIME_RE = re.compile(r"\[(\d{1,2})[-:](\d{1,2})[-:](\d{1,2})\]")
 _SCORE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*[-:]\s*(\d{1,2})(?!\d)")
-_MINUTE_RE = re.compile(r"(?<!\d)(\d{1,3})'")
+_MINUTE_RE = re.compile(r"(?<!\d)(\d{1,3})['\`]")
 _TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁёҚқҒғҰұӘәІіҢңӨөҮүҺһ][A-Za-zА-Яа-яЁёҚқҒғҰұӘәІіҢңӨөҮүҺһ-]+")
 
 _VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "mkv", "m4v", "avi"}
