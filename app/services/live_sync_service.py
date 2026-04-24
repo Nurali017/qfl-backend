@@ -1040,6 +1040,18 @@ class LiveSyncService:
                     player2_candidate_team_id,
                 )
 
+            # Final fallback: SOTA may omit team1 and the player may not be in the
+            # synced lineup (e.g., card for a bench player). Match by name against
+            # player_teams for the two game teams in this season.
+            if team_id is None and (first_name1 or last_name1):
+                team_id_from_roster, player_id_from_roster = await self._infer_team_id_by_name(
+                    game, first_name1, last_name1,
+                )
+                if team_id_from_roster is not None:
+                    team_id = team_id_from_roster
+                    if player_id is None and player_id_from_roster is not None:
+                        player_id = player_id_from_roster
+
             new_fields = {
                 "half": half,
                 "minute": minute,
@@ -1181,6 +1193,43 @@ class LiveSyncService:
         if len(team_ids) == 1:
             return next(iter(team_ids))
         return None
+
+    async def _infer_team_id_by_name(
+        self,
+        game: Game,
+        first_name: str,
+        last_name: str,
+    ) -> tuple[int | None, int | None]:
+        """Fallback: match player by name against player_teams of the two game teams
+        in this game's season. Returns (team_id, player_id) if unambiguous."""
+        if (not first_name and not last_name) or not game.season_id:
+            return None, None
+        team_candidates = [tid for tid in (game.home_team_id, game.away_team_id) if tid]
+        if not team_candidates:
+            return None, None
+
+        name_match = or_(
+            and_(Player.first_name == first_name, Player.last_name == last_name),
+            and_(Player.first_name_kz == first_name, Player.last_name_kz == last_name),
+            and_(Player.first_name_en == first_name, Player.last_name_en == last_name),
+        )
+        result = await self.db.execute(
+            select(PlayerTeam.team_id, PlayerTeam.player_id)
+            .join(Player, Player.id == PlayerTeam.player_id)
+            .where(
+                PlayerTeam.season_id == game.season_id,
+                PlayerTeam.team_id.in_(team_candidates),
+                name_match,
+            )
+        )
+        rows = result.all()
+        team_ids = {row[0] for row in rows}
+        if len(team_ids) == 1:
+            team_id = next(iter(team_ids))
+            player_ids = {row[1] for row in rows}
+            player_id = next(iter(player_ids)) if len(player_ids) == 1 else None
+            return team_id, player_id
+        return None, None
 
     async def _find_player_id(
         self, first_name: str, last_name: str, game_id: int, team_id: int | None = None
