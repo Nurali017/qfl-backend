@@ -32,6 +32,7 @@ class ParsedGoal:
     wall_time: tuple[int, int, int] | None  # (H, M, S) — camera wall-clock time if present
     player_hint: str | None
     score_hint: str | None
+    minute_hint: int | None = None  # e.g. 22 from "Дүйсенбекұлы 22'.mp4"
 
 
 _STOPWORDS = {
@@ -57,6 +58,7 @@ _TEAM_STOPWORDS = {
 
 _WALLTIME_RE = re.compile(r"\[(\d{1,2})[-:](\d{1,2})[-:](\d{1,2})\]")
 _SCORE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*[-:]\s*(\d{1,2})(?!\d)")
+_MINUTE_RE = re.compile(r"(?<!\d)(\d{1,3})'")
 _TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁёҚқҒғҰұӘәІіҢңӨөҮүҺһ][A-Za-zА-Яа-яЁёҚқҒғҰұӘәІіҢңӨөҮүҺһ-]+")
 
 _VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "mkv", "m4v", "avi"}
@@ -111,11 +113,19 @@ def parse_goal_filename(name: str) -> ParsedGoal | None:
     wall_time = _parse_wall_time(stem)
     player_hint = _pick_player(stem)
 
-    score_match = _SCORE_RE.search(re.sub(r"\[[^\]]*\]", " ", stem))
+    clean = re.sub(r"\[[^\]]*\]", " ", stem)
+    score_match = _SCORE_RE.search(clean)
     score_hint = f"{score_match.group(1)}-{score_match.group(2)}" if score_match else None
 
-    if wall_time is None and player_hint is None:
+    minute_match = _MINUTE_RE.search(clean)
+    minute_hint: int | None = None
+    if minute_match:
+        val = int(minute_match.group(1))
+        if 1 <= val <= 120:
+            minute_hint = val
+
+    if wall_time is None and player_hint is None and minute_hint is None:
         logger.debug("Cannot parse goal filename: %s", name)
         return None
 
-    return ParsedGoal(wall_time=wall_time, player_hint=player_hint, score_hint=score_hint)
+    return ParsedGoal(wall_time=wall_time, player_hint=player_hint, score_hint=score_hint, minute_hint=minute_hint)
