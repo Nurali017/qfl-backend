@@ -452,7 +452,11 @@ class FcmsSyncService:
         # Build matchPlayerId → personId mapping from both teams
         mp_to_person: dict[int, int] = {}
         mp_to_name: dict[int, str] = {}
-        for comp_id in (home_competitor_id, away_competitor_id):
+        mp_to_team_id: dict[int, int] = {}
+        for comp_id, team_id_for_comp in (
+            (home_competitor_id, game.home_team_id),
+            (away_competitor_id, game.away_team_id),
+        ):
             try:
                 match_players = await self.client.get_match_players(game.fcms_match_id, comp_id)
             except Exception:
@@ -468,6 +472,8 @@ class FcmsSyncService:
                 fn = player_data.get("localFirstName", "")
                 ln = player_data.get("localFamilyName", "")
                 mp_to_name[mp_id] = f"{fn} {ln}".strip()
+                if team_id_for_comp:
+                    mp_to_team_id[mp_id] = team_id_for_comp
 
         # Build personId → our player_id lookup
         all_person_ids = list(mp_to_person.values())
@@ -525,6 +531,20 @@ class FcmsSyncService:
 
             # Resolve primary player
             mp_id = fe.get("matchPlayerId")
+
+            # Fallback: FCMS иногда не присылает matchPlayerOrigin (чаще всего на
+            # карточках) — определяем команду по matchPlayerId / matchPlayerOutId /
+            # matchPlayerInId из загруженных составов обеих команд.
+            if team_id is None:
+                for candidate_mp_id in (
+                    mp_id,
+                    fe.get("matchPlayerOutId"),
+                    fe.get("matchPlayerInId"),
+                ):
+                    if candidate_mp_id and candidate_mp_id in mp_to_team_id:
+                        team_id = mp_to_team_id[candidate_mp_id]
+                        break
+
             player_id = None
             player_name = None
             if mp_id:
