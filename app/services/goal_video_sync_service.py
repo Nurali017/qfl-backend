@@ -22,12 +22,14 @@ Matching strategy (timing-first — filenames are unreliable):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
 import mimetypes
 import tempfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -45,6 +47,7 @@ from app.services.goal_video_ai_matcher import (
     get_ai_matcher,
 )
 from app.services.google_drive_client import DriveFile, get_drive_client
+from app.utils.file_urls import to_object_name
 from app.utils.goal_video_filename import parse_goal_filename
 from app.utils.video_transcode import transcode_mp4
 
@@ -82,6 +85,15 @@ class SyncResult:
     errors: int = 0
 
 
+@dataclass(frozen=True)
+class ProcessedGoalVideoRecord:
+    file_id: str
+    game_id: int
+    event_id: int
+    object_name: str
+    folder_label: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Redis helpers
 # ---------------------------------------------------------------------------
@@ -109,13 +121,58 @@ async def _store_last_sync(ts: datetime) -> None:
         pass
 
 
-async def _mark_processed(file_id: str) -> None:
+def _processed_record_key(file_id: str) -> str:
+    return f"qfl:goal-videos:file:{file_id}"
+
+
+async def _load_processed_record(file_id: str) -> ProcessedGoalVideoRecord | None:
+    try:
+        from app.utils.live_flag import get_redis
+
+        r = await get_redis()
+        raw = await r.get(_processed_record_key(file_id))
+        if not raw:
+            return None
+        data = json.loads(raw.decode())
+        return ProcessedGoalVideoRecord(
+            file_id=data["file_id"],
+            game_id=int(data["game_id"]),
+            event_id=int(data["event_id"]),
+            object_name=data["object_name"],
+            folder_label=data.get("folder_label"),
+        )
+    except Exception:
+        logger.debug("Cannot read processed goal-video record for %s", file_id, exc_info=True)
+        return None
+
+
+async def clear_processed_goal_video_state(file_id: str) -> None:
+    try:
+        from app.utils.live_flag import get_redis
+
+        r = await get_redis()
+        await r.srem(_PROCESSED_SET_KEY, file_id)
+        await r.delete(_processed_record_key(file_id))
+    except Exception:
+        logger.debug("Cannot clear processed goal-video state for %s", file_id, exc_info=True)
+
+
+async def _mark_processed(
+    file_id: str,
+    record: ProcessedGoalVideoRecord | None = None,
+) -> None:
     try:
         from app.utils.live_flag import get_redis
 
         r = await get_redis()
         await r.sadd(_PROCESSED_SET_KEY, file_id)
         await r.expire(_PROCESSED_SET_KEY, _PROCESSED_TTL_SECONDS)
+        if record is not None:
+            await r.set(
+                _processed_record_key(file_id),
+                json.dumps(asdict(record), ensure_ascii=False),
+                ex=_PROCESSED_TTL_SECONDS,
+            )
     except Exception:
         pass
 
@@ -128,6 +185,71 @@ async def _is_processed(file_id: str) -> bool:
         return bool(await r.sismember(_PROCESSED_SET_KEY, file_id))
     except Exception:
         return False
+
+
+def _folder_label_for(drive_file: DriveFile) -> str | None:
+    if drive_file.ancestor_names:
+        return drive_file.ancestor_names[-1]
+    return drive_file.parent_name
+
+
+async def _find_processed_record_in_storage(
+    file_id: str,
+) -> ProcessedGoalVideoRecord | None:
+    from app.config import get_settings
+    from app.minio_client import get_minio_client
+
+    def _scan() -> ProcessedGoalVideoRecord | None:
+        client = get_minio_client()
+        bucket = get_settings().minio_bucket
+        for obj in client.list_objects(bucket, prefix="goal_videos/", recursive=True):
+            try:
+                stat = client.stat_object(bucket, obj.object_name)
+            except Exception:
+                logger.debug("Failed to stat MinIO object %s", obj.object_name, exc_info=True)
+                continue
+            metadata = stat.metadata or {}
+            drive_id = metadata.get("x-amz-meta-drive-file-id") or metadata.get("drive-file-id")
+            if drive_id != file_id:
+                continue
+            game_id_raw = metadata.get("x-amz-meta-game-id") or metadata.get("game-id")
+            try:
+                game_id = int(game_id_raw) if game_id_raw is not None else int(obj.object_name.split("/", 2)[1])
+                event_id = int(obj.object_name.rsplit("/", 1)[-1].split("-", 1)[0])
+            except (IndexError, TypeError, ValueError):
+                logger.warning(
+                    "processed goal-video metadata is malformed for %s",
+                    obj.object_name,
+                )
+                return None
+            return ProcessedGoalVideoRecord(
+                file_id=file_id,
+                game_id=game_id,
+                event_id=event_id,
+                object_name=obj.object_name,
+            )
+        return None
+
+    return await asyncio.to_thread(_scan)
+
+
+async def lookup_processed_goal_video_record(
+    file_id: str,
+) -> ProcessedGoalVideoRecord | None:
+    record = await _load_processed_record(file_id)
+    if record is not None:
+        return record
+    return await _find_processed_record_in_storage(file_id)
+
+
+async def _delete_goal_video_object(object_name: str | None) -> bool:
+    normalized = to_object_name(object_name)
+    if not normalized:
+        return False
+    deleted = await FileStorageService.delete_file(normalized)
+    if not deleted:
+        logger.warning("Failed to delete goal-video object %s", normalized)
+    return deleted
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +412,47 @@ def _player_bonus(drive_file: DriveFile, event: GameEvent) -> timedelta:
     return timedelta(0)
 
 
+def _direct_minute_match(
+    events: list[GameEvent],
+    videos: list[DriveFile],
+) -> list[tuple[DriveFile, GameEvent]]:
+    """Match videos to events by explicit minute + player name in filename.
+
+    Handles filenames like ``Дүйсенбекұлы 22'.mp4`` — disambiguates two goals
+    by the same player without needing Drive modifiedTime.
+    """
+    unmatched_events = [e for e in events if e.video_url is None and not _is_shootout_event(e)]
+    if not unmatched_events or not videos:
+        return []
+
+    candidates: list[tuple[int, DriveFile, GameEvent]] = []
+    for v in videos:
+        parsed = parse_goal_filename(v.name)
+        if not parsed or parsed.minute_hint is None or not parsed.player_hint:
+            continue
+        norm_hint = _normalize_player(parsed.player_hint)
+        for event in unmatched_events:
+            if event.minute != parsed.minute_hint:
+                continue
+            if not event.player_name:
+                continue
+            if norm_hint not in _normalize_player(event.player_name):
+                continue
+            candidates.append((len(norm_hint), v, event))
+
+    candidates.sort(key=lambda x: -x[0])
+    used_videos: set[str] = set()
+    used_events: set[int] = set()
+    pairs: list[tuple[DriveFile, GameEvent]] = []
+    for _score, v, event in candidates:
+        if v.id in used_videos or event.id in used_events:
+            continue
+        pairs.append((v, event))
+        used_videos.add(v.id)
+        used_events.add(event.id)
+    return pairs
+
+
 def _optimal_time_match(
     game: Game,
     events: list[GameEvent],
@@ -435,7 +598,14 @@ async def _ai_candidates_for_game(
 # ---------------------------------------------------------------------------
 
 async def _download_and_link(
-    drive, db: AsyncSession, drive_file: DriveFile, event: GameEvent
+    drive,
+    db: AsyncSession,
+    drive_file: DriveFile,
+    event: GameEvent,
+    *,
+    previous_record: ProcessedGoalVideoRecord | None = None,
+    folder_label: str | None = None,
+    remove_previous_attachment: bool = True,
 ) -> bool:
     try:
         payload = await drive.download_file(drive_file.id)
@@ -472,9 +642,47 @@ async def _download_and_link(
         logger.exception("MinIO upload failed for event %s", event.id)
         return False
 
+    previous_game_id: int | None = None
+    previous_object_name: str | None = None
+    if (
+        previous_record is not None
+        and remove_previous_attachment
+        and (
+            previous_record.game_id != event.game_id
+            or previous_record.event_id != event.id
+            or previous_record.object_name != object_name
+        )
+    ):
+        previous_event = await db.get(GameEvent, previous_record.event_id)
+        if previous_event is not None and previous_event.video_url:
+            attached_object_name = to_object_name(previous_event.video_url)
+            if attached_object_name == previous_record.object_name:
+                previous_event.video_url = None
+                previous_game_id = previous_event.game_id
+                previous_object_name = previous_record.object_name
+            else:
+                logger.warning(
+                    "processed_goal_video_record_stale file_id=%s stored_event=%s stored_object=%s attached_object=%s",
+                    drive_file.id,
+                    previous_record.event_id,
+                    previous_record.object_name,
+                    attached_object_name,
+                )
+
     event.video_url = object_name
     await db.commit()
-    await _mark_processed(drive_file.id)
+
+    if previous_object_name:
+        await _delete_goal_video_object(previous_object_name)
+
+    record = ProcessedGoalVideoRecord(
+        file_id=drive_file.id,
+        game_id=event.game_id,
+        event_id=event.id,
+        object_name=object_name,
+        folder_label=folder_label or _folder_label_for(drive_file),
+    )
+    await _mark_processed(drive_file.id, record=record)
     logger.info(
         "Linked Drive file %s → event %s (game %s, %s, minute %s, %.1f MB)",
         drive_file.name, event.id, event.game_id, event.player_name, event.minute,
@@ -486,8 +694,14 @@ async def _download_and_link(
     try:
         from app.services.game_lifecycle import _revalidate_match_page
         await _revalidate_match_page(event.game_id)
+        if previous_game_id and previous_game_id != event.game_id:
+            await _revalidate_match_page(previous_game_id)
     except Exception:
-        logger.exception("revalidate match page failed for game %s", event.game_id)
+        logger.exception(
+            "revalidate match page failed for game %s (previous_game=%s)",
+            event.game_id,
+            previous_game_id,
+        )
 
     # Attach the video on the media host while we still have the local payload.
     # If that fails, fall back to the Celery retry path, which will re-read
@@ -504,6 +718,46 @@ async def _download_and_link(
             )
             _enqueue_goal_video_followup(event.id)
     return True
+
+
+async def relink_drive_file_to_event(
+    db: AsyncSession,
+    drive_file_id: str,
+    target_event_id: int,
+    *,
+    remove_previous_attachment: bool = True,
+    drive=None,
+) -> ProcessedGoalVideoRecord:
+    event = await db.get(GameEvent, target_event_id)
+    if event is None:
+        raise ValueError(f"Event {target_event_id} not found")
+
+    drive = drive or get_drive_client()
+    drive_file = await drive.get_file(drive_file_id)
+    if drive_file is None:
+        raise ValueError(f"Drive file {drive_file_id} not found")
+
+    previous_record = await lookup_processed_goal_video_record(drive_file_id)
+    ok = await _download_and_link(
+        drive,
+        db,
+        drive_file,
+        event,
+        previous_record=previous_record,
+        folder_label=_folder_label_for(drive_file) or (previous_record.folder_label if previous_record else None),
+        remove_previous_attachment=remove_previous_attachment,
+    )
+    if not ok:
+        raise RuntimeError(
+            f"Failed to relink Drive file {drive_file_id} to event {target_event_id}"
+        )
+
+    record = await lookup_processed_goal_video_record(drive_file_id)
+    if record is None:
+        raise RuntimeError(
+            f"Relink succeeded but processed record is missing for {drive_file_id}"
+        )
+    return record
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +784,39 @@ def _compute_next_sync_pointer(
     if max_mod is None:
         return previous
     return max(previous, max_mod)
+
+
+async def _prepare_bucket_videos_for_processing(
+    folder_name: str,
+    bucket_videos: list[DriveFile],
+    active: ActiveGame,
+    result: SyncResult,
+) -> tuple[list[DriveFile], dict[str, ProcessedGoalVideoRecord]]:
+    fresh_videos: list[DriveFile] = []
+    previous_records: dict[str, ProcessedGoalVideoRecord] = {}
+
+    for drive_file in bucket_videos:
+        if not await _is_processed(drive_file.id):
+            fresh_videos.append(drive_file)
+            continue
+
+        record = await lookup_processed_goal_video_record(drive_file.id)
+        if record is not None and record.game_id != active.game.id:
+            previous_records[drive_file.id] = record
+            fresh_videos.append(drive_file)
+            logger.warning(
+                "processed_goal_video_game_mismatch file_id=%s folder=%s stored_game=%s stored_event=%s target_game=%s",
+                drive_file.id,
+                folder_name,
+                record.game_id,
+                record.event_id,
+                active.game.id,
+            )
+            continue
+
+        result.skipped_already_processed += 1
+
+    return fresh_videos, previous_records
 
 
 # ---------------------------------------------------------------------------
@@ -567,16 +854,13 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
     if not videos:
         return result
 
-    # Group videos by their match-folder label (deepest ancestor) and drop
-    # already-processed files up front — otherwise the folder→game AI
-    # matcher fires every tick for stale buckets that only carry overlap
-    # re-reads.
+    # Group videos by their match-folder label (deepest ancestor). Processed
+    # files are filtered later, after folder→game resolution, so a Drive clip
+    # that was historically linked to the wrong game can be reprocessed when
+    # it reappears under a folder resolving to a different match.
     buckets: dict[str, list[DriveFile]] = defaultdict(list)
     for v in videos:
         if not v.ancestor_names:
-            continue
-        if await _is_processed(v.id):
-            result.skipped_already_processed += 1
             continue
         buckets[v.ancestor_names[-1]].append(v)
 
@@ -616,19 +900,55 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
         folder_to_game[folder_name] = game
 
     # Phase 2: timing-based matching inside each folder.
-    for folder_name, fresh_videos in buckets.items():
+    for folder_name, bucket_videos in buckets.items():
         active = folder_to_game.get(folder_name)
         if active is None:
-            logger.info("No game for folder %r (%d videos)", folder_name, len(fresh_videos))
-            result.skipped_no_game += len(fresh_videos)
+            logger.info("No game for folder %r (%d videos)", folder_name, len(bucket_videos))
+            result.skipped_no_game += len(bucket_videos)
             continue
 
-        # Timing pairs (with optional player-surname tiebreaker).
-        pairs = _optimal_time_match(active.game, active.events, fresh_videos)
-        used_video_ids = {v.id for v, _ in pairs}
+        fresh_videos, previous_records = await _prepare_bucket_videos_for_processing(
+            folder_name,
+            bucket_videos,
+            active,
+            result,
+        )
+        if not fresh_videos:
+            continue
+
+        # Phase 2a: direct minute+name match ("Зинадин 24'.mp4" style).
+        direct_pairs = _direct_minute_match(active.events, fresh_videos)
+        used_video_ids: set[str] = {v.id for v, _ in direct_pairs}
+        used_event_ids: set[int] = {e.id for _, e in direct_pairs}
+
+        for drive_file, event in direct_pairs:
+            if await _download_and_link(
+                drive,
+                db,
+                drive_file,
+                event,
+                previous_record=previous_records.get(drive_file.id),
+                folder_label=folder_name,
+            ):
+                result.matched += 1
+            else:
+                result.errors += 1
+
+        # Phase 2b: timing-based matching for remaining videos/events.
+        remaining_videos = [v for v in fresh_videos if v.id not in used_video_ids]
+        remaining_events = [e for e in active.events if e.id not in used_event_ids]
+        pairs = _optimal_time_match(active.game, remaining_events, remaining_videos)
+        used_video_ids.update(v.id for v, _ in pairs)
 
         for drive_file, event in pairs:
-            if await _download_and_link(drive, db, drive_file, event):
+            if await _download_and_link(
+                drive,
+                db,
+                drive_file,
+                event,
+                previous_record=previous_records.get(drive_file.id),
+                folder_label=folder_name,
+            ):
                 result.matched += 1
             else:
                 result.errors += 1
@@ -655,7 +975,14 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
                 if ai_res and ai_res.event_id is not None and ai_res.confidence == "high":
                     event = next((e for e in active.events if e.id == ai_res.event_id), None)
                     if event and event.video_url is None:
-                        if await _download_and_link(drive, db, v, event):
+                        if await _download_and_link(
+                            drive,
+                            db,
+                            v,
+                            event,
+                            previous_record=previous_records.get(v.id),
+                            folder_label=folder_name,
+                        ):
                             result.ai_event_matched += 1
                             continue
                 logger.warning(
