@@ -60,17 +60,16 @@ GOAL_EVENT_TYPES = (
 )
 
 _PROCESSED_SET_KEY = "qfl:goal-videos:processed"
-_LAST_SYNC_KEY = "qfl:goal-videos:last-sync"
 _PROCESSED_TTL_SECONDS = 48 * 3600
 _FINISHED_WINDOW_MINUTES = 24 * 60
 _UPLOAD_DELAY_MINUTES = 7
 _MATCH_WINDOW_MINUTES = 15
 _HALFTIME_BREAK_MINUTES = 15
-_DEFAULT_LOOKBACK_MINUTES = 24 * 60
-# Drive indexes ``modifiedTime`` with a few-minute lag, so we query with a
-# time window that overlaps the previously-seen pointer. ``_is_processed``
-# keeps this idempotent even when the same file shows up twice.
-_SINCE_OVERLAP_MINUTES = 15
+# Drive folder is rotated externally — clips older than 2 days are deleted —
+# so a fixed 2-day window covers everything we could possibly link without
+# needing a per-tick cursor. ``_is_processed`` (Redis, 48h TTL) keeps the
+# scan idempotent: previously-linked files are filtered after the listing.
+_LOOKBACK_MINUTES = 2 * 24 * 60
 
 
 @dataclass
@@ -97,29 +96,6 @@ class ProcessedGoalVideoRecord:
 # ---------------------------------------------------------------------------
 # Redis helpers
 # ---------------------------------------------------------------------------
-
-async def _load_last_sync() -> datetime:
-    try:
-        from app.utils.live_flag import get_redis
-
-        r = await get_redis()
-        raw = await r.get(_LAST_SYNC_KEY)
-        if raw:
-            return datetime.fromisoformat(raw.decode())
-    except Exception:
-        logger.debug("Cannot read last-sync cursor")
-    return datetime.now(timezone.utc) - timedelta(minutes=_DEFAULT_LOOKBACK_MINUTES)
-
-
-async def _store_last_sync(ts: datetime) -> None:
-    try:
-        from app.utils.live_flag import get_redis
-
-        r = await get_redis()
-        await r.set(_LAST_SYNC_KEY, ts.isoformat(), ex=7 * 24 * 3600)
-    except Exception:
-        pass
-
 
 def _processed_record_key(file_id: str) -> str:
     return f"qfl:goal-videos:file:{file_id}"
@@ -760,32 +736,6 @@ async def relink_drive_file_to_event(
     return record
 
 
-# ---------------------------------------------------------------------------
-# Pointer advancement
-# ---------------------------------------------------------------------------
-
-def _compute_next_sync_pointer(
-    videos: list[DriveFile],
-    previous: datetime,
-) -> datetime:
-    """Pick the next ``last-sync`` cursor from what Drive returned.
-
-    Never advance past the latest ``modifiedTime`` we actually saw; if
-    Drive returned nothing, leave the pointer alone. Otherwise a file
-    whose Drive index arrives late (after our tick that would have
-    spotted it) falls off the horizon forever.
-    """
-    if not videos:
-        return previous
-    max_mod = max(
-        (v.modified_time for v in videos if v.modified_time),
-        default=None,
-    )
-    if max_mod is None:
-        return previous
-    return max(previous, max_mod)
-
-
 async def _prepare_bucket_videos_for_processing(
     folder_name: str,
     bucket_videos: list[DriveFile],
@@ -837,8 +787,7 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
     if not actives:
         return result
 
-    last_seen = await _load_last_sync()
-    since_query = last_seen - timedelta(minutes=_SINCE_OVERLAP_MINUTES)
+    since_query = datetime.now(timezone.utc) - timedelta(minutes=_LOOKBACK_MINUTES)
     drive = get_drive_client()
     try:
         # max_depth=3 to support root → tour → [optional date] → match → clips.
@@ -865,7 +814,6 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
         buckets[v.ancestor_names[-1]].append(v)
 
     if not buckets:
-        await _store_last_sync(_compute_next_sync_pointer(videos, last_seen))
         return result
 
     ai = get_ai_matcher()
@@ -999,5 +947,4 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
                 )
                 result.unmatched += 1
 
-    await _store_last_sync(_compute_next_sync_pointer(videos, last_seen))
     return result
