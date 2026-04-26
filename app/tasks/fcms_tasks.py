@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 _ROSTER_LOCK_KEY = "qfl:fcms-roster-sync"
 _ROSTER_LOCK_TTL = 600  # 10 min — sync takes ~30-60s for 30 teams
 
+_REFEREES_LOCK_KEY = "qfl:fcms-referee-sync"
+_REFEREES_LOCK_TTL = 600  # 10 min
+
 
 @celery_app.task(name="app.tasks.fcms_tasks.fcms_bulk_import")
 def fcms_bulk_import():
@@ -32,17 +35,20 @@ def fetch_fcms_pregame_lineups():
 async def _fetch_fcms_pregame_lineups() -> dict:
     from app.database import AsyncSessionLocal
     from app.services.fcms_client import get_fcms_client
+    from app.services.fcms_referee_sync import FcmsRefereeSyncService
     from app.services.fcms_sync_service import FcmsSyncService
 
     async with AsyncSessionLocal() as db:
         client = get_fcms_client()
         service = FcmsSyncService(db, client)
+        referee_service = FcmsRefereeSyncService(db, client)
 
         games = await service.get_games_for_fcms_lineup()
         if not games:
             return {"games_found": 0}
 
         results = []
+        referee_totals = {"added": 0, "updated": 0, "removed": 0, "created_referees": 0}
         for game in games:
             try:
                 result = await service.sync_fcms_lineup(game.id)
@@ -59,7 +65,17 @@ async def _fetch_fcms_pregame_lineups() -> dict:
             except Exception:
                 logger.exception("Failed to sync FCMS lineup for game %d", game.id)
 
-        return {"games_found": len(games), "results": results}
+            try:
+                ref_res = await referee_service.sync_match_referees(game.id)
+                await db.commit()
+                if "error" not in ref_res:
+                    for k in referee_totals:
+                        referee_totals[k] += ref_res.get(k, 0)
+            except Exception:
+                logger.exception("Failed to sync FCMS referees for game %d", game.id)
+                await db.rollback()
+
+        return {"games_found": len(games), "results": results, "referees": referee_totals}
 
 
 @celery_app.task(name="app.tasks.fcms_tasks.sync_fcms_post_match_protocol")
@@ -90,6 +106,40 @@ async def _sync_fcms_post_match_protocol() -> dict:
                 logger.exception("Failed to sync FCMS protocol for game %d", game.id)
 
         return {"games_found": len(games), "results": results}
+
+
+@celery_app.task(name="app.tasks.fcms_tasks.sync_fcms_referees_daily")
+def sync_fcms_referees_daily():
+    """Daily bulk sync of match referees from FCMS for all upcoming games."""
+    return run_async(_sync_fcms_referees_daily())
+
+
+async def _sync_fcms_referees_daily(horizon_days: int = 7) -> dict:
+    from app.database import AsyncSessionLocal
+    from app.services.fcms_client import FcmsClient
+    from app.services.fcms_referee_sync import FcmsRefereeSyncService
+    from app.utils.redis_lock import acquire_token_lock, release_token_lock
+
+    token = await acquire_token_lock(_REFEREES_LOCK_KEY, _REFEREES_LOCK_TTL)
+    if token is None:
+        logger.info("FCMS referee sync already running, skipping")
+        return {"status": "already_running"}
+
+    try:
+        client = FcmsClient()
+        try:
+            async with AsyncSessionLocal() as db:
+                service = FcmsRefereeSyncService(db, client)
+                games = await service.get_games_for_referee_sync(horizon_days=horizon_days)
+                if not games:
+                    return {"status": "done", "games_found": 0}
+                totals = await service.sync_many(g.id for g in games)
+                await db.commit()
+                return {"status": "done", "games_found": len(games), **totals}
+        finally:
+            await client.close()
+    finally:
+        await release_token_lock(_REFEREES_LOCK_KEY, token)
 
 
 @celery_app.task(name="app.tasks.fcms_tasks.sync_fcms_rosters")

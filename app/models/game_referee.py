@@ -14,6 +14,8 @@ class RefereeRole(str, enum.Enum):
     fourth_referee = "fourth_referee"
     var_main = "var_main"
     var_assistant = "var_assistant"
+    var_operator = "var_operator"
+    match_commissioner = "match_commissioner"
     match_inspector = "match_inspector"
 
 
