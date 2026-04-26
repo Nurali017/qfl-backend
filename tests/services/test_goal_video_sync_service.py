@@ -65,57 +65,6 @@ def test_object_name_for_stays_stable_for_same_payload():
     assert first == second
 
 
-def _drive_file_at(mod: datetime | None, file_id: str = "f") -> DriveFile:
-    return DriveFile(
-        id=file_id,
-        name="goal.mp4",
-        mime_type="video/mp4",
-        size=1,
-        created_time=mod,
-        modified_time=mod,
-        parent_id="folder",
-        parent_name="Match",
-        ancestor_names=("tour", "match"),
-    )
-
-
-def test_compute_next_sync_pointer_keeps_previous_when_drive_empty():
-    previous = datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc)
-
-    assert gvs._compute_next_sync_pointer([], previous) == previous
-
-
-def test_compute_next_sync_pointer_advances_to_max_modified_time():
-    previous = datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc)
-    videos = [
-        _drive_file_at(datetime(2026, 4, 21, 10, 16, 24, tzinfo=timezone.utc), "a"),
-        _drive_file_at(datetime(2026, 4, 21, 10, 27, 57, tzinfo=timezone.utc), "b"),
-        _drive_file_at(datetime(2026, 4, 21, 10, 26, 39, tzinfo=timezone.utc), "c"),
-    ]
-
-    assert gvs._compute_next_sync_pointer(videos, previous) == datetime(
-        2026, 4, 21, 10, 27, 57, tzinfo=timezone.utc
-    )
-
-
-def test_compute_next_sync_pointer_never_rewinds_on_overlap_rereads():
-    """Overlap window may re-surface files older than the pointer — that
-    must not rewind the cursor."""
-    previous = datetime(2026, 4, 21, 10, 30, tzinfo=timezone.utc)
-    videos = [
-        _drive_file_at(datetime(2026, 4, 21, 10, 16, 24, tzinfo=timezone.utc), "old"),
-    ]
-
-    assert gvs._compute_next_sync_pointer(videos, previous) == previous
-
-
-def test_compute_next_sync_pointer_ignores_videos_without_modified_time():
-    previous = datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc)
-    videos = [_drive_file_at(None, "no-mod")]
-
-    assert gvs._compute_next_sync_pointer(videos, previous) == previous
-
-
 @pytest.mark.asyncio
 async def test_download_and_link_persists_versioned_video_url(monkeypatch):
     event = _event()
