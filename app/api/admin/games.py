@@ -1089,6 +1089,27 @@ async def delete_referee(game_id: int, entry_id: int, db: AsyncSession = Depends
     return {"ok": True}
 
 
+@router.post("/{game_id}/referees/sync-fcms")
+async def sync_fcms_referees(game_id: int, db: AsyncSession = Depends(get_db)):
+    """Pull officials for this match from FCMS and reconcile game_referees."""
+    from app.services.fcms_client import get_fcms_client
+    from app.services.fcms_referee_sync import FcmsRefereeSyncService
+
+    game = await db.get(Game, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if not game.fcms_match_id:
+        raise HTTPException(status_code=400, detail="Game has no fcms_match_id")
+
+    service = FcmsRefereeSyncService(db, get_fcms_client())
+    result = await service.sync_match_referees(game_id)
+    if "error" in result:
+        await db.rollback()
+        raise HTTPException(status_code=502, detail=result["error"])
+    await db.commit()
+    return result
+
+
 # --- Broadcaster endpoints ---
 
 @router.get("/{game_id}/broadcasters", response_model=list[AdminGameBroadcasterItem])

@@ -114,6 +114,36 @@ URL: https://fcms.ma.services/kaz/home
 
 ---
 
+## 4a. Структура matchOfficialAllocations
+
+`GET /v1/matches/{id}/matchOfficialAllocations?limit=50` →
+```
+_embedded.matchOfficialAllocations: [
+  {
+    matchOfficialRole: { id, roleType, title, rank, sportId, type },
+    matchOficial: { personId, firstName, familyName, localFirstName, localFamilyName, dateOfBirth, gender, nationalCitizenships:[{iso2, iso3, name}], maId, fifaId, isActive },
+    matchOfficialRoleAppointmentId, status ("CONFIRMED"|...), reason, conflictTypes, refereeAssessmentType
+  }
+]
+```
+
+### Маппинг roleType → внутренняя роль (`models.game_referee.RefereeRole`)
+| FCMS roleType | rank | Внутренний RefereeRole |
+|---|---|---|
+| `REFEREE` | 1 | `main` |
+| `ASSISTANT_REFEREE_1ST` | 2 | `first_assistant` |
+| `ASSISTANT_REFEREE_2ND` | 3 | `second_assistant` |
+| `FOURTH_OFFICIAL` | 4 | `fourth_referee` |
+| `VIDEO_ASSISTANT_REFEREE` | 7 | `var_main` |
+| `ASSISTANT_VIDEO_ASSISTANT_REFEREE_1ST` | 8 | `var_assistant` |
+| `MATCH_COMMISSIONER` | 11 | `match_commissioner` *(добавить в enum)* |
+| `VAR_OPERATOR` | 14 | `var_operator` *(добавить в enum)* |
+| `MATCH_INSPECTOR` | 15 | `match_inspector` |
+
+В типичном матче ПЛ-2026 — все 9 ролей одновременно.
+
+---
+
 ## 5. Структура объекта Match
 
 ```

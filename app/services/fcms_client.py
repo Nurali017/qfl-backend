@@ -208,6 +208,15 @@ class FcmsClient:
         )
         return resp.json().get("_embedded", {}).get("matchPlayers", [])
 
+    async def get_match_official_allocations(self, match_id: int) -> list[dict]:
+        """Get assigned match officials (referees, VAR, commissioner, inspector)."""
+        resp = await self._request(
+            "GET",
+            f"/v1/matches/{match_id}/matchOfficialAllocations",
+            params={"limit": 50},
+        )
+        return resp.json().get("_embedded", {}).get("matchOfficialAllocations", [])
+
     async def list_matches(
         self,
         group_id: int,
