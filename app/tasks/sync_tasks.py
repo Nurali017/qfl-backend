@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 import redis as redis_lib
 from sqlalchemy import select, func, case, exists
+from sqlalchemy.exc import OperationalError
 
 from app.tasks import celery_app
 from app.database import AsyncSessionLocal
@@ -16,6 +17,17 @@ from app.utils.async_celery import run_async
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
+
+# Retry config for tasks that hit advisory-lock contention or transient DB errors.
+# OperationalError covers asyncpg LockNotAvailableError (from lock_timeout) and
+# DeadlockDetectedError. Backoff with jitter avoids retry-storms across workers.
+_DB_RETRY_KW = {
+    "autoretry_for": (OperationalError,),
+    "retry_backoff": True,
+    "retry_backoff_max": 300,
+    "retry_jitter": True,
+    "max_retries": 3,
+}
 
 settings = get_settings()
 
@@ -139,6 +151,10 @@ async def _sync_extended_aggregate_bundle(
 
         try:
             team_count = await orchestrator.sync_team_season_stats(season_id, force=force)
+        except OperationalError:
+            # Lock timeout / deadlock — let Celery autoretry the whole task.
+            await db.rollback()
+            raise
         except Exception as exc:
             await db.rollback()
             logger.exception("Team season stats failed for season %s", season_id)
@@ -146,6 +162,9 @@ async def _sync_extended_aggregate_bundle(
 
         try:
             player_count = await orchestrator.sync_player_stats(season_id, force=force)
+        except OperationalError:
+            await db.rollback()
+            raise
         except Exception as exc:
             await db.rollback()
             logger.exception("Player season stats failed for season %s", season_id)
@@ -156,6 +175,9 @@ async def _sync_extended_aggregate_bundle(
                 tour_counts[tour] = await orchestrator.sync_player_tour_stats(
                     season_id, tour, force=force
                 )
+            except OperationalError:
+                await db.rollback()
+                raise
             except Exception as exc:
                 await db.rollback()
                 logger.exception(
@@ -470,13 +492,13 @@ def sync_live_stats():
     return run_async(_sync_live_stats())
 
 
-@celery_app.task(name="app.tasks.sync_tasks.sync_best_players")
+@celery_app.task(name="app.tasks.sync_tasks.sync_best_players", **_DB_RETRY_KW)
 def sync_best_players():
     """Celery task: Sync goals + assists from best_players endpoint."""
     return run_async(_sync_best_players())
 
 
-@celery_app.task(name="app.tasks.sync_tasks.sync_extended_stats")
+@celery_app.task(name="app.tasks.sync_tasks.sync_extended_stats", **_DB_RETRY_KW)
 def sync_extended_stats():
     """Celery task: Sync extended stats 24h+ after match finish."""
     return run_async(_sync_extended_stats())

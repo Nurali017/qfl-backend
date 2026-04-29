@@ -6,8 +6,14 @@ Score table is managed locally — no longer synced from SOTA.
 """
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import DBAPIError
+
+# Advisory lock namespace for team_season_stats writers.
+# Pairs with player_sync._PLAYER_STATS_LOCK_NS to serialize concurrent UPSERTs.
+_TEAM_STATS_LOCK_NS = 2
+_LOCK_TIMEOUT = "60s"
 
 from app.models import Game, ScoreTable, SeasonParticipant, TeamSeasonStats
 from app.services.sync.base import BaseSyncService, TEAM_SEASON_STATS_FIELDS
@@ -39,6 +45,11 @@ class StatsSyncService(BaseSyncService):
         Returns:
             Number of team stats synced
         """
+        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+            {"ns": _TEAM_STATS_LOCK_NS, "sid": season_id},
+        )
         # Build candidate team set from all season sources:
         # score_table + season_participants + games.
         # This prevents partial sync when score_table is incomplete (e.g. split groups).
@@ -296,7 +307,15 @@ class StatsSyncService(BaseSyncService):
                         "updated_at": stmt.excluded.updated_at,
                     },
                 )
-                await self.db.execute(stmt)
+                try:
+                    async with self.db.begin_nested():
+                        await self.db.execute(stmt)
+                except DBAPIError as db_exc:
+                    logger.warning(
+                        "DB error upserting team_season_stats for team %s: %s",
+                        team_id, db_exc,
+                    )
+                    continue
                 count += 1
             except Exception as e:
                 logger.warning(f"Failed to sync team season stats for team {team_id}: {e}")

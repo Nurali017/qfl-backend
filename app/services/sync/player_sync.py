@@ -9,8 +9,17 @@ import time
 
 import httpx
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import DBAPIError
+
+# Advisory lock namespace for player_season_stats writers.
+# Pairs with stats_sync._TEAM_STATS_LOCK_NS to serialize concurrent UPSERTs
+# across sync_best_players / sync_player_season_stats / sync_extended_stats_for_game.
+_PLAYER_STATS_LOCK_NS = 1
+# Bound advisory-lock wait so the task doesn't hold a Celery soft-time-limit slot
+# blocked on a stuck writer. On timeout asyncpg raises LockNotAvailableError → Celery retry.
+_LOCK_TIMEOUT = "60s"
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
 from app.services.sync.guardrails import (
@@ -49,6 +58,11 @@ class PlayerSyncService(BaseSyncService):
         Returns:
             Number of player stats rows upserted
         """
+        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+            {"ns": _PLAYER_STATS_LOCK_NS, "sid": season_id},
+        )
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
 
         # Fetch top scorers, assisters, and clean sheets across all SOTA seasons
@@ -158,8 +172,21 @@ class PlayerSyncService(BaseSyncService):
                 index_elements=["player_id", "season_id"],
                 set_=update_set,
             )
-            await self.db.execute(stmt)
-            count += 1
+            try:
+                async with self.db.begin_nested():
+                    await self.db.execute(stmt)
+                count += 1
+            except DBAPIError as exc:
+                # reset rank UPDATE on line ~138 already ran; if we silently skip here,
+                # we'd commit a leaderboard with NULL ranks for un-repopulated rows.
+                # Fail the whole task — Celery will retry, and the framework rollback
+                # restores the prior leaderboard state.
+                logger.error(
+                    "Aborting best_players sync for season %s after DB error on player %s: %s",
+                    season_id, player_id, exc,
+                )
+                await self.db.rollback()
+                raise
 
         await self.db.commit()
         logger.info("Synced best_players for season %d: %d rows upserted", season_id, count)
@@ -181,6 +208,11 @@ class PlayerSyncService(BaseSyncService):
         Returns:
             Number of player stats synced
         """
+        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+            {"ns": _PLAYER_STATS_LOCK_NS, "sid": season_id},
+        )
         # Get all players in this season with their team
         player_teams_result = await self.db.execute(
             select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
@@ -415,7 +447,15 @@ class PlayerSyncService(BaseSyncService):
                     },
                 )
                 db_started = time.monotonic()
-                await self.db.execute(stmt)
+                try:
+                    async with self.db.begin_nested():
+                        await self.db.execute(stmt)
+                except DBAPIError as db_exc:
+                    logger.warning(
+                        "DB error upserting player_season_stats for player %s: %s",
+                        player_id, db_exc,
+                    )
+                    continue
                 timings.add_db(time.monotonic() - db_started)
                 count += 1
             except Exception as e:

@@ -9,8 +9,14 @@ import time
 
 import httpx
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import DBAPIError
+
+# Advisory lock namespace for player_tour_stats writers.
+# Separate from player_season_stats / team_season_stats namespaces.
+_PLAYER_TOUR_STATS_LOCK_NS = 3
+_LOCK_TIMEOUT = "60s"
 
 from app.config import get_settings
 from app.models import Player, PlayerTeam
@@ -50,6 +56,11 @@ class PlayerTourStatsSyncService(BaseSyncService):
         Returns:
             Number of player stats rows upserted
         """
+        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+            {"ns": _PLAYER_TOUR_STATS_LOCK_NS, "sid": season_id},
+        )
         # Get all players in this season with their team
         player_teams_result = await self.db.execute(
             select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
@@ -178,7 +189,15 @@ class PlayerTourStatsSyncService(BaseSyncService):
                     },
                 )
                 db_started = time.monotonic()
-                await self.db.execute(stmt)
+                try:
+                    async with self.db.begin_nested():
+                        await self.db.execute(stmt)
+                except DBAPIError as db_exc:
+                    logger.warning(
+                        "DB error upserting player_tour_stats for player %d season %d tour %d: %s",
+                        player_id, season_id, tour, db_exc,
+                    )
+                    continue
                 timings.add_db(time.monotonic() - db_started)
                 count += 1
             except Exception as e:

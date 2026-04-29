@@ -43,13 +43,28 @@ class FakeDB:
         self.execute_count = 0
         self.commit_count = 0
 
-    async def execute(self, _stmt):
+    async def execute(self, _stmt, _params=None):
+        # Skip counting raw-SQL setup calls (lock_timeout, advisory lock) so the
+        # data-fetch sequencing in this fixture stays stable.
+        text_repr = str(getattr(_stmt, "text", ""))
+        if "pg_advisory_xact_lock" in text_repr or "lock_timeout" in text_repr:
+            return SimpleNamespace()
         self.execute_count += 1
         if self.execute_count == 1:
             return FakeFetchAllResult(self.player_rows)
         if self.execute_count == 2:
             return FakeOneOrNoneResult(self.sota_row)
         return SimpleNamespace()
+
+    def begin_nested(self):
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return self_inner
+
+            async def __aexit__(self_inner, *exc):
+                return False
+
+        return _Ctx()
 
     async def commit(self):
         self.commit_count += 1
