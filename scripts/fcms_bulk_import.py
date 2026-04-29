@@ -127,6 +127,92 @@ def _parse_fcms_time(time_str: str | None) -> time_type | None:
         return None
 
 
+def _parse_csv_ints(s: str | None) -> list[int]:
+    if not s:
+        return []
+    out: list[int] = []
+    for part in s.split(","):
+        part = part.strip()
+        if part:
+            try:
+                out.append(int(part))
+            except ValueError:
+                continue
+    return out
+
+
+async def _discover_groups_for_seasons(client: FcmsClient) -> tuple[list[int], dict[int, int], dict[int, str], list[dict]]:
+    """Resolve season → group_ids using fcms_competition_id (auto) ∪ fcms_group_id (manual).
+
+    Persists newly discovered groups back to seasons.fcms_group_id (CSV) so the admin
+    UI reflects them and the next run starts already-warm.
+
+    Returns (group_ids, group_to_season, group_to_season_name, new_groups_for_telegram).
+    """
+    new_groups_report: list[dict] = []
+    group_ids: list[int] = []
+    group_to_season: dict[int, int] = {}
+    group_to_season_name: dict[int, str] = {}
+
+    async with AsyncSessionLocal() as db:
+        seasons_q = await db.execute(
+            select(Season).where(
+                (Season.fcms_group_id.isnot(None))
+                | (Season.fcms_competition_id.isnot(None))
+            )
+        )
+        seasons = list(seasons_q.scalars().all())
+
+        for season in seasons:
+            existing_groups = set(_parse_csv_ints(season.fcms_group_id))
+            discovered: set[int] = set()
+            titles_by_id: dict[int, str] = {}
+
+            for comp_id in _parse_csv_ints(season.fcms_competition_id):
+                try:
+                    groups = await client.get_competition_groups(comp_id)
+                except Exception as e:
+                    logger.warning(
+                        "FCMS get_competition_groups(%d) failed for season %d: %s",
+                        comp_id, season.id, e,
+                    )
+                    continue
+                for g in groups:
+                    gid = g.get("id")
+                    if isinstance(gid, int):
+                        discovered.add(gid)
+                        titles_by_id[gid] = g.get("title") or ""
+
+            new_groups = discovered - existing_groups
+            if new_groups:
+                logger.info(
+                    "Discovered %d new FCMS group(s) for season %d (%s): %s",
+                    len(new_groups), season.id, season.name, sorted(new_groups),
+                )
+                for gid in sorted(new_groups):
+                    new_groups_report.append({
+                        "season_id": season.id,
+                        "season_name": season.name,
+                        "group_id": gid,
+                        "group_title": titles_by_id.get(gid, ""),
+                    })
+
+                # Persist union of existing ∪ discovered — keeps any manually-added IDs.
+                merged = sorted(existing_groups | discovered)
+                season.fcms_group_id = ",".join(str(g) for g in merged)
+                existing_groups = set(merged)
+
+            for gid in existing_groups:
+                group_ids.append(gid)
+                group_to_season[gid] = season.id
+                group_to_season_name[gid] = season.name
+
+        if new_groups_report:
+            await db.commit()
+
+    return group_ids, group_to_season, group_to_season_name, new_groups_report
+
+
 async def bulk_import():
     client = FcmsClient()
 
@@ -139,29 +225,19 @@ async def bulk_import():
         await client.authenticate()
         logger.info("FCMS authenticated")
 
-        # Get FCMS group IDs + season mapping from seasons table
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(Season.id, Season.fcms_group_id, Season.name)
-                .where(Season.fcms_group_id.isnot(None))
-            )
-            season_rows = result.all()
-
-        group_ids: list[int] = []
-        group_to_season: dict[int, int] = {}
-        group_to_season_name: dict[int, str] = {}
-        for season_id, group_id_str, season_name in season_rows:
-            for gid_s in group_id_str.split(","):
-                gid = int(gid_s.strip())
-                group_ids.append(gid)
-                group_to_season[gid] = season_id
-                group_to_season_name[gid] = season_name
+        # Resolve groups via competition_id auto-discovery + stored fcms_group_id.
+        (
+            group_ids,
+            group_to_season,
+            group_to_season_name,
+            new_groups_report,
+        ) = await _discover_groups_for_seasons(client)
 
         if not group_ids:
-            logger.warning("No seasons with fcms_group_id set, nothing to import")
+            logger.warning("No seasons with fcms_group_id/fcms_competition_id set, nothing to import")
             return
 
-        logger.info("FCMS group IDs from DB: %s", group_ids)
+        logger.info("FCMS group IDs to scan: %s", group_ids)
 
         # Fetch all FCMS matches, track which group each belongs to
         all_fcms_matches: list[dict] = []
@@ -388,9 +464,18 @@ async def bulk_import():
                     logger.info("  FCMS %s: %s", u.get("fcms_id"), u.get("reason"))
 
         # ── Telegram summary ──
-        has_changes = created_games or date_changes or time_changes
+        has_changes = created_games or date_changes or time_changes or new_groups_report
         if has_changes:
             lines = ["<b>\U0001f4cb FCMS Sync</b>", ""]
+
+            if new_groups_report:
+                lines.append(f"\U0001f195 <b>Новые раунды FCMS: {len(new_groups_report)}</b>")
+                for ng in new_groups_report:
+                    title = ng.get("group_title") or f"group {ng['group_id']}"
+                    lines.append(
+                        f"  • [{ng['season_name']}] {title} (group_id={ng['group_id']})"
+                    )
+                lines.append("")
 
             if created_games:
                 lines.append(f"\U0001f195 <b>Создано: {len(created_games)}</b>")

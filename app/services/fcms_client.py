@@ -217,6 +217,19 @@ class FcmsClient:
         )
         return resp.json().get("_embedded", {}).get("matchOfficialAllocations", [])
 
+    async def get_competition_groups(self, competition_id: int) -> list[dict]:
+        """List groups (rounds/stages) of a competition.
+
+        Used by bulk_import to auto-discover new rounds (e.g. 1/8 final added
+        after 1/16 finishes) without manual seasons.fcms_group_id edits.
+        """
+        resp = await self._request(
+            "GET",
+            f"/v1/competitions/{competition_id}/groups",
+            params={"limit": 100},
+        )
+        return resp.json().get("_embedded", {}).get("groups", [])
+
     async def list_matches(
         self,
         group_id: int,

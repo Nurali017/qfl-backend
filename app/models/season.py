@@ -28,6 +28,9 @@ class Season(Base):
     sota_season_id: Mapped[int | None] = mapped_column(Integer, index=True)
     sota_season_ids: Mapped[str | None] = mapped_column(Text)  # "181;182" — multiple SOTA seasons
     fcms_group_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    # CSV of FCMS competition IDs; bulk_import auto-discovers their groups
+    # so new rounds (1/8 → 1/4 → final) propagate without manual fcms_group_id edits.
+    fcms_competition_id: Mapped[str | None] = mapped_column(String(100), index=True)
     sync_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     tg_custom_emoji_id: Mapped[str | None] = mapped_column(String(32))
     updated_at: Mapped[datetime] = mapped_column(
