@@ -238,6 +238,8 @@ class ActiveGame:
     events: list[GameEvent]
     home_name: str
     away_name: str
+    home_name_kz: str | None = None
+    away_name_kz: str | None = None
 
 
 async def _load_active_games(db: AsyncSession) -> list[ActiveGame]:
@@ -272,13 +274,65 @@ async def _load_active_games(db: AsyncSession) -> list[ActiveGame]:
         away = g.away_team.name if g.away_team else ""
         if not home or not away:
             continue
-        actives.append(ActiveGame(game=g, events=events_by_game.get(g.id, []),
-                                  home_name=home, away_name=away))
+        home_kz = getattr(g.home_team, "name_kz", None) if g.home_team else None
+        away_kz = getattr(g.away_team, "name_kz", None) if g.away_team else None
+        actives.append(ActiveGame(
+            game=g,
+            events=events_by_game.get(g.id, []),
+            home_name=home,
+            away_name=away,
+            home_name_kz=home_kz,
+            away_name_kz=away_kz,
+        ))
     return actives
 
 
 def _normalize_label(value: str) -> str:
-    return "".join(ch for ch in value.casefold() if ch.isalnum())
+    # ё→е so "ШАХТЁР" (Drive) matches "Шахтер" (DB).
+    return "".join(ch for ch in value.casefold().replace("ё", "е") if ch.isalnum())
+
+
+def _name_variants(name: str | None) -> list[str]:
+    """Build label variants from a team name for fuzzy folder-matching.
+
+    Returns:
+      - full normalized label (e.g. "ертіспавлодарә")
+      - normalized label with the trailing short token (≤2 chars — gender
+        suffix like "Ж"/"Ә"/"М") dropped (e.g. "ертіспавлодар")
+      - each individual word ≥3 chars (e.g. "ертіс", "павлодар")
+
+    Drive folders use Kazakh names ("ЕРТІС Ә - ЖЕҢІС Ә") that may omit suffixes
+    or city tags present in DB. Splitting into words covers those cases.
+    """
+    if not name:
+        return []
+    folded = name.casefold().replace("ё", "е")
+    parts = [
+        "".join(ch for ch in chunk if ch.isalnum())
+        for chunk in folded.replace("-", " ").replace("_", " ").split()
+    ]
+    parts = [p for p in parts if p]
+    if not parts:
+        return []
+    core = list(parts)
+    while core and len(core[-1]) <= 2:
+        core.pop()
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def _add(token: str) -> None:
+        if token and token not in seen:
+            variants.append(token)
+            seen.add(token)
+
+    full = "".join(parts)
+    _add(full)
+    if core:
+        _add("".join(core))
+    for p in parts:
+        if len(p) >= 3:
+            _add(p)
+    return variants
 
 
 _TEAM_ALIASES: dict[str, list[str]] = {
@@ -305,21 +359,47 @@ _TEAM_ALIASES: dict[str, list[str]] = {
 }
 
 
-def _team_tokens(name: str) -> list[str]:
-    base = _normalize_label(name)
-    tokens = [base]
-    lower = name.casefold().strip()
-    for alias in _TEAM_ALIASES.get(lower, []):
-        tokens.append(_normalize_label(alias))
-    return [t for t in tokens if t]
+def _team_tokens(*names: str | None) -> list[str]:
+    """Build search tokens from one or more name variants (e.g. ru + kz).
+
+    Folder labels in Drive are written in Kazakh while ``teams.name`` is
+    Russian, so passing both ``team.name`` and ``team.name_kz`` lets us match
+    without hand-rolled cyrillic→latin transliteration.
+    """
+    tokens: list[str] = []
+    seen: set[str] = set()
+
+    def _add(token: str) -> None:
+        if token and token not in seen:
+            tokens.append(token)
+            seen.add(token)
+
+    for raw in names:
+        if not raw:
+            continue
+        for v in _name_variants(raw):
+            _add(v)
+        for alias in _TEAM_ALIASES.get(raw.casefold().strip(), []):
+            for v in _name_variants(alias):
+                _add(v)
+    return tokens
 
 
-def folder_matches_game(folder_label: str, home_name: str, away_name: str) -> bool:
+def folder_matches_game(
+    folder_label: str,
+    home_name: str,
+    away_name: str,
+    *,
+    home_name_kz: str | None = None,
+    away_name_kz: str | None = None,
+) -> bool:
     normalized = _normalize_label(folder_label)
-    for h in _team_tokens(home_name):
+    home_tokens = _team_tokens(home_name, home_name_kz)
+    away_tokens = _team_tokens(away_name, away_name_kz)
+    for h in home_tokens:
         if h not in normalized:
             continue
-        for a in _team_tokens(away_name):
+        for a in away_tokens:
             if a in normalized:
                 return True
     return False
@@ -329,7 +409,13 @@ def _string_match_folder_to_game(
     folder_label: str, actives: list[ActiveGame]
 ) -> ActiveGame | None:
     for active in actives:
-        if folder_matches_game(folder_label, active.home_name, active.away_name):
+        if folder_matches_game(
+            folder_label,
+            active.home_name,
+            active.away_name,
+            home_name_kz=active.home_name_kz,
+            away_name_kz=active.away_name_kz,
+        ):
             return active
     return None
 
