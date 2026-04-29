@@ -393,15 +393,21 @@ class FcmsSyncService:
             except Exception:
                 logger.warning("Failed to delete old protocol for game %d: %s", game_id, old_object_name, exc_info=True)
 
-        # Send Telegram notification
+        # Send Telegram notification (with PDF attached)
         action = "обновлён" if is_update else "загружен"
         try:
-            await send_telegram_message(
+            home_team = await self.db.get(Team, game.home_team_id) if game.home_team_id else None
+            away_team = await self.db.get(Team, game.away_team_id) if game.away_team_id else None
+            home_name = home_team.name if home_team else "?"
+            away_name = away_team.name if away_team else "?"
+            caption = (
                 f"📋 Протокол матча {action}\n\n"
                 f"🆔 Game #{game_id}\n"
-                f"📄 {object_name}\n"
+                f"⚽ {home_name} vs {away_name}\n"
                 f"👥 Посещаемость: {game.visitors or 'N/A'}"
             )
+            doc_filename = f"protocol_game_{game_id}_{home_name}_vs_{away_name}.pdf"
+            await send_telegram_document(pdf_bytes, doc_filename, caption)
         except Exception:
             logger.warning("Failed to send protocol notification for game %d", game_id, exc_info=True)
 
