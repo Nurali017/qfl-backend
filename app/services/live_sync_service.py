@@ -580,11 +580,18 @@ class LiveSyncService:
         else:
             minute = None
 
-        # SOTA resets timer to 0 each half — offset for 2nd half
+        # SOTA resets timer to 0 each half — offset to get cumulative match minute.
+        # H1: 0-45, H2: 45-90, ET1 (half=3): 90-105, ET2 (half=4): 105-120.
+        # half=5 is penalty shootout — round numbers 1..N, no offset.
         if minute is not None and half is not None:
             try:
-                if int(half) == 2:
+                h = int(half)
+                if h == 2:
                     minute += 45
+                elif h == 3:
+                    minute += 90
+                elif h == 4:
+                    minute += 105
             except (ValueError, TypeError):
                 pass
 

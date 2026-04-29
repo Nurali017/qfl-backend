@@ -113,6 +113,92 @@ async def test_sync_live_time_finished_uses_lifecycle_service(test_session, samp
 
 
 @pytest.mark.asyncio
+async def test_sync_live_time_et1_offsets_minute_by_90(test_session, sample_season, sample_teams):
+    game = Game(
+        sota_id=uuid4(),
+        date=date(2026, 3, 18),
+        time=time(18, 0),
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        status=GameStatus.live,
+        sync_disabled=True,
+    )
+    test_session.add(game)
+    await test_session.commit()
+    await test_session.refresh(game)
+
+    service = LiveSyncService(
+        test_session,
+        FakeTimeClient({"half": 3, "actual_time": 5 * 60_000, "status": "in_progress"}),
+    )
+    await service.sync_live_time(game.id)
+    await test_session.refresh(game)
+
+    assert game.live_half == 3
+    assert game.live_minute == 95
+    assert game.live_phase == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_sync_live_time_et2_offsets_minute_by_105(test_session, sample_season, sample_teams):
+    game = Game(
+        sota_id=uuid4(),
+        date=date(2026, 3, 18),
+        time=time(18, 0),
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        status=GameStatus.live,
+        sync_disabled=True,
+    )
+    test_session.add(game)
+    await test_session.commit()
+    await test_session.refresh(game)
+
+    service = LiveSyncService(
+        test_session,
+        FakeTimeClient({"half": 4, "actual_time": 8 * 60_000, "status": "in_progress"}),
+    )
+    await service.sync_live_time(game.id)
+    await test_session.refresh(game)
+
+    assert game.live_half == 4
+    assert game.live_minute == 113
+    assert game.live_phase == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_sync_live_time_shootout_uses_round_number_without_offset(
+    test_session, sample_season, sample_teams
+):
+    game = Game(
+        sota_id=uuid4(),
+        date=date(2026, 3, 18),
+        time=time(18, 0),
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        status=GameStatus.live,
+        sync_disabled=True,
+    )
+    test_session.add(game)
+    await test_session.commit()
+    await test_session.refresh(game)
+
+    service = LiveSyncService(
+        test_session,
+        FakeTimeClient({"half": 5, "actual_time": 3 * 60_000, "status": "in_progress"}),
+    )
+    await service.sync_live_time(game.id)
+    await test_session.refresh(game)
+
+    assert game.live_half == 5
+    assert game.live_minute == 3
+    assert game.live_phase == "in_progress"
+
+
+@pytest.mark.asyncio
 async def test_sync_live_time_without_status_keeps_no_artificial_halftime(
     test_session, sample_season, sample_teams
 ):
