@@ -409,6 +409,8 @@ async def clear_lineup(game_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Game not found")
     await db.execute(delete(GameLineup).where(GameLineup.game_id == game_id))
     game.has_lineup = False
+    game.lineup_source = None
+    game.prematch_pdf_hash = None
     await db.commit()
     return {"ok": True}
 
