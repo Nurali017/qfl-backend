@@ -59,6 +59,11 @@ _TEAM_STOPWORDS = {
 _WALLTIME_RE = re.compile(r"\[(\d{1,2})[-:](\d{1,2})[-:](\d{1,2})\]")
 _SCORE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*[-:]\s*(\d{1,2})(?!\d)")
 _MINUTE_RE = re.compile(r"(?<!\d)(\d{1,3})['\`]")
+# Fallback for filenames that omit the apostrophe, e.g. "Әділет Омарбек 78.mp4".
+# Match a trailing 1–3-digit number not preceded by other digits and at the
+# end of the (extension- and bracket-stripped) stem. Bare numbers in the
+# middle (camera indices like "- 1 -") are deliberately ignored.
+_MINUTE_TRAILING_RE = re.compile(r"(?<!\d)(\d{1,3})\s*$")
 _TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁёҚқҒғҰұӘәІіҢңӨөҮүҺһ][A-Za-zА-Яа-яЁёҚқҒғҰұӘәІіҢңӨөҮүҺһ-]+")
 
 _VIDEO_EXTENSIONS = {"mp4", "mov", "webm", "mkv", "m4v", "avi"}
@@ -118,6 +123,8 @@ def parse_goal_filename(name: str) -> ParsedGoal | None:
     score_hint = f"{score_match.group(1)}-{score_match.group(2)}" if score_match else None
 
     minute_match = _MINUTE_RE.search(clean)
+    if minute_match is None:
+        minute_match = _MINUTE_TRAILING_RE.search(clean.strip())
     minute_hint: int | None = None
     if minute_match:
         val = int(minute_match.group(1))

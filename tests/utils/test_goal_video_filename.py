@@ -85,3 +85,39 @@ class TestRealFilenames:
         result = parse_goal_filename(name)
         assert result is not None
         assert result.wall_time == (18, 0, 0)
+
+
+class TestMinuteHint:
+    def test_apostrophe(self):
+        result = parse_goal_filename("Дүйсенбекұлы 22'.mp4")
+        assert result is not None
+        assert result.minute_hint == 22
+
+    def test_backtick(self):
+        result = parse_goal_filename("Илья Кругляков 22`.mp4")
+        assert result is not None
+        assert result.minute_hint == 22
+
+    def test_trailing_no_apostrophe(self):
+        # Real Drive sample (game 1358 / event 17730):
+        # "Әділет Омарбек 78.mp4" — minute without apostrophe.
+        result = parse_goal_filename("Әділет Омарбек 78.mp4")
+        assert result is not None
+        assert result.minute_hint == 78
+        # Picker prefers the longer token. Either part of the full name works
+        # because the matcher uses fuzzy `contains` against event.player_name.
+        assert result.player_hint in ("Әділет", "Омарбек")
+
+    def test_camera_index_not_picked_as_minute(self):
+        # "- 1 -" is a camera index, not a minute. Tail is "Camera1" / "[ts]"
+        # — no trailing bare digits after bracket strip.
+        result = parse_goal_filename(
+            "СЕРГЕЙ МАЛЫЙ - 1 - Camera1 - [20-20-45] [20-22-06].mp4"
+        )
+        assert result is not None
+        assert result.minute_hint is None
+
+    def test_minute_out_of_range(self):
+        # 200 > 120 → ignored.
+        result = parse_goal_filename("Игрок 200.mp4")
+        assert result is None or result.minute_hint is None
