@@ -87,6 +87,7 @@ def _game_to_response(game: Game) -> AdminGameResponse:
         is_live=game.is_live,
         is_featured=game.is_featured,
         is_free_entry=game.is_free_entry,
+        is_schedule_tentative=game.is_schedule_tentative,
         sync_disabled=game.sync_disabled,
         show_timeline=game.show_timeline,
         has_lineup=game.has_lineup,
@@ -316,7 +317,7 @@ async def update_game(
         raise HTTPException(status_code=404, detail="Game not found")
 
     # NOT NULL fields — silently skip if caller sends null
-    NOT_NULLABLE = {"date", "is_featured", "is_free_entry", "sync_disabled"}
+    NOT_NULLABLE = {"date", "is_featured", "is_free_entry", "is_schedule_tentative", "sync_disabled"}
     remaining = {
         k: v for k, v in update_data.items()
         if v is not None or k not in NOT_NULLABLE

@@ -31,6 +31,7 @@ class AdminGameResponse(BaseModel):
     is_live: bool = False
     is_featured: bool = False
     is_free_entry: bool = False
+    is_schedule_tentative: bool = False
     sync_disabled: bool = False
     show_timeline: bool = True
     has_lineup: bool = False
@@ -73,6 +74,7 @@ class AdminGameUpdateRequest(BaseModel):
     protocol_url: Optional[str] = None
     is_featured: Optional[bool] = None
     is_free_entry: Optional[bool] = None
+    is_schedule_tentative: Optional[bool] = None
     sync_disabled: Optional[bool] = None
     show_timeline: Optional[bool] = None
     status: Optional[GameStatus] = None
