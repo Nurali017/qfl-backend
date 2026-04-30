@@ -397,6 +397,30 @@ class TestPendingGameIndex:
         assert result is not None
         assert result.id == g.id
 
+    def test_find_match_youth_suffix_zh_to_m(self):
+        """'ЕЛІМАЙ Ж' (Kazakh youth marker) matches 'Елимай М' (Russian)."""
+        g = self._game(
+            home_name="Елимай М", home_name_kz="Елімай М",
+            away_name="Батыр", away_name_kz="Батыр",
+        )
+        index = PendingGameIndex.build([g])
+        parsed = ParsedTitle(team_a="ЕЛІМАЙ Ж", team_b="БАТЫР", tour=None)
+        result = index.find_match(parsed, date(2026, 4, 11), "live")
+        assert result is not None
+        assert result.id == g.id
+
+    def test_find_match_youth_suffix_two_word_team(self):
+        """'ЕРТІС Ж' matches 'Ертіс-Павлодар М' via name_kz 'Ертіс М'."""
+        g = self._game(
+            home_name="Ертіс-Павлодар М", home_name_kz="Ертіс М",
+            away_name="Шахтёр М", away_name_kz="Шахтёр Ж",
+        )
+        index = PendingGameIndex.build([g])
+        parsed = ParsedTitle(team_a="ЕРТІС Ж", team_b="ШАХТЁР Ж", tour=None)
+        result = index.find_match(parsed, date(2026, 4, 11), "review")
+        assert result is not None
+        assert result.id == g.id
+
     def test_find_match_compact(self):
         """'кызылжар' matches 'Кызыл Жар' via compact form."""
         g = self._game(home_name="Кызыл Жар", away_name="Женис")

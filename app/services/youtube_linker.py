@@ -55,6 +55,14 @@ def _roman_to_int(s: str) -> int | None:
             result += val
     return result
 
+def _strip_trailing_single_char(name: str) -> str:
+    """Drop a trailing 1-char token (Ж/М/Ә/А youth/division marker)."""
+    tokens = name.split()
+    if len(tokens) >= 2 and len(tokens[-1]) == 1:
+        return " ".join(tokens[:-1])
+    return name
+
+
 # Bounded cache for uploads playlist ID per channel. Max 32 entries.
 _uploads_playlist_ids: dict[str, str] = {}
 _PLAYLIST_CACHE_MAX = 32
@@ -138,6 +146,12 @@ class PendingGameIndex:
         norm_b = normalize_team_name(parsed.team_b)
         compact_a = norm_a.replace(" ", "")
         compact_b = norm_b.replace(" ", "")
+        # Strip trailing 1-char youth-suffix marker (Ж/Жастар, М/Молодёжный,
+        # Ә, А) from parsed title — DB sides differ across РУ/КЗ
+        # (e.g. "Елимай М" vs YouTube title "ЕЛІМАЙ Ж"). Matches the
+        # suffix-stripped aliases produced in PendingGameIndex.build.
+        stripped_a = _strip_trailing_single_char(norm_a)
+        stripped_b = _strip_trailing_single_char(norm_b)
 
         candidates: list[_PendingEntry] = []
         for entry in self._entries:
@@ -152,8 +166,10 @@ class PendingGameIndex:
                 continue
 
             # Team name matching
-            def _matches(a: str, ca: str, names: set[str]) -> bool:
+            def _matches(a: str, ca: str, sa: str, names: set[str]) -> bool:
                 if a in names or ca in names:
+                    return True
+                if sa and sa != a and sa in names:
                     return True
                 a_words = frozenset(a.split())
                 if len(a_words) >= 2:
@@ -161,12 +177,12 @@ class PendingGameIndex:
                 return False
 
             match_fwd = (
-                _matches(norm_a, compact_a, entry.home_names)
-                and _matches(norm_b, compact_b, entry.away_names)
+                _matches(norm_a, compact_a, stripped_a, entry.home_names)
+                and _matches(norm_b, compact_b, stripped_b, entry.away_names)
             )
             match_rev = (
-                _matches(norm_a, compact_a, entry.away_names)
-                and _matches(norm_b, compact_b, entry.home_names)
+                _matches(norm_a, compact_a, stripped_a, entry.away_names)
+                and _matches(norm_b, compact_b, stripped_b, entry.home_names)
             )
             if match_fwd or match_rev:
                 candidates.append(entry)
