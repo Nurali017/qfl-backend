@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 
 import httpx
 from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -420,15 +421,20 @@ def _url_fields_for_type(video_type: str) -> list[str]:
 async def _ensure_broadcaster_linked(
     db: AsyncSession, game_id: int, broadcaster_id: int
 ) -> None:
-    """Add GameBroadcaster row if not already present."""
-    existing = await db.execute(
-        select(GameBroadcaster).where(
-            GameBroadcaster.game_id == game_id,
-            GameBroadcaster.broadcaster_id == broadcaster_id,
-        )
+    """Idempotently link broadcaster to game.
+
+    Uses ON CONFLICT DO NOTHING because the same game can be processed
+    multiple times in a single batch (e.g. live + review videos), and a
+    SELECT-then-INSERT check would not see the pending row from the
+    earlier iteration — leading to a duplicate-insert and a rollback of
+    the entire transaction at commit time.
+    """
+    stmt = (
+        pg_insert(GameBroadcaster.__table__)
+        .values(game_id=game_id, broadcaster_id=broadcaster_id)
+        .on_conflict_do_nothing(index_elements=["game_id", "broadcaster_id"])
     )
-    if not existing.scalar_one_or_none():
-        db.add(GameBroadcaster(game_id=game_id, broadcaster_id=broadcaster_id))
+    await db.execute(stmt)
 
 
 async def _find_games_needing_videos(
