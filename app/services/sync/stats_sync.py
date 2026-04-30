@@ -6,7 +6,7 @@ Score table is managed locally — no longer synced from SOTA.
 """
 import logging
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 
@@ -15,7 +15,8 @@ from sqlalchemy.exc import DBAPIError
 _TEAM_STATS_LOCK_NS = 2
 _LOCK_TIMEOUT = "60s"
 
-from app.models import Game, ScoreTable, SeasonParticipant, TeamSeasonStats
+from app.config import get_settings
+from app.models import Game, GameStatus, GameTeamStats, ScoreTable, SeasonParticipant, TeamSeasonStats
 from app.services.sync.base import BaseSyncService, TEAM_SEASON_STATS_FIELDS
 from app.utils.timestamps import utcnow
 
@@ -83,15 +84,30 @@ class StatsSyncService(BaseSyncService):
         # Resolve all SOTA season IDs (usually 1, but 2L has SW+NE)
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
 
+        # SOTA does not expose v2 team season-stats for tournaments without
+        # extended stats (e.g. Вторая Лига). For those we aggregate locally
+        # from games + game_team_stats — the per-match data is already synced.
+        use_local_aggregate = (
+            season_id not in get_settings().extended_stats_season_ids
+        )
+
+        # Pre-load local aggregates once for the whole season when needed.
+        local_aggregates: dict[int, dict] = {}
+        if use_local_aggregate:
+            local_aggregates = await self._aggregate_team_stats_locally(season_id)
+
         count = 0
         for team_id in sorted(team_ids):
             try:
-                # Try each SOTA season ID (team belongs to one conference)
-                stats = {}
-                for sid in sota_season_ids:
-                    stats = await self.client.get_team_season_stats_v2(team_id, sid)
-                    if stats and stats.get("games_played"):
-                        break
+                stats: dict = {}
+                if use_local_aggregate:
+                    stats = local_aggregates.get(team_id, {})
+                else:
+                    # Try each SOTA season ID (team belongs to one conference)
+                    for sid in sota_season_ids:
+                        stats = await self.client.get_team_season_stats_v2(team_id, sid)
+                        if stats and stats.get("games_played"):
+                            break
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in TEAM_SEASON_STATS_FIELDS}
@@ -324,3 +340,76 @@ class StatsSyncService(BaseSyncService):
         await self.db.commit()
         logger.info(f"Synced {count} team season stats for season {season_id}")
         return count
+
+    async def _aggregate_team_stats_locally(self, season_id: int) -> dict[int, dict]:
+        """Aggregate season stats per team from local games + game_team_stats.
+
+        Used for tournaments without extended SOTA v2 stats (e.g. Вторая Лига),
+        where /v2/teams/{id}/season_stats/?season_id=... returns 404.
+
+        Returns: {team_id: stats_dict} — keys mirror SOTA v2 response so the
+        existing UPSERT block treats it the same way.
+        """
+        result = await self.db.execute(
+            select(Game).where(
+                Game.season_id == season_id,
+                Game.status == GameStatus.finished,
+            )
+        )
+        finished = list(result.scalars().all())
+        if not finished:
+            return {}
+
+        game_ids = [g.id for g in finished]
+
+        gts_result = await self.db.execute(
+            select(GameTeamStats).where(GameTeamStats.game_id.in_(game_ids))
+        )
+        gts_by_key: dict[tuple[int, int], GameTeamStats] = {
+            (row.game_id, row.team_id): row for row in gts_result.scalars().all()
+        }
+
+        per_team: dict[int, dict] = {}
+        for g in finished:
+            for team_id, opp_id, gf, ga in (
+                (g.home_team_id, g.away_team_id, g.home_score or 0, g.away_score or 0),
+                (g.away_team_id, g.home_team_id, g.away_score or 0, g.home_score or 0),
+            ):
+                if not team_id:
+                    continue
+                bucket = per_team.setdefault(team_id, {
+                    "games_played": 0, "win": 0, "draw": 0, "match_loss": 0,
+                    "goal": 0, "goals_conceded": 0,
+                    "shot": 0, "shots_on_goal": 0, "shots_off_goal": 0,
+                    "pass": 0, "foul": 0, "corner": 0, "offside": 0,
+                    "yellow_cards": 0, "red_cards": 0,
+                })
+                bucket["games_played"] += 1
+                bucket["goal"] += gf
+                bucket["goals_conceded"] += ga
+                if gf > ga:
+                    bucket["win"] += 1
+                elif gf == ga:
+                    bucket["draw"] += 1
+                else:
+                    bucket["match_loss"] += 1
+
+                gts = gts_by_key.get((g.id, team_id))
+                if gts is not None:
+                    bucket["shot"] += gts.shots or 0
+                    bucket["shots_on_goal"] += gts.shots_on_goal or 0
+                    bucket["shots_off_goal"] += gts.shots_off_goal or 0
+                    bucket["pass"] += gts.passes or 0
+                    bucket["foul"] += gts.fouls or 0
+                    bucket["corner"] += gts.corners or 0
+                    bucket["offside"] += gts.offsides or 0
+                    bucket["yellow_cards"] += gts.yellow_cards or 0
+                    bucket["red_cards"] += gts.red_cards or 0
+
+        for team_id, bucket in per_team.items():
+            gp = bucket["games_played"] or 1
+            bucket["points"] = bucket["win"] * 3 + bucket["draw"]
+            bucket["goals_difference"] = bucket["goal"] - bucket["goals_conceded"]
+            bucket["shot_per_match"] = round(bucket["shot"] / gp, 2)
+
+        return per_team

@@ -498,6 +498,48 @@ def sync_best_players():
     return run_async(_sync_best_players())
 
 
+async def _sync_season_aggregates():
+    """Recompute team_season_stats and player_season_stats for all configured
+    seasons. Independent of v2 extended-stats path so seasons without SOTA
+    extended data (e.g. Вторая Лига) still get up-to-date aggregates from
+    locally-stored game stats.
+    """
+    results: dict[str, dict] = {}
+    for season_id in settings.sync_season_ids:
+        async with AsyncSessionLocal() as db:
+            orchestrator = SyncOrchestrator(db)
+            if not await orchestrator.is_sync_enabled(season_id):
+                results[f"season_{season_id}"] = {"status": "skipped"}
+                continue
+            entry: dict = {}
+            try:
+                entry["teams"] = await orchestrator.sync_team_season_stats(season_id)
+                await db.commit()
+            except Exception as exc:
+                await db.rollback()
+                logger.exception("Team aggregate failed for season %s", season_id)
+                entry["teams_error"] = str(exc)
+
+        async with AsyncSessionLocal() as db:
+            orchestrator = SyncOrchestrator(db)
+            try:
+                entry["players"] = await orchestrator.sync_player_stats(season_id)
+                await db.commit()
+            except Exception as exc:
+                await db.rollback()
+                logger.exception("Player aggregate failed for season %s", season_id)
+                entry["players_error"] = str(exc)
+
+        results[f"season_{season_id}"] = entry
+    return results
+
+
+@celery_app.task(name="app.tasks.sync_tasks.sync_season_aggregates", **_DB_RETRY_KW)
+def sync_season_aggregates():
+    """Celery task: Recompute season aggregates for all configured seasons."""
+    return run_async(_sync_season_aggregates())
+
+
 @celery_app.task(name="app.tasks.sync_tasks.sync_extended_stats", **_DB_RETRY_KW)
 def sync_extended_stats():
     """Celery task: Sync extended stats 24h+ after match finish."""
