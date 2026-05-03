@@ -221,6 +221,11 @@ async def get_team_players(
     """Get players for a team in a specific season."""
     season_id = await resolve_visible_season_id(db, season_id)
 
+    cache_key = f"team_players:{team_id}:{season_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     result = await db.execute(
         select(PlayerTeam)
         .where(
@@ -273,7 +278,10 @@ async def get_team_players(
             "left_at": pt.left_at.isoformat() if pt.left_at else None,
         })
 
-    return {"items": items, "total": len(items)}
+    result_dict = {"items": items, "total": len(items)}
+    json_bytes = json.dumps(result_dict, default=str, ensure_ascii=False).encode()
+    cache_set(cache_key, json_bytes, 30)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{team_id}/games")
