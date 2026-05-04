@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models import Game, GameStatus, ScoreTable, Season, Team
-from app.services.season_filters import get_group_team_ids, get_final_stage_ids
+from app.services.season_filters import get_group_team_ids, get_final_stage_ids, get_group_for_team
 from app.services.standings import (
     _primary_sort_key,
     calculate_dynamic_table,
@@ -26,6 +26,7 @@ from app.schemas.stats import (
     ScoreTableFilters,
     ResultsGridResponse,
     TeamResultsGridEntry,
+    LiveMatchInline,
 )
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -40,6 +41,8 @@ async def get_season_table(
     tour_from: int | None = Query(default=None, description="From matchweek (inclusive)"),
     tour_to: int | None = Query(default=None, description="To matchweek (inclusive)"),
     home_away: str | None = Query(default=None, pattern="^(home|away)$", description="Filter home/away games"),
+    include_live: bool = Query(default=True, description="If false, exclude live games from standings (Flashscore-style snapshot)"),
+    team_id: int | None = Query(default=None, description="Auto-resolve group from this team's SeasonParticipant entry"),
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -56,6 +59,14 @@ async def get_season_table(
 
     if group and final:
         raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
+
+    # Auto-resolve group from team_id when caller supplies a team but no
+    # explicit group / final filter — used by widgets on the team / match pages
+    # so the table is scoped to the team's conference, not the whole league.
+    if team_id is not None and not group and not final:
+        resolved = await get_group_for_team(db, season_id, team_id)
+        if resolved:
+            group = resolved
 
     # Resolve group team_ids if group filter is specified
     group_team_ids: list[int] | None = None
@@ -74,22 +85,80 @@ async def get_season_table(
 
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
-    live_games_result = await db.execute(
-        select(Game.home_team_id, Game.away_team_id).where(
+    # Load full live games (with team names/logos) once — used both for the
+    # live_team_ids set and for inline live_match payloads on each row.
+    live_games_q = await db.execute(
+        select(Game)
+        .where(
             Game.season_id == season_id,
             Game.status == GameStatus.live,
         )
+        .options(
+            selectinload(Game.home_team),
+            selectinload(Game.away_team),
+        )
     )
-    live_games = live_games_result.all()
-    live_team_ids = list({tid for row in live_games for tid in (row.home_team_id, row.away_team_id) if tid})
-    live_count = len(live_games)
+    live_games_full = list(live_games_q.scalars().all())
+
+    # Scope live games to the active phase (group / final). A live match in
+    # Conference A must not surface in Conference B's table or vice versa.
+    if group_team_ids is not None:
+        gset = set(group_team_ids)
+        live_games_full = [
+            g for g in live_games_full
+            if g.home_team_id in gset and g.away_team_id in gset
+        ]
+    if final_stage_ids_list is not None:
+        sset = set(final_stage_ids_list)
+        live_games_full = [g for g in live_games_full if g.stage_id in sset]
+
+    live_team_ids = list({
+        tid
+        for g in live_games_full
+        for tid in (g.home_team_id, g.away_team_id)
+        if tid
+    })
+    live_count = len(live_games_full)
+
+    live_match_by_team: dict[int, LiveMatchInline] = {}
+    for g in live_games_full:
+        if g.home_team_id is None or g.away_team_id is None:
+            continue
+        home_score = g.home_score or 0
+        away_score = g.away_score or 0
+        if g.home_team is not None:
+            live_match_by_team[g.home_team_id] = LiveMatchInline(
+                match_id=g.id,
+                opponent_id=g.away_team_id,
+                opponent_name=get_localized_field(g.away_team, "name", lang) if g.away_team else None,
+                opponent_logo=resolve_team_logo_url(g.away_team) if g.away_team else None,
+                is_home=True,
+                score_for=home_score,
+                score_against=away_score,
+                minute=g.live_minute,
+                half=g.live_half,
+                status_text=g.live_phase,
+            )
+        if g.away_team is not None:
+            live_match_by_team[g.away_team_id] = LiveMatchInline(
+                match_id=g.id,
+                opponent_id=g.home_team_id,
+                opponent_name=get_localized_field(g.home_team, "name", lang) if g.home_team else None,
+                opponent_logo=resolve_team_logo_url(g.home_team) if g.home_team else None,
+                is_home=False,
+                score_for=away_score,
+                score_against=home_score,
+                minute=g.live_minute,
+                half=g.live_half,
+                status_text=g.live_phase,
+            )
 
     # Always calculate table dynamically with full tiebreakers (H2H + cards)
     table_data = await calculate_dynamic_table(
         db, season_id, tour_from, tour_to, home_away, lang,
         group_team_ids=group_team_ids,
         final_stage_ids=final_stage_ids_list,
-        include_live=bool(live_count),
+        include_live=bool(live_count) and include_live,
     )
 
     # Merge with score_table for: team list (teams with 0 games) + notes (point penalties)
@@ -129,12 +198,15 @@ async def get_season_table(
     # standings vs standings before live games started (Flashscore-style).
     # When no live games, standings are static → no indicators shown.
     position_change_map: dict[int, int] = {}
-    if live_count and not home_away and not group and not final:
+    if live_count and include_live and not home_away:
+        # Compare positions within the same scope (group/final) — otherwise a
+        # league-wide pre-live rank would be irrelevant to a group view.
         pre_live_table = await calculate_dynamic_table(
             db, season_id,
             tour_from=tour_from, tour_to=tour_to,
             home_away=None, lang=lang,
-            group_team_ids=None, final_stage_ids=None,
+            group_team_ids=group_team_ids,
+            final_stage_ids=final_stage_ids_list,
             include_live=False,
         )
         position_change_map = {e["team_id"]: e["position"] for e in pre_live_table}
@@ -186,6 +258,7 @@ async def get_season_table(
                 ),
                 next_game=next_games.get(entry["team_id"]),
                 position_change=pos_change,
+                live_match=live_match_by_team.get(entry["team_id"]) if include_live else None,
             )
         )
 

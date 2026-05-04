@@ -68,6 +68,20 @@ class NextGameInfo(BaseModel):
     is_home: bool
 
 
+class LiveMatchInline(BaseModel):
+    """Inline live-match info for a team currently playing."""
+    match_id: int
+    opponent_id: int | None = None
+    opponent_name: str | None = None
+    opponent_logo: str | None = None
+    is_home: bool
+    score_for: int
+    score_against: int
+    minute: int | None = None
+    half: int | None = None
+    status_text: str | None = None
+
+
 class ScoreTableEntryResponse(BaseModel):
     position: int | None = None
     team_id: int
@@ -88,6 +102,7 @@ class ScoreTableEntryResponse(BaseModel):
     zone: Literal["champion", "euro_cups", "relegation"] | None = None
     next_game: NextGameInfo | None = None
     position_change: int | None = None
+    live_match: LiveMatchInline | None = None
 
     class Config:
         from_attributes = True
