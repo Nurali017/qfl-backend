@@ -63,7 +63,7 @@ async def _load_games(db: AsyncSession, season_id: int) -> list[Game]:
             selectinload(Game.away_team),
             selectinload(Game.stage),
         )
-        .order_by(Game.date, Game.time)
+        .order_by(Game.date, Game.time, Game.id)
     )
     return list(result.scalars().all())
 
