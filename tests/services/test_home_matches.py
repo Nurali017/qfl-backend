@@ -40,426 +40,291 @@ def _make_game(
     )
 
 
-@pytest.mark.asyncio
-async def test_get_home_widget_completed_window_keeps_finished_default_and_exposes_next_round_upcoming(
-    test_session,
-    sample_season,
-    sample_teams,
-):
-    now = datetime.now(ALMATY_TZ)
+def _set_clock(now: datetime):
+    """Override _now_almaty/_today_almaty for deterministic tests.
 
-    sample_season.frontend_code = "pl"
-    sample_season.is_current = True
-
-    finished_game = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[0].id,
-        away_team_id=sample_teams[1].id,
-        game_date=now.date(),
-        game_time=time(18, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=2,
-        away_score=1,
-        finished_at=_utc_from_almaty(now - timedelta(hours=2)),
-    )
-    technical_game = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[1].id,
-        away_team_id=sample_teams[2].id,
-        game_date=now.date(),
-        game_time=time(20, 0),
-        tour=1,
-        status=GameStatus.technical_defeat,
-        home_score=3,
-        away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
-    )
-    next_round_upcoming = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[2].id,
-        away_team_id=sample_teams[0].id,
-        game_date=now.date() + timedelta(days=1),
-        game_time=time(18, 30),
-        tour=2,
-        status=GameStatus.created,
-    )
-
-    test_session.add_all([finished_game, technical_game, next_round_upcoming])
-    await test_session.commit()
-
-    result = await get_home_widget(test_session, "pl", "ru")
-
-    assert result.window_state == "completed_window"
-    assert result.default_tab == "finished"
-    assert result.show_tabs is True
-    assert result.selected_round == 1
-    assert result.completed_window_expires_at is not None
-    assert result.finished_groups is not None
-    assert result.upcoming_groups is not None
-
-    finished_statuses = [
-        game.status for group in result.finished_groups for game in group.games
-    ]
-    upcoming_statuses = [
-        game.status for group in result.upcoming_groups for game in group.games
-    ]
-    assert [group.date for group in result.groups] == [now.date()]
-    assert finished_statuses == ["finished", "finished"]
-    assert upcoming_statuses == ["upcoming"]
-
-
-@pytest.mark.asyncio
-async def test_get_home_widget_active_round_keeps_full_current_tour_in_upcoming_and_previous_tour_in_finished(
-    test_session,
-    sample_season,
-    sample_teams,
-):
-    now = datetime.now(ALMATY_TZ)
-
-    sample_season.frontend_code = "pl"
-    sample_season.is_current = True
-
-    previous_tour_finished = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[2].id,
-        away_team_id=sample_teams[0].id,
-        game_date=now.date() - timedelta(days=2),
-        game_time=time(18, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=2,
-        away_score=1,
-        finished_at=_utc_from_almaty(now - timedelta(days=2, hours=1)),
-    )
-    current_tour_finished = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[0].id,
-        away_team_id=sample_teams[1].id,
-        game_date=now.date(),
-        game_time=time(16, 0),
-        tour=2,
-        status=GameStatus.finished,
-        home_score=1,
-        away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
-    )
-    upcoming_game = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[1].id,
-        away_team_id=sample_teams[2].id,
-        game_date=now.date() + timedelta(days=1),
-        game_time=time(18, 0),
-        tour=2,
-        status=GameStatus.created,
-    )
-
-    test_session.add_all([previous_tour_finished, current_tour_finished, upcoming_game])
-    await test_session.commit()
-
-    result = await get_home_widget(test_session, "pl", "ru")
-
-    assert result.window_state == "active_round"
-    assert result.selected_round == 2
-    assert result.default_tab == "upcoming"
-    assert result.show_tabs is True
-    assert result.finished_groups is not None
-    assert result.upcoming_groups is not None
-    assert [game.id for group in result.groups for game in group.games] == [
-        current_tour_finished.id,
-        upcoming_game.id,
-    ]
-
-    finished_statuses = {
-        game.id: game.status
-        for group in result.finished_groups
-        for game in group.games
-    }
-    upcoming_statuses = {
-        game.id: game.status
-        for group in result.upcoming_groups
-        for game in group.games
-    }
-    assert finished_statuses == {previous_tour_finished.id: "finished"}
-    assert upcoming_statuses[current_tour_finished.id] == "finished"
-    assert upcoming_statuses[upcoming_game.id] == "upcoming"
-    assert current_tour_finished.id not in finished_statuses
-
-
-@pytest.mark.asyncio
-async def test_get_home_widget_after_completed_window_switches_to_next_round(
-    test_session,
-    sample_season,
-    sample_teams,
-):
-    now = datetime.now(ALMATY_TZ)
-
-    sample_season.frontend_code = "pl"
-    sample_season.is_current = True
-
-    finished_game = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[0].id,
-        away_team_id=sample_teams[1].id,
-        game_date=(now - timedelta(days=3)).date(),
-        game_time=time(16, 0),
-        tour=2,
-        status=GameStatus.finished,
-        home_score=1,
-        away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(hours=60)),
-    )
-    next_round_upcoming = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[1].id,
-        away_team_id=sample_teams[2].id,
-        game_date=now.date(),
-        game_time=time(18, 0),
-        tour=3,
-        status=GameStatus.created,
-    )
-
-    test_session.add_all([finished_game, next_round_upcoming])
-    await test_session.commit()
-
-    result = await get_home_widget(test_session, "pl", "ru")
-
-    assert result.window_state == "active_round"
-    assert result.selected_round == 3
-    assert result.default_tab == "upcoming"
-    assert result.show_tabs is True
-    assert result.finished_groups is not None
-    assert result.upcoming_groups is not None
-    all_group_ids = {game.id for group in result.groups for game in group.games}
-    assert next_round_upcoming.id in all_group_ids
-    finished_ids = {game.id for group in result.finished_groups for game in group.games}
-    assert finished_game.id in finished_ids
-    upcoming_ids = {game.id for group in result.upcoming_groups for game in group.games}
-    assert next_round_upcoming.id in upcoming_ids
-
-
-@pytest.mark.asyncio
-async def test_get_home_widget_treats_postponed_tour_as_completed(
-    test_session,
-    sample_season,
-    sample_teams,
-):
-    """Regression (PL-2026 tour 6): a tour with all playable games finished and
-    one rescheduled fixture must open the 24h "finished" window, not stay
-    flagged as an active round."""
-    now = datetime.now(ALMATY_TZ)
-
-    sample_season.frontend_code = "pl"
-    sample_season.is_current = True
-
-    finished_game_1 = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[0].id,
-        away_team_id=sample_teams[1].id,
-        game_date=now.date(),
-        game_time=time(18, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=2,
-        away_score=1,
-        finished_at=_utc_from_almaty(now - timedelta(hours=2)),
-    )
-    finished_game_2 = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[1].id,
-        away_team_id=sample_teams[2].id,
-        game_date=now.date(),
-        game_time=time(20, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=0,
-        away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
-    )
-    postponed_game = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[2].id,
-        away_team_id=sample_teams[0].id,
-        game_date=now.date(),
-        game_time=time(19, 0),
-        tour=1,
-        status=GameStatus.postponed,
-    )
-
-    test_session.add_all([finished_game_1, finished_game_2, postponed_game])
-    await test_session.commit()
-
-    result = await get_home_widget(test_session, "pl", "ru")
-
-    assert result.selected_round == 1
-    assert result.window_state == "completed_window"
-    assert result.default_tab == "finished"
-    assert result.completed_window_expires_at is not None
-
-
-@pytest.mark.asyncio
-async def test_get_home_widget_treats_stale_created_game_as_non_blocking(
-    test_session,
-    sample_season,
-    sample_teams,
-):
-    """Regression (PL-2026 tour 6 live state): tour has finished games plus a
-    created fixture whose match-day has already passed — the match-day has
-    slipped but it was never explicitly marked postponed.  The widget must
-    treat the tour as closed for UI purposes (completed_window), not as an
-    active round dragging on forever."""
-    now = datetime.now(ALMATY_TZ)
-
-    sample_season.frontend_code = "pl"
-    sample_season.is_current = True
-
-    finished_game_1 = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[0].id,
-        away_team_id=sample_teams[1].id,
-        game_date=now.date(),
-        game_time=time(16, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=2,
-        away_score=1,
-        finished_at=_utc_from_almaty(now - timedelta(hours=2)),
-    )
-    finished_game_2 = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[1].id,
-        away_team_id=sample_teams[2].id,
-        game_date=now.date(),
-        game_time=time(18, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=0,
-        away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(hours=1)),
-    )
-    stale_created = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[2].id,
-        away_team_id=sample_teams[0].id,
-        game_date=now.date() - timedelta(days=3),
-        game_time=time(19, 0),
-        tour=1,
-        status=GameStatus.created,
-    )
-
-    test_session.add_all([finished_game_1, finished_game_2, stale_created])
-    await test_session.commit()
-
-    result = await get_home_widget(test_session, "pl", "ru")
-
-    assert result.selected_round == 1
-    assert result.window_state == "completed_window"
-    assert result.default_tab == "finished"
-
-
-@pytest.mark.asyncio
-async def test_get_home_widget_stays_in_completed_window_within_48h(
-    test_session,
-    sample_season,
-    sample_teams,
-):
-    """Completed tour stays on default_tab=finished for 48h after the last
-    terminal match, then flips to upcoming (regardless of when the next
-    tour physically starts)."""
-    now = datetime.now(ALMATY_TZ)
-
-    sample_season.frontend_code = "pl"
-    sample_season.is_current = True
-
-    recent_finished = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[0].id,
-        away_team_id=sample_teams[1].id,
-        game_date=now.date() - timedelta(days=1),
-        game_time=time(18, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=2,
-        away_score=1,
-        finished_at=_utc_from_almaty(now - timedelta(hours=40)),
-    )
-    next_tour_far = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[1].id,
-        away_team_id=sample_teams[2].id,
-        game_date=now.date() + timedelta(days=5),
-        game_time=time(18, 0),
-        tour=2,
-        status=GameStatus.created,
-    )
-
-    test_session.add_all([recent_finished, next_tour_far])
-    await test_session.commit()
-
-    result = await get_home_widget(test_session, "pl", "ru")
-
-    assert result.selected_round == 1
-    assert result.window_state == "completed_window"
-    assert result.default_tab == "finished"
-
-
-@pytest.mark.asyncio
-async def test_get_home_widget_ignores_orphan_future_tour_fixture(
-    test_session,
-    sample_season,
-    sample_teams,
-):
-    """A single fixture played in a far-off tour must not jump the hint forward.
-
-    Mirrors the PL-2026 scenario where one game was played in tour 25 while
-    tours 2..24 have not started yet — the widget should stay on tour 1.
+    Returns a callable that restores the originals.
     """
-    now = datetime.now(ALMATY_TZ)
+    original_now = home_matches_service._now_almaty
+    original_today = home_matches_service._today_almaty
+    home_matches_service._now_almaty = lambda: now
+    home_matches_service._today_almaty = lambda: now.date()
+
+    def restore() -> None:
+        home_matches_service._now_almaty = original_now
+        home_matches_service._today_almaty = original_today
+
+    return restore
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_anchor_week_includes_rescheduled_other_tour(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Real PL-2026 scenario: tour 20 fixture played on Wed 6 May before
+    tour 9's main slate on Sat-Sun 9-10 May. Anchor week = current ISO
+    week (May 4..10) — every match in that week shows in upcoming,
+    regardless of tour number. Previous week's terminal games go to
+    finished tab."""
+    today = date(2026, 5, 4)  # Monday
+    now = datetime(2026, 5, 4, 14, 0, tzinfo=ALMATY_TZ)
+    restore = _set_clock(now)
 
     sample_season.frontend_code = "pl"
     sample_season.is_current = True
+    sid = sample_season.id
 
-    tour_1_finished = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[0].id,
-        away_team_id=sample_teams[1].id,
-        game_date=now.date(),
-        game_time=time(18, 0),
-        tour=1,
-        status=GameStatus.finished,
-        home_score=2,
-        away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(hours=3)),
-    )
-    tour_1_upcoming = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[1].id,
-        away_team_id=sample_teams[2].id,
-        game_date=now.date() + timedelta(days=1),
-        game_time=time(19, 0),
-        tour=1,
-        status=GameStatus.created,
-    )
-    orphan_future = _make_game(
-        season_id=sample_season.id,
-        home_team_id=sample_teams[2].id,
-        away_team_id=sample_teams[0].id,
-        game_date=now.date() - timedelta(days=5),
-        game_time=time(17, 0),
-        tour=25,
-        status=GameStatus.finished,
-        home_score=2,
-        away_score=0,
-        finished_at=_utc_from_almaty(now - timedelta(days=5)),
-    )
+    prev_may2_a = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+                             game_date=date(2026, 5, 2), game_time=time(15, 0), tour=8,
+                             status=GameStatus.finished, home_score=0, away_score=1,
+                             finished_at=_utc_from_almaty(datetime(2026, 5, 2, 17, 0, tzinfo=ALMATY_TZ)))
+    prev_may2_b = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+                             game_date=date(2026, 5, 2), game_time=time(17, 0), tour=8,
+                             status=GameStatus.finished, home_score=0, away_score=1,
+                             finished_at=_utc_from_almaty(datetime(2026, 5, 2, 19, 0, tzinfo=ALMATY_TZ)))
+    prev_may3_a = _make_game(season_id=sid, home_team_id=sample_teams[2].id, away_team_id=sample_teams[0].id,
+                             game_date=date(2026, 5, 3), game_time=time(15, 0), tour=8,
+                             status=GameStatus.finished, home_score=2, away_score=0,
+                             finished_at=_utc_from_almaty(datetime(2026, 5, 3, 17, 0, tzinfo=ALMATY_TZ)))
+    prev_may3_b = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[2].id,
+                             game_date=date(2026, 5, 3), game_time=time(20, 0), tour=8,
+                             status=GameStatus.finished, home_score=1, away_score=1,
+                             finished_at=_utc_from_almaty(datetime(2026, 5, 3, 22, 0, tzinfo=ALMATY_TZ)))
+    rescheduled_may6 = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+                                  game_date=date(2026, 5, 6), game_time=time(19, 0), tour=20,
+                                  status=GameStatus.created)
+    upcoming_may9_a = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+                                 game_date=date(2026, 5, 9), game_time=time(15, 0), tour=9,
+                                 status=GameStatus.created)
+    upcoming_may9_b = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[0].id,
+                                 game_date=date(2026, 5, 9), game_time=time(18, 0), tour=9,
+                                 status=GameStatus.created)
+    upcoming_may10_tour22 = _make_game(season_id=sid, home_team_id=sample_teams[2].id, away_team_id=sample_teams[1].id,
+                                       game_date=date(2026, 5, 10), game_time=time(15, 0), tour=22,
+                                       status=GameStatus.created)
+    upcoming_may10_tour9 = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[2].id,
+                                      game_date=date(2026, 5, 10), game_time=time(17, 0), tour=9,
+                                      status=GameStatus.created)
 
-    test_session.add_all([tour_1_finished, tour_1_upcoming, orphan_future])
+    test_session.add_all([
+        prev_may2_a, prev_may2_b, prev_may3_a, prev_may3_b,
+        rescheduled_may6,
+        upcoming_may9_a, upcoming_may9_b,
+        upcoming_may10_tour22, upcoming_may10_tour9,
+    ])
     await test_session.commit()
 
-    result = await get_home_widget(test_session, "pl", "ru")
+    try:
+        result = await get_home_widget(test_session, "pl", "ru")
+    finally:
+        restore()
 
-    assert result.selected_round == 1
+    upcoming_dates = [g.date for grp in result.upcoming_groups for g in grp.games]
+    upcoming_ids = [g.id for grp in result.upcoming_groups for g in grp.games]
+    finished_ids = [g.id for grp in result.finished_groups for g in grp.games]
+
+    # Rescheduled tour-20 match must show in upcoming, alongside tour-9 and tour-22 of the same week.
+    assert rescheduled_may6.id in upcoming_ids
+    assert upcoming_may10_tour22.id in upcoming_ids
+    assert {date(2026, 5, 6), date(2026, 5, 9), date(2026, 5, 10)} == set(upcoming_dates)
+
+    # Previous-week tour-8 games go to finished, not upcoming.
+    assert {prev_may2_a.id, prev_may2_b.id, prev_may3_a.id, prev_may3_b.id}.issubset(finished_ids)
+    assert rescheduled_may6.id not in finished_ids
+    assert upcoming_may10_tour22.id not in finished_ids
+
+    assert result.show_tabs is True
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_completed_window_within_48h_defaults_to_finished(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """When the previous week just finished (last match within 48h) and
+    the current week has upcoming games, default tab stays on finished
+    so users land on the freshest results."""
+    today = date(2026, 5, 4)  # Monday
+    now = datetime(2026, 5, 4, 14, 0, tzinfo=ALMATY_TZ)
+    restore = _set_clock(now)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+    sid = sample_season.id
+
+    finished_recent = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+                                 game_date=date(2026, 5, 3), game_time=time(20, 0), tour=8,
+                                 status=GameStatus.finished, home_score=1, away_score=0,
+                                 finished_at=_utc_from_almaty(datetime(2026, 5, 3, 22, 0, tzinfo=ALMATY_TZ)))
+    upcoming_next_week = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+                                    game_date=date(2026, 5, 9), game_time=time(18, 0), tour=9,
+                                    status=GameStatus.created)
+    test_session.add_all([finished_recent, upcoming_next_week])
+    await test_session.commit()
+
+    try:
+        result = await get_home_widget(test_session, "pl", "ru")
+    finally:
+        restore()
+
+    assert result.window_state == "completed_window"
+    assert result.default_tab == "finished"
+    assert result.completed_window_expires_at is not None
+    assert result.show_tabs is True
+    finished_ids = [g.id for grp in result.finished_groups for g in grp.games]
+    upcoming_ids = [g.id for grp in result.upcoming_groups for g in grp.games]
+    assert finished_recent.id in finished_ids
+    assert upcoming_next_week.id in upcoming_ids
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_active_round_defaults_to_upcoming_after_48h(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Once the 48h completion window has elapsed, default tab flips to
+    upcoming — the user is no longer "fresh from the weekend"."""
+    today = date(2026, 5, 6)  # Wed
+    now = datetime(2026, 5, 6, 12, 0, tzinfo=ALMATY_TZ)
+    restore = _set_clock(now)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+    sid = sample_season.id
+
+    finished_old = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+                              game_date=date(2026, 5, 3), game_time=time(15, 0), tour=8,
+                              status=GameStatus.finished, home_score=1, away_score=0,
+                              finished_at=_utc_from_almaty(datetime(2026, 5, 3, 17, 0, tzinfo=ALMATY_TZ)))
+    upcoming_in_week = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+                                  game_date=date(2026, 5, 9), game_time=time(18, 0), tour=9,
+                                  status=GameStatus.created)
+    test_session.add_all([finished_old, upcoming_in_week])
+    await test_session.commit()
+
+    try:
+        result = await get_home_widget(test_session, "pl", "ru")
+    finally:
+        restore()
+
+    # Now > 48h after the last finished match.
+    assert result.completed_window_expires_at is None
     assert result.window_state == "active_round"
+    assert result.default_tab == "upcoming"
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_anchor_week_only_finished_within_48h(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Anchor week is fully completed and within the 48h window; finished
+    tab is default and there are no upcoming games to show."""
+    today = date(2026, 5, 4)  # Mon
+    now = datetime(2026, 5, 4, 14, 0, tzinfo=ALMATY_TZ)
+    restore = _set_clock(now)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+    sid = sample_season.id
+
+    finished_a = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+                            game_date=date(2026, 5, 3), game_time=time(15, 0), tour=8,
+                            status=GameStatus.finished, home_score=2, away_score=0,
+                            finished_at=_utc_from_almaty(datetime(2026, 5, 3, 17, 0, tzinfo=ALMATY_TZ)))
+    finished_b = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+                            game_date=date(2026, 5, 3), game_time=time(20, 0), tour=8,
+                            status=GameStatus.finished, home_score=1, away_score=1,
+                            finished_at=_utc_from_almaty(datetime(2026, 5, 3, 22, 0, tzinfo=ALMATY_TZ)))
+    test_session.add_all([finished_a, finished_b])
+    await test_session.commit()
+
+    try:
+        result = await get_home_widget(test_session, "pl", "ru")
+    finally:
+        restore()
+
+    assert result.window_state == "completed_window"
+    assert result.default_tab == "finished"
+    assert result.upcoming_groups == []
+    finished_ids = {g.id for grp in result.finished_groups for g in grp.games}
+    assert {finished_a.id, finished_b.id} <= finished_ids
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_postponed_game_excluded_from_upcoming(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Postponed/cancelled games are not surfaced in the upcoming tab."""
+    today = date(2026, 5, 4)
+    now = datetime(2026, 5, 4, 14, 0, tzinfo=ALMATY_TZ)
+    restore = _set_clock(now)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+    sid = sample_season.id
+
+    upcoming = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+                          game_date=date(2026, 5, 9), game_time=time(18, 0), tour=9,
+                          status=GameStatus.created)
+    postponed = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+                           game_date=date(2026, 5, 9), game_time=time(20, 0), tour=9,
+                           status=GameStatus.postponed)
+    test_session.add_all([upcoming, postponed])
+    await test_session.commit()
+
+    try:
+        result = await get_home_widget(test_session, "pl", "ru")
+    finally:
+        restore()
+
+    upcoming_ids = {g.id for grp in result.upcoming_groups for g in grp.games}
+    assert upcoming.id in upcoming_ids
+    assert postponed.id not in upcoming_ids
+
+
+@pytest.mark.asyncio
+async def test_get_home_widget_orphan_distant_future_does_not_jump_anchor(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """A single far-future fixture (e.g. tentative end-of-season slot) must
+    not pull the anchor weeks ahead. The widget anchors on the *nearest*
+    upcoming game, so the closer week is shown."""
+    today = date(2026, 5, 4)
+    now = datetime(2026, 5, 4, 14, 0, tzinfo=ALMATY_TZ)
+    restore = _set_clock(now)
+
+    sample_season.frontend_code = "pl"
+    sample_season.is_current = True
+    sid = sample_season.id
+
+    near_upcoming = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+                               game_date=date(2026, 5, 9), game_time=time(18, 0), tour=9,
+                               status=GameStatus.created)
+    far_future = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+                            game_date=date(2026, 11, 30), game_time=time(20, 0), tour=30,
+                            status=GameStatus.created)
+    test_session.add_all([near_upcoming, far_future])
+    await test_session.commit()
+
+    try:
+        result = await get_home_widget(test_session, "pl", "ru")
+    finally:
+        restore()
+
+    upcoming_ids = {g.id for grp in result.upcoming_groups for g in grp.games}
+    assert near_upcoming.id in upcoming_ids
+    assert far_future.id not in upcoming_ids
+    assert result.selected_round == 9
 
 
 @pytest.mark.asyncio

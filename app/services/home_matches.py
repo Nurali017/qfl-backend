@@ -1,18 +1,19 @@
-"""Home matches widget service for tour-based leagues (pl, 1l, el).
+"""Home matches widget service.
 
-Determines which tour to display on the home page.
-Single source of truth for round selection, tab state, and 24h window logic.
+For tour-based leagues (pl, 1l, el) the widget anchors on the current ISO
+week (Mon..Sun, Asia/Almaty) — finding the week that contains the next
+non-terminal fixture, regardless of tour number. All games of that week
+go to the upcoming tab, all terminal games of the previous and anchor
+weeks go to the finished tab. This naturally handles rescheduled
+fixtures whose tour number does not match the current matchday.
 
-Selection rules:
-0. played_round_hint is null  → first upcoming tour
-1. hint has non-terminal games → upcoming=current tour, finished=previous tour
-2. hint fully terminal + next tour exists → upcoming=next tour, finished=hint
-3. hint fully terminal in 48h window → default finished for 48h
-4. fallback                   → nearest available games
+For 2L group/final leagues the older tour-based logic still applies via
+``_get_widget_group`` / ``_get_widget_final``.
 
-"Completed window" (48h) controls default_tab after the last terminal match
-in a tour: within 48h → default_tab="finished"; past 48h → default_tab=
-"upcoming" (next tour).
+"Completed window" (48h) keeps default_tab="finished" until 48 hours
+after the most recent finished match; past 48h default flips to
+"upcoming". Past that and with no anchor week available, ``_fallback``
+returns the nearest available games.
 """
 
 import logging
@@ -133,95 +134,87 @@ async def get_home_widget(
             return await _get_widget_final(db, season_id, frontend_code, lang)
         return await _get_widget_group(db, season_id, frontend_code, lang, group)
 
-    hint = await _played_round_hint(db, season_id)
+    return await _get_widget_week(db, season_id, frontend_code, lang)
+
+
+async def _get_widget_week(
+    db: AsyncSession,
+    season_id: int,
+    frontend_code: str,
+    lang: str,
+) -> HomeMatchesWidgetResponse:
+    """Week-based widget flow for tour-based leagues (pl, 1l, el).
+
+    Selection rules:
+    - anchor_week = ISO week (Mon..Sun, Asia/Almaty) of the next non-terminal
+      game scheduled today or later. Falls back to the week of the latest
+      game in the season.
+    - upcoming groups = playable non-terminal games inside anchor_week.
+    - finished groups = terminal games inside the previous week + anchor week.
+    - default_tab = "upcoming" if anchor week has playable games, else
+      "finished" while inside the 48h completion window after the last
+      finished match. Otherwise → fallback.
+    """
     now = _now_almaty()
     today = now.date()
 
-    # Rule 0: no played round → first upcoming tour
-    if hint is None:
-        return await _rule0_first_upcoming(db, season_id, frontend_code, lang)
+    anchor_date = await _find_anchor_date(db, season_id, today)
+    if anchor_date is None:
+        return await _fallback(db, season_id, frontend_code, lang)
 
-    # Load window [hint-1, hint, hint+1]
-    window = [t for t in (hint - 1, hint, hint + 1) if t > 0]
-    all_games = await _load_tours(db, season_id, window)
-    by_tour: dict[int, list[Game]] = {}
-    for g in all_games:
-        if g.tour is not None:
-            by_tour.setdefault(g.tour, []).append(g)
+    anchor_start, anchor_end = _iso_week_bounds(anchor_date)
+    prev_start = anchor_start - timedelta(days=7)
+    prev_end = anchor_start - timedelta(days=1)
 
-    hint_games = by_tour.get(hint, [])
-    previous_tour_games = by_tour.get(hint - 1, [])
-    next_tour = hint + 1
-    next_games = by_tour.get(next_tour, [])
+    week_games = await _load_date_range(db, season_id, prev_start, anchor_end)
+    anchor_games = [g for g in week_games if anchor_start <= g.date <= anchor_end]
+    prev_games = [g for g in week_games if prev_start <= g.date <= prev_end]
 
-    # Rule 1: current tour is still ongoing → upcoming=current, finished=previous tour
-    # "Ongoing" means the tour has at least one playable game that has not yet
-    # finished.  Postponed/cancelled/missed-schedule/outlier-future games do not count.
-    hint_tour_anchor = _tour_terminal_last_date(hint_games)
-    if hint_games and any(
-        g.status not in TERMINAL_STATUSES and _is_playable(g, today, hint_tour_anchor)
-        for g in hint_games
-    ):
-        finished_groups = await _enrich_and_group(
-            db, season_id,
-            previous_tour_games if _tour_is_fully_terminal(previous_tour_games, today) else [],
-            lang,
-        )
-        upcoming_groups = await _enrich_and_group(db, season_id, hint_games, lang)
-        return HomeMatchesWidgetResponse(
-            frontend_code=frontend_code,
-            season_id=season_id,
-            selected_round=hint,
-            window_state="active_round",
-            default_tab="upcoming",
-            show_tabs=bool(finished_groups) and bool(upcoming_groups),
-            groups=upcoming_groups or finished_groups,
-            finished_groups=finished_groups,
-            upcoming_groups=upcoming_groups,
-            completed_window_expires_at=None,
-        )
+    anchor_terminal = [g for g in anchor_games if g.status in TERMINAL_STATUSES]
+    anchor_upcoming = [
+        g for g in anchor_games
+        if g.status not in TERMINAL_STATUSES and _is_playable(g, today, None)
+    ]
+    prev_terminal = [g for g in prev_games if g.status in TERMINAL_STATUSES]
 
-    # Rule 2: current tour already completed → upcoming=next tour, finished=current completed tour
-    completed_window_expires_at = _recent_completion_expires(hint_games, now, today)
-    if next_games:
-        finished_groups = await _enrich_and_group(
-            db, season_id,
-            hint_games if _tour_is_fully_terminal(hint_games, today) else [],
-            lang,
-        )
-        upcoming_groups = await _enrich_and_group(db, season_id, next_games, lang)
-        in_completed_window = completed_window_expires_at is not None
-        return HomeMatchesWidgetResponse(
-            frontend_code=frontend_code,
-            season_id=season_id,
-            selected_round=hint if in_completed_window else next_tour,
-            window_state="completed_window" if in_completed_window else "active_round",
-            default_tab="finished" if in_completed_window else "upcoming",
-            show_tabs=bool(finished_groups) and bool(upcoming_groups),
-            groups=finished_groups if in_completed_window else (upcoming_groups or finished_groups),
-            finished_groups=finished_groups,
-            upcoming_groups=upcoming_groups,
-            completed_window_expires_at=completed_window_expires_at,
-        )
+    finished_combined = sorted(
+        prev_terminal + anchor_terminal,
+        key=lambda g: (g.date, g.time or time_type(0, 0)),
+    )
+    finished_groups = _group_widget_games(finished_combined, lang)
+    upcoming_groups = _group_widget_games(anchor_upcoming, lang)
 
-    # Rule 3: no next tour yet, but keep finished tour open for 24h
-    if completed_window_expires_at is not None:
-        finished_groups = await _enrich_and_group(db, season_id, hint_games, lang)
-        return HomeMatchesWidgetResponse(
-            frontend_code=frontend_code,
-            season_id=season_id,
-            selected_round=hint,
-            window_state="completed_window",
-            default_tab="finished",
-            show_tabs=False,
-            groups=finished_groups,
-            finished_groups=finished_groups,
-            upcoming_groups=[],
-            completed_window_expires_at=completed_window_expires_at,
-        )
+    selected_round = _mode_tour(anchor_games) or _mode_tour(prev_games)
+    has_upcoming = bool(anchor_upcoming)
+    completed_expires = _completion_expires_for_terminal(
+        prev_terminal + anchor_terminal, now,
+    )
 
-    # Rule 4: fallback
-    return await _fallback(db, season_id, frontend_code, lang)
+    if completed_expires is not None:
+        window_state = "completed_window"
+        default_tab = "finished"
+    elif has_upcoming:
+        window_state = "active_round"
+        default_tab = "upcoming"
+    else:
+        return await _fallback(db, season_id, frontend_code, lang)
+
+    main_groups = upcoming_groups if default_tab == "upcoming" else finished_groups
+    if not main_groups:
+        main_groups = finished_groups or upcoming_groups
+
+    return HomeMatchesWidgetResponse(
+        frontend_code=frontend_code,
+        season_id=season_id,
+        selected_round=selected_round,
+        window_state=window_state,
+        default_tab=default_tab,
+        show_tabs=bool(finished_groups) and bool(upcoming_groups),
+        groups=main_groups,
+        finished_groups=finished_groups,
+        upcoming_groups=upcoming_groups,
+        completed_window_expires_at=completed_expires,
+    )
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -233,6 +226,82 @@ def _now_almaty() -> datetime:
 
 def _today_almaty() -> date:
     return _now_almaty().date()
+
+
+def _iso_week_bounds(d: date) -> tuple[date, date]:
+    """ISO week (Monday..Sunday) containing *d*."""
+    monday = d - timedelta(days=d.weekday())
+    sunday = monday + timedelta(days=6)
+    return monday, sunday
+
+
+def _mode_tour(games: list[Game]) -> int | None:
+    """Most common tour number among games (None if none have tours)."""
+    counts: dict[int, int] = {}
+    for g in games:
+        if g.tour is not None:
+            counts[g.tour] = counts.get(g.tour, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
+
+
+def _completion_expires_for_terminal(
+    terminal_games: list[Game], now: datetime,
+) -> datetime | None:
+    """Return the 48h-window expiry anchored on the last finished match."""
+    if not terminal_games:
+        return None
+    finished_times = [_game_finished_at(g) for g in terminal_games]
+    valid = [t for t in finished_times if t is not None]
+    if not valid:
+        return None
+    expires_at = max(valid) + COMPLETED_WINDOW
+    return expires_at if expires_at > now else None
+
+
+async def _load_date_range(
+    db: AsyncSession,
+    season_id: int,
+    date_from: date,
+    date_to: date,
+) -> list[Game]:
+    """Load all season games inside [date_from, date_to] regardless of tour."""
+    result = await db.execute(
+        select(Game)
+        .where(
+            Game.season_id == season_id,
+            Game.date >= date_from,
+            Game.date <= date_to,
+        )
+        .options(*_EAGER_OPTIONS)
+        .order_by(Game.date.asc(), Game.time.asc())
+    )
+    games = list(result.scalars().all())
+    if games:
+        await enrich_games_has_stats(db, games)
+    return games
+
+
+async def _find_anchor_date(
+    db: AsyncSession, season_id: int, today: date,
+) -> date | None:
+    """Date used to derive the anchor ISO week.
+
+    Prefers the nearest non-terminal game scheduled today or later. If the
+    season has no upcoming games at all, falls back to the latest scheduled
+    date in the season (so the widget keeps showing the last weekend).
+    """
+    upcoming_query = select(func.min(Game.date)).where(
+        Game.season_id == season_id,
+        Game.date >= today,
+        Game.status.in_([GameStatus.created, GameStatus.live]),
+    )
+    upcoming = (await db.execute(upcoming_query)).scalar()
+    if upcoming is not None:
+        return upcoming
+    latest_query = select(func.max(Game.date)).where(Game.season_id == season_id)
+    return (await db.execute(latest_query)).scalar()
 
 
 def _finished_games(games: list[Game]) -> list[Game]:
@@ -275,81 +344,6 @@ def _group_widget_games(games: list[Game], lang: str):
     return group_games_by_date(games, lang, status_mode="home_widget")
 
 
-def _filter_outlier_games(games: list[Game], max_gap_days: int = 7) -> list[Game]:
-    """Keep only games whose date is within *max_gap_days* of an anchor date.
-
-    Anchor priority:
-    1. Median of confirmed (non-tentative) game dates, if any.
-    2. Otherwise, global median.
-
-    This prevents a single confirmed match-day from being dropped when the rest
-    of the tour is still held on placeholder/tentative end-of-season dates.
-    """
-    dated = [(g, g.date) for g in games if g.date is not None]
-    if len(dated) <= 1:
-        return [g for g, _ in dated]
-    confirmed_dates = sorted(
-        d for g, d in dated if not getattr(g, "is_schedule_tentative", False)
-    )
-    if confirmed_dates:
-        anchor = confirmed_dates[len(confirmed_dates) // 2]
-    else:
-        all_dates = sorted(d for _, d in dated)
-        anchor = all_dates[len(all_dates) // 2]
-    return [g for g, d in dated if abs((d - anchor).days) <= max_gap_days]
-
-
-async def _load_same_date_games(
-    db: AsyncSession,
-    season_id: int,
-    date_from: date,
-    date_to: date,
-    exclude_ids: set[int],
-) -> list[Game]:
-    """Load games from any tour within [date_from, date_to], excluding known ids."""
-    query = (
-        select(Game)
-        .where(
-            Game.season_id == season_id,
-            Game.date >= date_from,
-            Game.date <= date_to,
-        )
-        .options(*_EAGER_OPTIONS)
-        .order_by(Game.date.asc(), Game.time.asc())
-    )
-    if exclude_ids:
-        query = query.where(~Game.id.in_(exclude_ids))
-    result = await db.execute(query)
-    games = list(result.scalars().all())
-    if games:
-        await enrich_games_has_stats(db, games)
-    return games
-
-
-async def _enrich_and_group(
-    db: AsyncSession,
-    season_id: int,
-    tour_games: list[Game],
-    lang: str,
-):
-    """Filter outlier dates, pad with adjacent-day games from any tour, group by date."""
-    if not tour_games:
-        return []
-    filtered = _filter_outlier_games(tour_games)
-    if not filtered:
-        return group_games_by_date(tour_games, lang, status_mode="home_widget")
-    game_dates = [g.date for g in filtered if g.date]
-    if not game_dates:
-        return group_games_by_date(filtered, lang, status_mode="home_widget")
-    pad = timedelta(days=2)
-    date_from = min(game_dates) - pad
-    date_to = max(game_dates) + pad
-    known_ids = {g.id for g in filtered}
-    extra = await _load_same_date_games(db, season_id, date_from, date_to, known_ids)
-    all_games = filtered + extra
-    return group_games_by_date(all_games, lang, status_mode="home_widget")
-
-
 async def _resolve_season(db: AsyncSession, frontend_code: str) -> Season | None:
     result = await db.execute(
         select(Season).where(
@@ -370,34 +364,6 @@ async def _resolve_season(db: AsyncSession, frontend_code: str) -> Season | None
         and (s.date_end is None or s.date_end >= today)
     ]
     return max(active or seasons, key=lambda s: (s.date_start or date.min, s.id))
-
-
-async def _played_round_hint(db: AsyncSession, season_id: int) -> int | None:
-    """Highest tour reached through consecutive play.
-
-    Uses the same max-consecutive-played-tour semantic as the public
-    ``current_round`` helper so the home widget does not jump to an orphan
-    future-tour fixture (e.g. a rescheduled match dropped into tour 25 while
-    tours 7..24 have not started yet).
-    """
-    from app.services.season_scope import compute_current_rounds
-
-    rounds = await compute_current_rounds(db, [season_id])
-    return rounds.get(season_id)
-
-
-async def _load_tours(
-    db: AsyncSession, season_id: int, tours: list[int]
-) -> list[Game]:
-    result = await db.execute(
-        select(Game)
-        .where(Game.season_id == season_id, Game.tour.in_(tours))
-        .options(*_EAGER_OPTIONS)
-        .order_by(Game.date.asc(), Game.time.asc())
-    )
-    games = list(result.scalars().all())
-    await enrich_games_has_stats(db, games)
-    return games
 
 
 def _game_finished_at(game: Game) -> datetime | None:
@@ -426,36 +392,6 @@ def _recent_completion_expires(
     last_finished_at = max(valid)
     expires_at = last_finished_at + COMPLETED_WINDOW
     return expires_at if expires_at > now else None
-
-
-async def _rule0_first_upcoming(
-    db: AsyncSession, season_id: int, frontend_code: str, lang: str,
-) -> HomeMatchesWidgetResponse:
-    result = await db.execute(
-        select(func.min(Game.tour)).where(
-            Game.season_id == season_id,
-            Game.tour.isnot(None),
-            Game.status.in_([GameStatus.created, GameStatus.live]),
-        )
-    )
-    first_tour = result.scalar()
-    if first_tour is None:
-        return _empty(frontend_code, season_id)
-    first_tour = int(first_tour)
-    games = await _load_tours(db, season_id, [first_tour])
-    upcoming_groups = await _enrich_and_group(db, season_id, games, lang)
-    return HomeMatchesWidgetResponse(
-        frontend_code=frontend_code,
-        season_id=season_id,
-        selected_round=first_tour,
-        window_state="active_round",
-        default_tab="upcoming",
-        show_tabs=False,
-        groups=upcoming_groups,
-        finished_groups=[],
-        upcoming_groups=upcoming_groups,
-        completed_window_expires_at=None,
-    )
 
 
 async def _fallback(
