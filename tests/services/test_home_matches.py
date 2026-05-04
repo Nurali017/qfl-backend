@@ -139,30 +139,47 @@ async def test_get_home_widget_anchor_week_includes_rescheduled_other_tour(
 
 
 @pytest.mark.asyncio
-async def test_get_home_widget_completed_window_within_48h_defaults_to_finished(
+async def test_get_home_widget_active_week_keeps_finished_games_in_upcoming_tab(
     test_session,
     sample_season,
     sample_teams,
 ):
-    """When the previous week just finished (last match within 48h) and
-    the current week has upcoming games, default tab stays on finished
-    so users land on the freshest results."""
+    """While a matchday week is in progress (any unfinished playable game
+    remains), ALL games of that week — including ones that have already
+    been played and a live one — ride along in the upcoming tab. Finished
+    tab in this state shows only the previous week's results.
+    """
     today = date(2026, 5, 4)  # Monday
-    now = datetime(2026, 5, 4, 14, 0, tzinfo=ALMATY_TZ)
+    now = datetime(2026, 5, 4, 14, 30, tzinfo=ALMATY_TZ)
     restore = _set_clock(now)
 
     sample_season.frontend_code = "pl"
     sample_season.is_current = True
     sid = sample_season.id
 
-    finished_recent = _make_game(season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
-                                 game_date=date(2026, 5, 3), game_time=time(20, 0), tour=8,
-                                 status=GameStatus.finished, home_score=1, away_score=0,
-                                 finished_at=_utc_from_almaty(datetime(2026, 5, 3, 22, 0, tzinfo=ALMATY_TZ)))
-    upcoming_next_week = _make_game(season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
-                                    game_date=date(2026, 5, 9), game_time=time(18, 0), tour=9,
-                                    status=GameStatus.created)
-    test_session.add_all([finished_recent, upcoming_next_week])
+    prev_week_finished = _make_game(
+        season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+        game_date=date(2026, 4, 30), game_time=time(18, 0), tour=1,
+        status=GameStatus.finished, home_score=1, away_score=0,
+        finished_at=_utc_from_almaty(datetime(2026, 4, 30, 20, 0, tzinfo=ALMATY_TZ)),
+    )
+    week_finished_early = _make_game(
+        season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+        game_date=date(2026, 5, 4), game_time=time(12, 0), tour=2,
+        status=GameStatus.finished, home_score=0, away_score=1,
+        finished_at=_utc_from_almaty(datetime(2026, 5, 4, 14, 0, tzinfo=ALMATY_TZ)),
+    )
+    week_live = _make_game(
+        season_id=sid, home_team_id=sample_teams[2].id, away_team_id=sample_teams[0].id,
+        game_date=date(2026, 5, 4), game_time=time(14, 0), tour=2,
+        status=GameStatus.live,
+    )
+    week_upcoming = _make_game(
+        season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[2].id,
+        game_date=date(2026, 5, 5), game_time=time(18, 0), tour=2,
+        status=GameStatus.created,
+    )
+    test_session.add_all([prev_week_finished, week_finished_early, week_live, week_upcoming])
     await test_session.commit()
 
     try:
@@ -170,14 +187,19 @@ async def test_get_home_widget_completed_window_within_48h_defaults_to_finished(
     finally:
         restore()
 
-    assert result.window_state == "completed_window"
-    assert result.default_tab == "finished"
-    assert result.completed_window_expires_at is not None
-    assert result.show_tabs is True
-    finished_ids = [g.id for grp in result.finished_groups for g in grp.games]
-    upcoming_ids = [g.id for grp in result.upcoming_groups for g in grp.games]
-    assert finished_recent.id in finished_ids
-    assert upcoming_next_week.id in upcoming_ids
+    assert result.window_state == "active_round"
+    assert result.default_tab == "upcoming"
+    assert result.completed_window_expires_at is None
+
+    upcoming_ids = {g.id for grp in result.upcoming_groups for g in grp.games}
+    finished_ids = {g.id for grp in result.finished_groups for g in grp.games}
+
+    # All anchor-week games — finished, live, upcoming — sit in the upcoming tab.
+    assert {week_finished_early.id, week_live.id, week_upcoming.id} <= upcoming_ids
+    # Anchor-week finished game must NOT also leak into the finished tab.
+    assert week_finished_early.id not in finished_ids
+    # Previous-week game stays in finished tab.
+    assert prev_week_finished.id in finished_ids
 
 
 @pytest.mark.asyncio
