@@ -105,6 +105,11 @@ celery_app.conf.beat_schedule["fetch-weather-every-3h"] = {
     "schedule": crontab(minute="30", hour="*/3"),
 }
 
+celery_app.conf.beat_schedule["fetch-live-weather-every-15min"] = {
+    "task": "app.tasks.weather_tasks.fetch_live_weather",
+    "schedule": crontab(minute="*/15"),
+}
+
 if settings.telegram_public_posts_enabled and settings.telegram_tour_announce_enabled:
     celery_app.conf.beat_schedule["tour-announce-daily-21-ala"] = {
         "task": "app.tasks.telegram_tasks.tour_announce_daily",
