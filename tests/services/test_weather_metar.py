@@ -14,6 +14,7 @@ class TestParseCondition:
         assert parse_condition("", "CLR") == "clear"
         assert parse_condition(None, "SKC") == "clear"
         assert parse_condition(None, "NSC") == "clear"
+        assert parse_condition(None, "CAVOK") == "clear"
 
     def test_few_or_scattered_treated_as_clear(self):
         assert parse_condition("", "FEW") == "clear"

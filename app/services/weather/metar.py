@@ -61,7 +61,7 @@ def parse_condition(wx_string: str | None, cover: str | None) -> str:
         return "fog"
 
     cov = (cover or "").upper()
-    if cov in {"SKC", "CLR", "NSC", "NCD", "FEW", "SCT"}:
+    if cov in {"SKC", "CLR", "NSC", "NCD", "CAVOK", "FEW", "SCT"}:
         return "clear"
     if cov in {"BKN", "OVC"}:
         return "clouds"
