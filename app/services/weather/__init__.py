@@ -1,10 +1,11 @@
 """Weather service — orchestrates METAR observations + Open-Meteo forecasts.
 
 Strategy:
-  - Live or imminent (≤24h to kickoff) games → METAR via the city's nearest
-    airport. METAR is real, observed weather and tracks fronts that forecast
-    models miss.
-  - Upcoming games further out → Open-Meteo hourly forecast.
+  - Live games → METAR via the city's nearest airport (real observation,
+    refreshed every 15 min). METAR tracks fronts forecast models miss.
+  - Pre-match games → Open-Meteo hourly forecast for the kickoff hour
+    (refreshed every 3 hours). Forecast respects ``game.time`` so the
+    preview shows expected weather at kickoff, not "now" weather.
   - METAR failures fall back to Open-Meteo automatically.
 
 Public API (kept stable for callers):
@@ -44,8 +45,6 @@ WEATHER_CONDITIONS: dict[str, dict[str, str]] = {
     "fog": {"kz": "Тұманды", "ru": "Туман", "en": "Fog"},
 }
 
-# How "live or imminent" is defined — game starts within this delta from now.
-_METAR_WINDOW = timedelta(hours=24)
 # Stale threshold for the periodic 3h beat (skip if updated within this window).
 _FORECAST_FRESH_FOR = timedelta(hours=3)
 # Stale threshold for the live 15min beat (skip if updated within this window).
@@ -67,29 +66,10 @@ def _city_for_stadium(stadium: Stadium) -> str | None:
     return stadium.city_en or stadium.city or stadium.city_ru or stadium.city_kz
 
 
-def _kickoff_at(game: Game) -> datetime | None:
-    """Return the game kickoff as a naive UTC datetime (``date`` + ``time``)."""
-    if not game.date or not game.time:
-        return None
-    # Game date/time is local Asia/Almaty; we just need a rough magnitude for
-    # the 24h window check, so naive comparison via UTC offset of +5 is fine.
-    local_dt = datetime.combine(game.date, game.time)
-    return local_dt - timedelta(hours=5)  # Asia/Almaty → UTC
-
-
-def _within_metar_window(game: Game, now_utc: datetime) -> bool:
-    kickoff = _kickoff_at(game)
-    if kickoff is None:
-        return False
-    delta = abs(kickoff - now_utc)
-    return delta <= _METAR_WINDOW
-
-
 async def _refresh_one(
     game: Game,
     *,
     client: httpx.AsyncClient,
-    now_utc: datetime,
     prefer_metar: bool,
 ) -> str:
     """Refresh weather for a single game; returns 'updated' | 'skipped' | 'error'."""
@@ -151,10 +131,12 @@ async def _refresh_one(
 async def fetch_and_update_weather(db: AsyncSession) -> dict:
     """Refresh weather for upcoming and live games (3h beat).
 
-    For games inside the 24h kickoff window, METAR is preferred and
-    falls back to Open-Meteo forecast. Outside the window, Open-Meteo
-    forecast is used directly. Skips games whose row was updated less
-    than 3h ago.
+    Pre-match games (``created``) use Open-Meteo forecast for the
+    kickoff hour — that's what the user wants to see in match preview.
+    Live games use METAR (current observation), since their kickoff
+    hour is now and forecast is no longer relevant. METAR failures
+    fall back to Open-Meteo. Rows refreshed within the last 3h are
+    skipped, except for live games (always refreshed by this beat too).
     """
     from app.config import get_settings
     settings = get_settings()
@@ -184,17 +166,13 @@ async def fetch_and_update_weather(db: AsyncSession) -> dict:
     async with httpx.AsyncClient(timeout=10) as client:
         for game in games:
             fetched = ensure_utc(game.weather_fetched_at)
-            # Always allow live games to refresh on this beat too.
             is_live = game.status == GameStatus.live
             if not is_live and fetched and fetched > fresh_threshold:
                 counts["skipped"] += 1
                 continue
 
             outcome = await _refresh_one(
-                game,
-                client=client,
-                now_utc=now_utc,
-                prefer_metar=is_live or _within_metar_window(game, now_utc),
+                game, client=client, prefer_metar=is_live,
             )
             if outcome == "updated":
                 counts["updated"] += 1
@@ -237,7 +215,7 @@ async def fetch_and_update_live_weather(db: AsyncSession) -> dict:
                 continue
 
             outcome = await _refresh_one(
-                game, client=client, now_utc=now_utc, prefer_metar=True,
+                game, client=client, prefer_metar=True,
             )
             if outcome == "updated":
                 counts["updated"] += 1
