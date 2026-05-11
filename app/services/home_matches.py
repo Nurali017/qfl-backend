@@ -149,14 +149,21 @@ async def _get_widget_week(
     - anchor_week = ISO week (Mon..Sun, Asia/Almaty) of the next non-terminal
       game scheduled today or later. Falls back to the week of the latest
       game in the season.
-    - While the anchor week has any playable non-terminal game, ALL of its
-      games (finished, live, upcoming) ride along in the upcoming tab —
-      mirroring the ``/matches`` page rendering of an in-progress matchday.
-      finished tab in this state shows only the previous week's terminal
-      games.
-    - When the anchor week is fully complete, finished tab shows the anchor
-      and previous week combined; default_tab="finished" stays for 48h after
-      the last terminal match. After that → fallback.
+    - If the anchor week has already kicked off (any terminal or live game in
+      it), the matchday is treated as in progress: ALL of its games
+      (finished, live, upcoming) ride along in the upcoming tab — mirroring
+      the ``/matches`` page rendering — and the finished tab shows only the
+      previous week's terminal games. window_state="active_round".
+    - If the anchor week has fixtures but hasn't kicked off yet, the "current"
+      matchday is still the previous round: while inside the 48h window after
+      its last finished match, default_tab="finished" and window_state=
+      "completed_window" (the upcoming round rides in the upcoming tab so both
+      tabs stay available). Past 48h → window_state="active_round" with the
+      upcoming round as default.
+    - When the anchor week is fully complete (no playable unfinished games),
+      finished tab shows the anchor and previous week combined;
+      default_tab="finished" stays for 48h after the last terminal match.
+      After that → fallback.
     """
     now = _now_almaty()
     today = now.date()
@@ -178,41 +185,59 @@ async def _get_widget_week(
         g for g in anchor_games
         if g.status not in TERMINAL_STATUSES and _is_playable(g, today, None)
     ]
+    anchor_live = [g for g in anchor_games if g.status == GameStatus.live]
     prev_terminal = [g for g in prev_games if g.status in TERMINAL_STATUSES]
 
-    selected_round = _mode_tour(anchor_games) or _mode_tour(prev_games)
-    week_in_progress = bool(anchor_playable_unfinished)
+    def _by_kickoff(games: list[Game]) -> list[Game]:
+        return sorted(games, key=lambda g: (g.date, g.time or time_type(0, 0)))
 
-    if week_in_progress:
+    week_in_progress = bool(anchor_playable_unfinished)
+    anchor_kicked_off = bool(anchor_terminal) or bool(anchor_live)
+    prev_round_tour = _mode_tour(prev_games)
+    anchor_round_tour = _mode_tour(anchor_games)
+
+    if week_in_progress and anchor_kicked_off:
         # Matchday week is alive — keep the whole anchor week in upcoming.
-        upcoming_games = sorted(
-            anchor_terminal + anchor_playable_unfinished,
-            key=lambda g: (g.date, g.time or time_type(0, 0)),
+        upcoming_groups = _group_widget_games(
+            _by_kickoff(anchor_terminal + anchor_playable_unfinished), lang,
         )
-        finished_groups = _group_widget_games(
-            sorted(prev_terminal, key=lambda g: (g.date, g.time or time_type(0, 0))),
-            lang,
-        )
-        upcoming_groups = _group_widget_games(upcoming_games, lang)
+        finished_groups = _group_widget_games(_by_kickoff(prev_terminal), lang)
         window_state = "active_round"
         default_tab = "upcoming"
         completed_expires = None
+        selected_round = anchor_round_tour or prev_round_tour
+    elif week_in_progress:
+        # Anchor week has fixtures but hasn't kicked off — the "current"
+        # matchday is still the previous round while we're inside its 48h
+        # post-match window. The upcoming round rides in the upcoming tab so
+        # both tabs stay available.
+        completed_expires = _completion_expires_for_terminal(prev_terminal, now)
+        finished_groups = _group_widget_games(_by_kickoff(prev_terminal), lang)
+        upcoming_groups = _group_widget_games(
+            _by_kickoff(anchor_terminal + anchor_playable_unfinished), lang,
+        )
+        if completed_expires is not None:
+            window_state = "completed_window"
+            default_tab = "finished"
+            selected_round = prev_round_tour or anchor_round_tour
+        else:
+            window_state = "active_round"
+            default_tab = "upcoming"
+            selected_round = anchor_round_tour or prev_round_tour
     else:
+        # Anchor week fully complete — 48h completed window, then fallback.
         completed_expires = _completion_expires_for_terminal(
             prev_terminal + anchor_terminal, now,
         )
         if completed_expires is None:
             return await _fallback(db, season_id, frontend_code, lang)
         finished_groups = _group_widget_games(
-            sorted(
-                prev_terminal + anchor_terminal,
-                key=lambda g: (g.date, g.time or time_type(0, 0)),
-            ),
-            lang,
+            _by_kickoff(prev_terminal + anchor_terminal), lang,
         )
         upcoming_groups = []
         window_state = "completed_window"
         default_tab = "finished"
+        selected_round = anchor_round_tour or prev_round_tour
 
     main_groups = upcoming_groups if default_tab == "upcoming" else finished_groups
     if not main_groups:
