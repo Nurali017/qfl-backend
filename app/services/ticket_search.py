@@ -29,6 +29,7 @@ TICKET_DOMAINS = [
     "ticketon.kz",
     "zakazbiletov.kz",
     "afisha.yandex.kz",
+    "afisha.yandex.ru",  # widget.afisha.yandex.ru — клубы часто шарят виджет .ru-зоны
     "kino.kz",
 ]
 
@@ -431,7 +432,14 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
         return {"skipped": True, "reason": "serper_api_key not set"}
 
     today = date.today()
-    search_dates = {today + timedelta(days=5), today + timedelta(days=3)}
+    # +5/+3 — найти билеты заранее; +2/+1 — догнать матчи, по которым ссылка
+    # появилась только в последний момент (часто так с виджетами Яндекс.Афиши)
+    search_dates = {
+        today + timedelta(days=5),
+        today + timedelta(days=3),
+        today + timedelta(days=2),
+        today + timedelta(days=1),
+    }
 
     result = await db.execute(
         select(Game)
