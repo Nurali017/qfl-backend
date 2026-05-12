@@ -421,6 +421,22 @@ class TestPendingGameIndex:
         assert result is not None
         assert result.id == g.id
 
+    def test_find_match_hyphen_compound_head(self):
+        """'ЕРТІС Ә' matches DB team 'Иртыш-Павлодар Ж'/'Ертіс-Павлодар Ә'.
+
+        Broadcast titles drop the region component of hyphenated club
+        names; the head-variant alias ("Ертіс Ә") restores the match.
+        """
+        g = self._game(
+            home_name="Иртыш-Павлодар Ж", home_name_kz="Ертіс-Павлодар Ә",
+            away_name="Шахтер Ж", away_name_kz="Шахтер Ә",
+        )
+        index = PendingGameIndex.build([g])
+        parsed = ParsedTitle(team_a="ЕРТІС Ә", team_b="ШАХТЁР Ә", tour=3)
+        result = index.find_match(parsed, date(2026, 4, 11), "live")
+        assert result is not None
+        assert result.id == g.id
+
     def test_find_match_compact(self):
         """'кызылжар' matches 'Кызыл Жар' via compact form."""
         g = self._game(home_name="Кызыл Жар", away_name="Женис")

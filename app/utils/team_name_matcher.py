@@ -36,6 +36,26 @@ def normalize_team_name(value: str | None) -> str:
     return normalized
 
 
+def _hyphen_head_variant(value: str) -> str | None:
+    """For hyphenated compound club names, keep only the first component.
+
+    Broadcast titles routinely abbreviate "Ертіс-Павлодар Ә" to "ЕРТІС Ә"
+    (region suffix dropped) — return that collapsed form so it still matches.
+    "Ертіс-Павлодар Ә" -> "Ертіс Ә"; "Кызыл-Жар" -> "Кызыл".
+    """
+    if "-" not in value:
+        return None
+    head, _, tail = value.partition("-")
+    head = head.strip()
+    if not head:
+        return None
+    tail_tokens = tail.split()
+    # Drop the second compound token ("Павлодар"), keep any trailing markers
+    rest = " ".join(tail_tokens[1:]) if len(tail_tokens) > 1 else ""
+    collapsed = f"{head} {rest}".strip() if rest else head
+    return collapsed
+
+
 def _collect_team_names(team: Any) -> set[str]:
     if not team:
         return set()
@@ -45,6 +65,10 @@ def _collect_team_names(team: Any) -> set[str]:
         normalized = normalize_team_name(value)
         if normalized:
             names.add(normalized)
+        if value:
+            head_variant = normalize_team_name(_hyphen_head_variant(value))
+            if head_variant:
+                names.add(head_variant)
     return names
 
 
