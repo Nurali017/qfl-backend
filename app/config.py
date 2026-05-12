@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     goal_video_ai_fallback_enabled: bool = True
     goal_video_ai_model: str = "claude-haiku-4-5-20251001"
     goal_video_sync_interval_minutes: int = 5
+    # Women's league (frontend_code == "el") is excluded from goal video sync by
+    # default — too many goals, not worth the Drive/CPU/storage cost. This list
+    # is an extra manual override for excluding other seasons by id.
+    goal_video_exclude_season_ids: list[int] = []
+    goal_video_exclude_frontend_codes: list[str] = ["el"]
     # Re-encode incoming clips with ffmpeg (libx264 CRF 20) before uploading to
     # MinIO — roughly halves the file size without perceptible quality loss.
     goal_video_transcode_enabled: bool = True

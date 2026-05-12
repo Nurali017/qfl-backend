@@ -1,9 +1,11 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import pytest
 
+from app.models import Game, GameStatus, Season
 from app.models.game_event import GameEvent, GameEventType
 from app.services import goal_video_sync_service as gvs
 from app.services.google_drive_client import DriveFile
@@ -153,3 +155,43 @@ async def test_download_and_link_enqueues_fallback_when_inline_post_fails(monkey
 
     assert ok is True
     enqueue_mock.assert_called_once_with(event.id)
+
+
+def _live_game(*, season_id: int, home_id: int, away_id: int) -> Game:
+    return Game(
+        sota_id=uuid4(),
+        date=date(2026, 5, 12),
+        time=time(18, 0),
+        tour=1,
+        season_id=season_id,
+        home_team_id=home_id,
+        away_team_id=away_id,
+        status=GameStatus.live,
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_active_games_excludes_women_league(
+    test_session, sample_teams, sample_championship
+):
+    """Games in a women's-league season (frontend_code == 'el') are skipped."""
+    cid = sample_championship.id
+    men_season = Season(id=200, name="Премьер-Лига 2026", championship_id=cid,
+                        date_start=date(2026, 3, 1), date_end=date(2026, 11, 30),
+                        has_table=True, frontend_code="pl")
+    women_season = Season(id=205, name="Женская Лига 2026", championship_id=cid,
+                          date_start=date(2026, 3, 1), date_end=date(2026, 11, 30),
+                          has_table=True, frontend_code="el")
+    test_session.add_all([men_season, women_season])
+    await test_session.commit()
+
+    home, away, third = sample_teams  # 91, 13, 90
+    test_session.add(_live_game(season_id=200, home_id=home.id, away_id=away.id))
+    test_session.add(_live_game(season_id=205, home_id=home.id, away_id=third.id))
+    await test_session.commit()
+
+    actives = await gvs._load_active_games(test_session)
+
+    season_ids = {a.game.season_id for a in actives}
+    assert 200 in season_ids
+    assert 205 not in season_ids
