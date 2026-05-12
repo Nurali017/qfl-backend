@@ -248,13 +248,19 @@ class TicketMatch(NamedTuple):
     snippet: str
 
 
-def _extract_ticket_url(
+def _extract_ticket_urls(
     organic_results: list[dict],
     home_name: str,
     away_name: str,
     game_date: date | None = None,
-) -> TicketMatch | None:
-    """Extract the first ticket URL matching allowed domains + team names."""
+) -> list[TicketMatch]:
+    """Extract all ticket URLs matching allowed domains + team names, in result order.
+
+    Returns every candidate (deduped by URL) so the caller can AI-validate them one
+    by one — rejecting the first candidate must not abort the search for a game.
+    """
+    matches: list[TicketMatch] = []
+    seen: set[str] = set()
     for result in organic_results:
         link = result.get("link", "")
         if not link:
@@ -313,11 +319,14 @@ def _extract_ticket_url(
             if any(kw in combined_lower for kw in _FUTSAL_KEYWORDS):
                 logger.info("Rejected futsal ticket URL: %s — %s", link, title[:100])
                 continue
+            if link in seen:
+                continue
+            seen.add(link)
             logger.info("Matched ticket URL: %s (title: %s)", link, title[:100])
-            return TicketMatch(url=link, title=title, snippet=snippet)
+            matches.append(TicketMatch(url=link, title=title, snippet=snippet))
         except Exception:
             continue
-    return None
+    return matches
 
 
 async def _ai_validate_ticket_url(
@@ -509,28 +518,36 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                         f"\U0001f4c5 Дата: {game.date}"
                     )
                 else:
-                    match = _extract_ticket_url(all_organic, home_team.name, away_team.name, game.date)
-                    if match:
-                        # AI validation — reject if AI says it's not for this match
+                    candidates = _extract_ticket_urls(
+                        all_organic, home_team.name, away_team.name, game.date,
+                    )
+                    # AI-validate candidates in result order; take the first accepted.
+                    # Rejecting one must not abort the search — keep trying the rest.
+                    match = None
+                    # cap AI checks per game — Serper rarely returns >a few real ticket pages
+                    for cand in candidates[:6]:
                         is_valid = await _ai_validate_ticket_url(
-                            match.url, match.title, match.snippet,
+                            cand.url, cand.title, cand.snippet,
                             home_team.name, away_team.name, game.date,
                         )
-                        if not is_valid:
-                            logger.info(
-                                "AI rejected ticket URL for game %s: %s",
-                                game.id, match.url,
-                            )
-                            # Only notify on first search (avoid spam every 3h)
-                            if not game.ticket_url_fetched_at:
-                                await send_telegram_message(
-                                    "\u274c <b>AI отверг билет</b>\n\n"
-                                    f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
-                                    f"\U0001f4c5 Дата: {game.date}\n"
-                                    f"\U0001f517 URL: {match.url}\n"
-                                    f"\U0001f4dd {match.title}"
-                                )
-                            match = None
+                        if is_valid:
+                            match = cand
+                            break
+                        logger.info(
+                            "AI rejected ticket URL for game %s: %s",
+                            game.id, cand.url,
+                        )
+                    if match is None and candidates and not game.ticket_url_fetched_at:
+                        # All candidates rejected — notify once (avoid spam every 3h)
+                        first = candidates[0]
+                        await send_telegram_message(
+                            "\u274c <b>AI отверг билет</b>\n\n"
+                            f"\u26bd Матч: {home_team.name} — {away_team.name}\n"
+                            f"\U0001f4c5 Дата: {game.date}\n"
+                            f"\U0001f517 URL: {first.url}\n"
+                            f"\U0001f4dd {first.title}\n"
+                            f"(проверено кандидатов: {len(candidates)})"
+                        )
                     if match:
                         game.ticket_url = match.url
                         updated += 1
