@@ -532,6 +532,93 @@ class LiveSyncService:
         logger.warning("Unknown player in SOTA: %s %s (sota_id=%s, number=%s)", first_name, last_name, sota_id, shirt_number)
         return None
 
+    async def _has_shootout_events(self, game_id: int) -> bool:
+        """Return True if there are any half=5 penalty/missed_penalty events."""
+        result = await self.db.execute(
+            select(func.count()).select_from(GameEvent).where(
+                GameEvent.game_id == game_id,
+                GameEvent.half == 5,
+                GameEvent.event_type.in_(
+                    (GameEventType.penalty, GameEventType.missed_penalty)
+                ),
+            )
+        )
+        return (result.scalar() or 0) > 0
+
+    async def _shootout_decided(self, game_id: int, home_team_id: int, away_team_id: int) -> bool:
+        """Return True if the shootout has a decided winner — i.e. one side
+        has more goals than the other AND the trailing side has no remaining
+        attempts to equalise.
+
+        Rules:
+        - Rounds 1..5: a side wins if its lead exceeds the remaining attempts
+          available to the opponent in those 5 rounds.
+        - Sudden death (after 5 rounds each): wins if scores differ AND both
+          teams have taken the same number of attempts.
+        """
+        rows = await self.db.execute(
+            select(GameEvent.team_id, GameEvent.event_type).where(
+                GameEvent.game_id == game_id,
+                GameEvent.half == 5,
+                GameEvent.event_type.in_(
+                    (GameEventType.penalty, GameEventType.missed_penalty)
+                ),
+            )
+        )
+        h_scored = h_attempts = a_scored = a_attempts = 0
+        for team_id, ev_type in rows.all():
+            scored = ev_type == GameEventType.penalty
+            if team_id == home_team_id:
+                h_attempts += 1
+                if scored:
+                    h_scored += 1
+            elif team_id == away_team_id:
+                a_attempts += 1
+                if scored:
+                    a_scored += 1
+        if h_scored == a_scored and h_attempts == a_attempts and h_attempts >= 5:
+            return False
+        if h_scored == a_scored:
+            return False
+        leader_scored, leader_attempts = (h_scored, h_attempts) if h_scored > a_scored else (a_scored, a_attempts)
+        trailer_scored, trailer_attempts = (a_scored, a_attempts) if h_scored > a_scored else (h_scored, h_attempts)
+        if leader_attempts >= 5 and trailer_attempts >= 5:
+            return leader_attempts == trailer_attempts
+        remaining = max(0, 5 - trailer_attempts)
+        return (leader_scored - trailer_scored) > remaining
+
+    async def recompute_shootout_score(self, game_id: int) -> dict | None:
+        """Recompute home/away penalty scores from half=5 events.
+
+        Sets live_half=5 and live_phase='shootout' on the game. Does NOT commit
+        — caller is expected to commit. Returns None if no shootout events.
+        """
+        game = await self.db.get(Game, game_id)
+        if not game:
+            return None
+        if not await self._has_shootout_events(game_id):
+            return None
+
+        rows = await self.db.execute(
+            select(GameEvent.team_id, GameEvent.event_type).where(
+                GameEvent.game_id == game_id,
+                GameEvent.half == 5,
+                GameEvent.event_type == GameEventType.penalty,
+            )
+        )
+        home_pen = away_pen = 0
+        for team_id, _ev in rows.all():
+            if team_id == game.home_team_id:
+                home_pen += 1
+            elif team_id == game.away_team_id:
+                away_pen += 1
+
+        game.home_penalty_score = home_pen
+        game.away_penalty_score = away_pen
+        game.live_half = 5
+        game.live_phase = "shootout"
+        return {"home_penalty_score": home_pen, "away_penalty_score": away_pen}
+
     async def sync_live_time(self, game_id: int) -> dict:
         """Sync live match minute and half from SOTA /em/{sota_id}-time.json."""
         game = await self.db.get(Game, game_id)
@@ -557,6 +644,23 @@ class LiveSyncService:
         status_value = str(status_raw).strip().lower() if status_raw is not None else None
 
         if status_value == "finished":
+            # SOTA marks "finished" at the end of regulation/ET even when a
+            # penalty shootout is required. Only actually finish the game once
+            # the shootout has produced a winner (or no shootout is needed).
+            shootout_active = await self._has_shootout_events(game_id)
+            if shootout_active and not await self._shootout_decided(
+                game_id, game.home_team_id, game.away_team_id
+            ):
+                await self.recompute_shootout_score(game_id)
+                await self.db.commit()
+                return {
+                    "game_id": game_id,
+                    "live_minute": game.live_minute,
+                    "live_half": game.live_half,
+                    "live_phase": game.live_phase,
+                    "shootout_in_progress": True,
+                }
+
             from app.services.game_lifecycle import GameLifecycleService
 
             result = await GameLifecycleService(self.db).finish_live(game_id)
@@ -686,14 +790,32 @@ class LiveSyncService:
             except (ValueError, TypeError):
                 return None
 
-        # Update score — use "scores" (includes own goals), not "goals"
+        # Update score — use "scores" (includes own goals), not "goals".
+        # SOTA "scores" includes shootout goals once the penalty series begins,
+        # which would inflate home_score/away_score. When a shootout is active,
+        # subtract the per-team count of converted shootout penalties so that
+        # home_score/away_score represent regulation+ET only.
         scores = metrics.get("scores", {})
         home_score = _parse_int(scores.get("home"))
         away_score = _parse_int(scores.get("away"))
+        shootout_home = shootout_away = 0
+        if await self._has_shootout_events(game_id):
+            rows = await self.db.execute(
+                select(GameEvent.team_id).where(
+                    GameEvent.game_id == game_id,
+                    GameEvent.half == 5,
+                    GameEvent.event_type == GameEventType.penalty,
+                )
+            )
+            for (team_id,) in rows.all():
+                if team_id == game.home_team_id:
+                    shootout_home += 1
+                elif team_id == game.away_team_id:
+                    shootout_away += 1
         if home_score is not None:
-            game.home_score = home_score
+            game.home_score = max(0, home_score - shootout_home)
         if away_score is not None:
-            game.away_score = away_score
+            game.away_score = max(0, away_score - shootout_away)
 
         # Upsert stats for each team
         for side, team_id in (("home", game.home_team_id), ("away", game.away_team_id)):
@@ -1149,16 +1271,20 @@ class LiveSyncService:
             if before_assist != after_assist:
                 updated += 1
 
-        if added or updated or deleted or assists_map:
+        # Recompute shootout score from half=5 events. Must run before the
+        # commit so penalty scores land in the same transaction as events.
+        shootout = await self.recompute_shootout_score(game_id)
+
+        if added or updated or deleted or assists_map or shootout:
             await self.db.commit()
             logger.info(
-                "Game %s live events: added=%d updated=%d deleted=%d assists=%d",
-                game_id, added, updated, deleted, len(assists_map),
+                "Game %s live events: added=%d updated=%d deleted=%d assists=%d shootout=%s",
+                game_id, added, updated, deleted, len(assists_map), shootout,
             )
         else:
             logger.debug("Game %s live events: no changes", game_id)
 
-        return {"added": added, "updated": updated, "deleted": deleted}
+        return {"added": added, "updated": updated, "deleted": deleted, "shootout": shootout}
 
     def _parse_number(self, value: Any) -> int | None:
         """Parse player number from various formats."""
