@@ -33,12 +33,12 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import and_, or_, select, true
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.models import Game, GameStatus, Season, Team
+from app.models import Game, GameStatus, Team
 from app.models.game_event import GameEvent, GameEventType
 from app.services.file_storage import FileStorageService
 from app.services.goal_video_ai_matcher import (
@@ -243,31 +243,15 @@ class ActiveGame:
 
 
 async def _load_active_games(db: AsyncSession) -> list[ActiveGame]:
-    settings = get_settings()
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=_FINISHED_WINDOW_MINUTES)
-
-    # Exclude women's league (frontend_code == "el") and any manually configured
-    # season ids — too many goals there to be worth the Drive/CPU/storage cost.
-    # Games with no season_id (season is NULL) are kept, preserving prior behaviour.
-    excluded_codes = settings.goal_video_exclude_frontend_codes
-    excluded_season_ids = settings.goal_video_exclude_season_ids
-    season_filter = and_(
-        or_(Season.frontend_code.is_(None), Season.frontend_code.notin_(excluded_codes))
-        if excluded_codes
-        else true(),
-        Game.season_id.notin_(excluded_season_ids) if excluded_season_ids else true(),
-    )
-
     result = await db.execute(
         select(Game)
-        .outerjoin(Season, Game.season_id == Season.id)
         .options(selectinload(Game.home_team), selectinload(Game.away_team))
         .where(
             or_(
                 Game.status == GameStatus.live,
                 Game.finished_at.isnot(None) & (Game.finished_at >= cutoff),
-            ),
-            season_filter,
+            )
         )
     )
     games = list(result.scalars().all())
@@ -886,12 +870,6 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
         return result
 
     actives = await _load_active_games(db)
-    logger.info(
-        "goal video sync: %d active game(s) eligible (excluding frontend_code=%s, season_ids=%s)",
-        len(actives),
-        settings.goal_video_exclude_frontend_codes,
-        settings.goal_video_exclude_season_ids,
-    )
     if not actives:
         return result
 
