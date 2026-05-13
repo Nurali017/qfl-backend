@@ -3,14 +3,18 @@ Lineup sync service.
 
 Uses /em/ live feed as the sole lineup source (explicit ОСНОВНЫЕ/ЗАПАСНЫЕ markers).
 - Player lineups (starters/substitutes) from /em/{game_id}-team-{home,away}.json
-- Live positions, formations, kit colors
+- Live positions and formations.
+
+Kit colors: the canonical source is the clubs' match-ops system
+(apps.kffleague.kz — see app/services/kit_color_sync.py). SOTA is kept only as a
+*fallback* here: it fills `home_kit_color` / `away_kit_color` when they are still
+empty, but never overwrites a colour that apps (or an earlier fallback) already set.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Literal
@@ -27,6 +31,7 @@ from app.models import (
     LineupType,
     Player,
 )
+from app.services.kit_color_sync import apply_kit_color, is_hex_color
 from app.services.sync.base import BaseSyncService
 from app.utils.lineup_feed_parser import (
     FORMATION_MARKER,
@@ -51,7 +56,6 @@ VALID_AMPLUA = {
     "F": "F",
 }
 VALID_FIELD_POSITIONS = {"L", "LC", "C", "RC", "R"}
-HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class LineupSyncService(BaseSyncService):
@@ -167,24 +171,29 @@ class LineupSyncService(BaseSyncService):
 
     @staticmethod
     def _normalize_kit_color(color: object) -> str | None:
+        """A HEX colour from the SOTA FORMATION marker, or None."""
         if not isinstance(color, str):
             return None
         value = color.strip()
-        if HEX_COLOR_RE.match(value):
-            return value.upper()
-        return None
+        return value.upper() if is_hex_color(value) else None
 
     @staticmethod
     def _extract_formation_and_kit(live_data: list[dict]) -> tuple[str | None, str | None]:
+        """Read formation + (fallback) kit colour from the FORMATION marker.
+
+        SOTA contract: FORMATION.first_name = formation string, FORMATION.full_name = HEX colour.
+        """
         for item in live_data:
             entry = normalize_lineup_entry(item)
             if not entry or entry["number_upper"] != FORMATION_MARKER:
                 continue
 
             formation_raw = entry["first_name"]
-            formation = formation_raw.strip() if isinstance(formation_raw, str) and formation_raw.strip() else None
-
-            # SOTA contract: FORMATION.full_name contains HEX color.
+            formation = (
+                formation_raw.strip()
+                if isinstance(formation_raw, str) and formation_raw.strip()
+                else None
+            )
             kit_color = LineupSyncService._normalize_kit_color(entry["full_name"])
             return formation, kit_color
         return None, None
@@ -623,7 +632,10 @@ class LineupSyncService(BaseSyncService):
         sota_only: bool = False,
     ) -> dict:
         """
-        Enrich lineup records with live SOTA positioning and kit colors.
+        Enrich lineup records with live SOTA positioning, formations and (fallback) kit colours.
+
+        Kit colours are written only when still empty — the canonical source is
+        apps.kffleague.kz (see app/services/kit_color_sync.py).
 
         Modes:
         - live_read: best-effort refresh for read-path (can proceed with one side missing)
@@ -680,9 +692,9 @@ class LineupSyncService(BaseSyncService):
                 await self.db.rollback()
             return result
 
-        for side, team_id, formation_field, kit_field in (
-            ("home", game.home_team_id, "home_formation", "home_kit_color"),
-            ("away", game.away_team_id, "away_formation", "away_kit_color"),
+        for side, team_id, formation_field in (
+            ("home", game.home_team_id, "home_formation"),
+            ("away", game.away_team_id, "away_formation"),
         ):
             if not team_id or side not in sides_payload:
                 continue
@@ -693,8 +705,9 @@ class LineupSyncService(BaseSyncService):
             if formation and getattr(game, formation_field) != formation:
                 setattr(game, formation_field, formation)
                 result["formations_updated"] += 1
-            if kit_color and getattr(game, kit_field) != kit_color:
-                setattr(game, kit_field, kit_color)
+            # SOTA is a fallback: only fill the kit colour when it is still empty
+            # (apps.kffleague.kz is the canonical source and overwrites this).
+            if apply_kit_color(game, side, kit_color, allow_overwrite=False):
                 result["kit_colors_updated"] += 1
 
             effective_allow_insert = (

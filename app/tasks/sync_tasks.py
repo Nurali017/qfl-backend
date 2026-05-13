@@ -710,3 +710,25 @@ async def _retry_missing_team_of_week():
 def retry_missing_team_of_week():
     """Celery task: Retry team-of-week for completed tours missing data (within 7 days)."""
     return run_async(_retry_missing_team_of_week())
+
+
+async def _sync_apps_kit_colors(days_back: int | None, days_fwd: int | None) -> dict:
+    from app.services.apps_kit_mysql_sync import sync_recent_kit_colors
+
+    async with AsyncSessionLocal() as db:
+        result = await sync_recent_kit_colors(db, days_back=days_back, days_fwd=days_fwd)
+        return result.as_dict()
+
+
+@celery_app.task(name="app.tasks.sync_tasks.sync_apps_kit_colors", **_DB_RETRY_KW)
+def sync_apps_kit_colors(days_back: int | None = None, days_fwd: int | None = None):
+    """Celery task: pull per-match kit colours from the clubs' apps.kffleague.kz MariaDB.
+
+    Reads `match_uniform` for fixtures in a window around today and updates
+    `games.home_kit_color` / `games.away_kit_color` from the uniform PNG icons.
+    No-op unless APPS_KIT_SYNC_ENABLED is true.
+    """
+    if not settings.apps_kit_sync_enabled:
+        logger.info("apps kit sync disabled (APPS_KIT_SYNC_ENABLED=false); skipping")
+        return {"skipped": "disabled"}
+    return run_async(_sync_apps_kit_colors(days_back, days_fwd))

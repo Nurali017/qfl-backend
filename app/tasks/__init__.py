@@ -149,6 +149,16 @@ if settings.fcms_enabled:
         "schedule": crontab(minute="15", hour="3"),  # after roster sync window
     }
 
+if settings.apps_kit_sync_enabled:
+    # Pull per-match kit colours from the clubs' apps.kffleague.kz MariaDB.
+    # Runs on the default "celery" queue (qfl-celery-worker, which joins
+    # 1sport_intranet so it can reach kffleague-db). Kit colour changes are
+    # rare, so every 2h is plenty.
+    celery_app.conf.beat_schedule["sync-apps-kit-colors-every-2h"] = {
+        "task": "app.tasks.sync_tasks.sync_apps_kit_colors",
+        "schedule": crontab(minute="25", hour="*/2"),
+    }
+
 if settings.youtube_auto_link_enabled:
     celery_app.conf.beat_schedule["link-youtube-videos-every-30min"] = {
         "task": "app.tasks.youtube_tasks.link_youtube_videos",

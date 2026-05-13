@@ -90,6 +90,20 @@ class Settings(BaseSettings):
     fcms_customer_code: str = "kaz"
     fcms_competition_season_map: str = "3517:200,3585:204,3596:203,3597:203,3598:202,3674:205,3675:205"
 
+    # apps.kffleague.kz — clubs' match-ops system (kit colors per match).
+    # MariaDB lives in the `1sport_intranet` docker network on prod as `kffleague-db`.
+    apps_kit_sync_enabled: bool = False
+    apps_mysql_host: str = "kffleague-db"
+    apps_mysql_port: int = 3306
+    apps_mysql_db: str = "p-348074_apps"
+    apps_mysql_user: str = ""
+    apps_mysql_password: str = ""
+    # Public URL where the uniform PNG icons are served from.
+    apps_uniform_base_url: str = "https://apps.kffleague.kz/login/uploads/uniforms/"
+    # How wide a window of matches (relative to today) the periodic sync looks at.
+    apps_kit_sync_days_back: int = 14
+    apps_kit_sync_days_fwd: int = 45
+
     # YouTube auto-link
     youtube_api_key: str = ""
     youtube_channel_id: str = ""
