@@ -128,6 +128,11 @@ class LiveSyncService:
         """Get live games that should have ended (started > 2h6m ago).
 
         Primary source: half1_started_at. Fallback: date + time.
+
+        Skips games that are still in extra time (half 3-4) or penalty
+        shootout (half 5 / phase 'shootout') — those are knockout matches
+        and must be finished by sync_live_time once SOTA reports the
+        actual final state, not by the regulation-length timeout.
         """
         cutoff_utc = utcnow() - timedelta(hours=2, minutes=6)
         result = await self.db.execute(
@@ -137,6 +142,8 @@ class LiveSyncService:
 
         due_games: list[Game] = []
         for game in games:
+            if (game.live_half is not None and game.live_half >= 3) or game.live_phase == "shootout":
+                continue
             started_at = ensure_utc(game.half1_started_at)
             if started_at is None:
                 started_at = combine_almaty_local_to_utc(

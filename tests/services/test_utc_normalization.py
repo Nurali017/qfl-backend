@@ -93,6 +93,65 @@ async def test_get_games_to_end_uses_utc_half_start_when_available(
 
 
 @pytest.mark.asyncio
+async def test_get_games_to_end_skips_extra_time_and_shootout(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Cup matches in ET (half 3-4) or shootout (half 5 / phase 'shootout')
+    must NOT be auto-closed by the 2h6m timeout — sync_live_time owns their
+    finish transition once SOTA reports the real final state."""
+    now_almaty = datetime.now(ALMATY_TZ)
+    overdue_started_at = utcnow() - timedelta(hours=2, minutes=20)
+
+    et_game = Game(
+        sota_id=uuid4(),
+        date=now_almaty.date(),
+        time=now_almaty.time().replace(second=0, microsecond=0),
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[1].id,
+        status=GameStatus.live,
+        half1_started_at=overdue_started_at,
+        live_half=3,
+        live_phase="in_progress",
+    )
+    shootout_game = Game(
+        sota_id=uuid4(),
+        date=now_almaty.date(),
+        time=now_almaty.time().replace(second=0, microsecond=0),
+        season_id=sample_season.id,
+        home_team_id=sample_teams[1].id,
+        away_team_id=sample_teams[2].id,
+        status=GameStatus.live,
+        half1_started_at=overdue_started_at,
+        live_half=5,
+        live_phase="shootout",
+    )
+    regulation_overdue = Game(
+        sota_id=uuid4(),
+        date=now_almaty.date(),
+        time=now_almaty.time().replace(second=0, microsecond=0),
+        season_id=sample_season.id,
+        home_team_id=sample_teams[0].id,
+        away_team_id=sample_teams[2].id,
+        status=GameStatus.live,
+        half1_started_at=overdue_started_at,
+        live_half=2,
+        live_phase="in_progress",
+    )
+    test_session.add_all([et_game, shootout_game, regulation_overdue])
+    await test_session.commit()
+
+    games = await LiveSyncService(test_session, object()).get_games_to_end()
+    game_ids = {game.id for game in games}
+
+    assert et_game.id not in game_ids
+    assert shootout_game.id not in game_ids
+    assert regulation_overdue.id in game_ids
+
+
+@pytest.mark.asyncio
 async def test_finish_live_records_utc_finished_at(
     test_session,
     sample_season,
