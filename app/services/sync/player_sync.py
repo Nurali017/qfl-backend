@@ -13,10 +13,17 @@ from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 
-# Advisory lock namespace for player_season_stats writers.
-# Pairs with stats_sync._TEAM_STATS_LOCK_NS to serialize concurrent UPSERTs
-# across sync_best_players / sync_player_season_stats / sync_extended_stats_for_game.
+# Advisory lock namespaces for player_season_stats writers.
+# sync_player_season_stats / sync_extended_stats_for_game touch the full 45+ column set
+# and must serialize against each other (NS=1).
+# sync_best_players only touches goal/goal_pass/dry_match (+ their *_rank columns);
+# it never collides at the column level with the full sync, so it gets its own
+# namespace (NS=2). Why: the full sync calls SOTA v2 per-player and can hold the
+# transaction "idle" for >60s, which caused best_players to fail by lock_timeout
+# for women's / 1L / 2L seasons and leave *_rank=NULL, hiding players from the
+# leaderboard endpoint.
 _PLAYER_STATS_LOCK_NS = 1
+_BEST_PLAYERS_LOCK_NS = 2
 # Bound advisory-lock wait so the task doesn't hold a Celery soft-time-limit slot
 # blocked on a stuck writer. On timeout asyncpg raises LockNotAvailableError → Celery retry.
 _LOCK_TIMEOUT = "60s"
@@ -61,7 +68,7 @@ class PlayerSyncService(BaseSyncService):
         await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
         await self.db.execute(
             text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
-            {"ns": _PLAYER_STATS_LOCK_NS, "sid": season_id},
+            {"ns": _BEST_PLAYERS_LOCK_NS, "sid": season_id},
         )
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
 
