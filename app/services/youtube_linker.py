@@ -26,6 +26,25 @@ logger = logging.getLogger(__name__)
 
 _YT_API = "https://www.googleapis.com/youtube/v3"
 _REVIEW_KEYWORDS = {"обзор", "шолу", "highlights", "review"}
+# Duration-based review heuristic: when a title lacks review keywords but the
+# video is a regular (non-broadcast) short clip, treat it as a review. Bounds
+# exclude goal clips (typically < 60s) and full re-uploads (> 30 min).
+_REVIEW_MIN_DURATION_S = 60
+_REVIEW_MAX_DURATION_S = 30 * 60
+_ISO_DURATION_RE = re.compile(
+    r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$"
+)
+
+
+def _parse_iso_duration(value: str | None) -> int | None:
+    """Parse ISO 8601 duration like 'PT8M50S' into seconds. None if invalid."""
+    if not value:
+        return None
+    m = _ISO_DURATION_RE.match(value)
+    if not m:
+        return None
+    h, mi, se = (int(g) if g else 0 for g in m.groups())
+    return h * 3600 + mi * 60 + se
 # Match both "Тур 5" and "III тур" / "II - тур"
 _TOUR_AFTER_RE = re.compile(r"(?:тур|tour|тұр)\s*(\d+)", re.IGNORECASE)
 _TOUR_BEFORE_RE = re.compile(r"([IVXLC]+)\s*[-–—]?\s*(?:тур|tour|тұр)", re.IGNORECASE)
@@ -262,7 +281,7 @@ async def _fetch_recent_videos(
 
 
 async def _enrich_videos(video_ids: list[str], api_key: str) -> dict[str, dict]:
-    """Enrich videos with snippet + liveStreamingDetails (batch up to 50)."""
+    """Enrich videos with snippet + liveStreamingDetails + duration (batch up to 50)."""
     if not video_ids:
         return {}
 
@@ -274,22 +293,26 @@ async def _enrich_videos(video_ids: list[str], api_key: str) -> dict[str, dict]:
                 f"{_YT_API}/videos",
                 params={
                     "id": ",".join(batch),
-                    "part": "snippet,liveStreamingDetails",
+                    "part": "snippet,liveStreamingDetails,contentDetails",
                     "key": api_key,
                 },
             )
             resp.raise_for_status()
             for item in resp.json().get("items", []):
+                duration_iso = (item.get("contentDetails") or {}).get("duration")
                 result[item["id"]] = {
                     "snippet": item["snippet"],
                     "live_streaming_details": item.get("liveStreamingDetails"),
+                    "duration_seconds": _parse_iso_duration(duration_iso),
                 }
 
     return result
 
 
 def classify_video(
-    snippet: dict, live_streaming_details: dict | None
+    snippet: dict,
+    live_streaming_details: dict | None,
+    duration_seconds: int | None = None,
 ) -> str | None:
     """Classify video as live/replay/review/None (skip)."""
     broadcast_content = snippet.get("liveBroadcastContent", "none")
@@ -303,6 +326,15 @@ def classify_video(
     if broadcast_content == "none" and not live_streaming_details:
         title_lower = snippet.get("title", "").lower()
         if any(kw in title_lower for kw in _REVIEW_KEYWORDS):
+            return "review"
+        # Fallback: a non-broadcast clip of review-typical length (1–30 min)
+        # is treated as a review even without an explicit keyword. KFF's
+        # editorial often uploads reviews with the same "X VS Y | ҚПЛ" title
+        # as the original stream.
+        if (
+            duration_seconds is not None
+            and _REVIEW_MIN_DURATION_S <= duration_seconds <= _REVIEW_MAX_DURATION_S
+        ):
             return "review"
 
     return None
@@ -585,9 +617,10 @@ async def link_youtube_videos(db: AsyncSession) -> dict:
 
                 snippet = info["snippet"]
                 lsd = info["live_streaming_details"]
+                duration_seconds = info.get("duration_seconds")
 
                 # Classify
-                video_type = classify_video(snippet, lsd)
+                video_type = classify_video(snippet, lsd, duration_seconds)
                 if video_type is None:
                     await redis.set(f"yt:linked:{vid}", "skip", ex=7 * 86400)
                     stats["skipped"] += 1

@@ -182,8 +182,9 @@ async def main() -> None:
                 continue
             snippet = info["snippet"]
             lsd = info["live_streaming_details"]
+            duration_seconds = info.get("duration_seconds")
 
-            video_type = classify_video(snippet, lsd)
+            video_type = classify_video(snippet, lsd, duration_seconds)
             if video_type is None:
                 classified_none += 1
                 continue

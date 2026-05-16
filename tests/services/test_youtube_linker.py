@@ -81,6 +81,23 @@ class TestClassifyVideo:
         snippet = {"title": "Some video"}
         assert classify_video(snippet, None) is None
 
+    def test_short_non_broadcast_clip_is_review(self):
+        # KFF uploads reviews with the same "X VS Y" title as the stream.
+        snippet = {"liveBroadcastContent": "none", "title": "ЕРТІС VS ЕЛІМАЙ | ҚПЛ - 2026 | X тур"}
+        assert classify_video(snippet, None, duration_seconds=530) == "review"
+
+    def test_goal_clip_too_short_skipped(self):
+        snippet = {"liveBroadcastContent": "none", "title": "ГОЛ! Оразовтың керемет голы"}
+        assert classify_video(snippet, None, duration_seconds=34) is None
+
+    def test_long_non_broadcast_clip_skipped(self):
+        snippet = {"liveBroadcastContent": "none", "title": "Full re-upload"}
+        assert classify_video(snippet, None, duration_seconds=2 * 3600) is None
+
+    def test_duration_none_falls_back_to_keyword_only(self):
+        snippet = {"liveBroadcastContent": "none", "title": "X VS Y"}
+        assert classify_video(snippet, None, duration_seconds=None) is None
+
 
 # ── Roman numeral tests ──
 
