@@ -26,6 +26,18 @@ logger = logging.getLogger(__name__)
 
 _YT_API = "https://www.googleapis.com/youtube/v3"
 _REVIEW_KEYWORDS = {"обзор", "шолу", "highlights", "review"}
+# Negative markers — if present, duration-based fallback must NOT classify as
+# review. Keeps goal clips, interviews, press conferences, news summaries from
+# being misattributed as the canonical match review.
+_REVIEW_NEGATIVE_KEYWORDS = {
+    "гол", "голы", "goal", "goals",
+    "интервью", "interview", "сұхбат",
+    "пресс", "press", "конференция", "conference",
+    "анонс", "preview",
+    "новости", "news", "жаңалықтар",
+    "нарезка", "момент", "моменты",
+    "лучшие", "топ", "top",
+}
 # Duration-based review heuristic: when a title lacks review keywords but the
 # video is a regular (non-broadcast) short clip, treat it as a review. Bounds
 # exclude goal clips (typically < 60s) and full re-uploads (> 30 min).
@@ -330,10 +342,12 @@ def classify_video(
         # Fallback: a non-broadcast clip of review-typical length (1–30 min)
         # is treated as a review even without an explicit keyword. KFF's
         # editorial often uploads reviews with the same "X VS Y | ҚПЛ" title
-        # as the original stream.
+        # as the original stream. Negative keywords gate the fallback so goal
+        # clips / interviews / press conferences don't get misclassified.
         if (
             duration_seconds is not None
             and _REVIEW_MIN_DURATION_S <= duration_seconds <= _REVIEW_MAX_DURATION_S
+            and not any(kw in title_lower for kw in _REVIEW_NEGATIVE_KEYWORDS)
         ):
             return "review"
 

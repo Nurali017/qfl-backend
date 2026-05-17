@@ -98,6 +98,30 @@ class TestClassifyVideo:
         snippet = {"liveBroadcastContent": "none", "title": "X VS Y"}
         assert classify_video(snippet, None, duration_seconds=None) is None
 
+    def test_in_range_goal_clip_not_review(self):
+        # A 5-minute clip titled "ГОЛ! Лучший момент" should not be tagged
+        # as the canonical review — the goal/highlight keywords gate it out.
+        snippet = {"liveBroadcastContent": "none", "title": "ГОЛ! Лучший момент Оразова"}
+        assert classify_video(snippet, None, duration_seconds=300) is None
+
+    def test_in_range_interview_not_review(self):
+        snippet = {"liveBroadcastContent": "none", "title": "Интервью с главным тренером"}
+        assert classify_video(snippet, None, duration_seconds=400) is None
+
+    def test_in_range_press_conference_not_review(self):
+        snippet = {"liveBroadcastContent": "none", "title": "Пресс-конференция после матча"}
+        assert classify_video(snippet, None, duration_seconds=500) is None
+
+    def test_in_range_news_clip_not_review(self):
+        snippet = {"liveBroadcastContent": "none", "title": "Жаңалықтар | ҚПЛ"}
+        assert classify_video(snippet, None, duration_seconds=400) is None
+
+    def test_explicit_review_keyword_bypasses_negative(self):
+        # If the title explicitly says "обзор", duration fallback path isn't
+        # entered — the keyword path returns "review" first.
+        snippet = {"liveBroadcastContent": "none", "title": "Обзор лучших моментов тура"}
+        assert classify_video(snippet, None, duration_seconds=400) == "review"
+
 
 # ── Roman numeral tests ──
 
