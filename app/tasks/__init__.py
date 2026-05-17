@@ -100,6 +100,11 @@ if settings.sota_enabled:
 else:
     celery_app.conf.beat_schedule = {}
 
+celery_app.conf.beat_schedule["monitor-stuck-transactions-every-5min"] = {
+    "task": "app.tasks.sync_tasks.monitor_stuck_transactions",
+    "schedule": crontab(minute="*/5"),
+}
+
 celery_app.conf.beat_schedule["fetch-weather-every-3h"] = {
     "task": "app.tasks.weather_tasks.fetch_weather",
     "schedule": crontab(minute="30", hour="*/3"),

@@ -22,16 +22,26 @@ def build_engine_kwargs(*, statement_timeout_ms: int | None = None) -> dict:
         engine_kwargs["max_overflow"] = settings.database_max_overflow
         engine_kwargs["pool_timeout"] = 10
 
-    if (
-        statement_timeout_ms is not None
-        and statement_timeout_ms > 0
-        and settings.database_url.startswith("postgresql+asyncpg://")
-    ):
-        engine_kwargs["connect_args"] = {
-            "server_settings": {
-                "statement_timeout": str(statement_timeout_ms),
-            }
+    if settings.database_url.startswith("postgresql+asyncpg://"):
+        # idle_in_transaction_session_timeout: PG will FATAL-terminate a session that
+        # stays in "idle in transaction" past this window. Backstop for sync tasks that
+        # lose their session context (e.g. celery soft-time-limit fires mid-savepoint
+        # loop) — prevents pool starvation that would block sync_best_players with
+        # LockNotAvailableError on subsequent runs.
+        # 15 min > celery task_time_limit (660s), so legit long tasks aren't killed.
+        #
+        # tcp_keepalives_*: server-side socket keepalives — if a celery worker process
+        # is SIGKILL'd without a chance to send ROLLBACK, the server detects the dead
+        # peer in ~60s (30s idle + 3×10s probes) and releases the transaction.
+        server_settings: dict[str, str] = {
+            "idle_in_transaction_session_timeout": str(settings.idle_in_transaction_timeout_ms),
+            "tcp_keepalives_idle": "30",
+            "tcp_keepalives_interval": "10",
+            "tcp_keepalives_count": "3",
         }
+        if statement_timeout_ms is not None and statement_timeout_ms > 0:
+            server_settings["statement_timeout"] = str(statement_timeout_ms)
+        engine_kwargs["connect_args"] = {"server_settings": server_settings}
 
     return engine_kwargs
 

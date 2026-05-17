@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     database_max_overflow: int = 10
     database_pool_class: str = ""  # "" = QueuePool (default), "null" = NullPool
     web_statement_timeout_ms: int = 30000
+    # PG-level backstop: terminate sessions stuck in "idle in transaction" beyond this.
+    # 900_000 ms = 15 min, above celery task_time_limit (660s) to avoid killing legit work.
+    idle_in_transaction_timeout_ms: int = 900_000
 
     # MinIO (S3-compatible object storage)
     minio_endpoint: str = "localhost:9000"

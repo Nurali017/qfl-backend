@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import redis as redis_lib
-from sqlalchemy import select, func, case, exists
+from sqlalchemy import select, func, case, exists, text
 from sqlalchemy.exc import OperationalError
 
 from app.tasks import celery_app
@@ -289,25 +289,31 @@ async def _sync_live_stats():
 
 
 async def _sync_best_players():
-    """Sync goals + assists from best_players endpoint for all configured seasons."""
-    async with AsyncSessionLocal() as db:
-        try:
-            orchestrator = SyncOrchestrator(db)
-            total = 0
-            results_by_season = {}
-            for season_id in settings.sync_season_ids:
+    """Sync goals + assists from best_players endpoint for all configured seasons.
+
+    Each season runs in its own session so a soft-time-limit or a single-season
+    failure can't leave a multi-season transaction stuck (which previously caused
+    LockNotAvailableError on subsequent runs and stale leaderboard data).
+    """
+    total = 0
+    results_by_season: dict[str, int | str] = {}
+    for season_id in settings.sync_season_ids:
+        async with AsyncSessionLocal() as db:
+            try:
+                orchestrator = SyncOrchestrator(db)
                 if not await orchestrator.is_sync_enabled(season_id):
                     logger.info("Season %d: sync disabled, skipping best_players task", season_id)
                     results_by_season[f"season_{season_id}"] = "skipped"
                     continue
                 count = await orchestrator.sync_best_players(season_id)
+                await db.commit()
                 results_by_season[f"season_{season_id}"] = count
                 total += count
-            await db.commit()
-            return {"best_players_synced": total, "by_season": results_by_season}
-        except Exception:
-            await db.rollback()
-            raise
+            except Exception as e:
+                await db.rollback()
+                logger.warning("sync_best_players season %d failed: %s", season_id, e)
+                results_by_season[f"season_{season_id}"] = f"error: {e}"
+    return {"best_players_synced": total, "by_season": results_by_season}
 
 
 async def _sync_extended_stats():
@@ -732,3 +738,70 @@ def sync_apps_kit_colors(days_back: int | None = None, days_fwd: int | None = No
         logger.info("apps kit sync disabled (APPS_KIT_SYNC_ENABLED=false); skipping")
         return {"skipped": "disabled"}
     return run_async(_sync_apps_kit_colors(days_back, days_fwd))
+
+
+_STUCK_TX_THRESHOLD_SECONDS = 300  # alert if idle-in-tx older than 5 min
+_STUCK_TX_ALERT_DEDUPE_SECONDS = 1800  # 30 min dedupe per (pid, xact_start)
+
+
+async def _monitor_stuck_transactions() -> dict:
+    """Find sessions stuck in 'idle in transaction' and alert via Telegram.
+
+    Detection-only: the asyncpg engine sets idle_in_transaction_session_timeout
+    (15 min) which is what actually kills stuck sessions. This task just makes
+    the failures visible before PG steps in, so we can debug the upstream task
+    instead of only seeing the symptom (stale leaderboard, lock contention).
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            text(
+                "SELECT pid, application_name, "
+                "EXTRACT(EPOCH FROM (now() - xact_start))::int AS xact_age_s, "
+                "xact_start, LEFT(COALESCE(query, ''), 80) AS query "
+                "FROM pg_stat_activity "
+                "WHERE datname = current_database() "
+                "AND state = 'idle in transaction' "
+                "AND xact_start IS NOT NULL "
+                "AND now() - xact_start > make_interval(secs => :threshold) "
+                "ORDER BY xact_start"
+            ),
+            {"threshold": _STUCK_TX_THRESHOLD_SECONDS},
+        )
+        rows = list(result.mappings().all())
+
+    if not rows:
+        return {"stuck": 0}
+
+    r = redis_lib.from_url(settings.redis_url)
+    fresh: list[dict] = []
+    for row in rows:
+        key = f"qfl:monitor:stuck-tx:{row['pid']}:{int(row['xact_start'].timestamp())}"
+        if r.set(key, "1", nx=True, ex=_STUCK_TX_ALERT_DEDUPE_SECONDS):
+            fresh.append(dict(row))
+
+    if not fresh:
+        logger.info("stuck tx detected (%d) but all deduped", len(rows))
+        return {"stuck": len(rows), "alerted": 0}
+
+    lines = ["⚠️ PG idle-in-tx detected:"]
+    for row in fresh:
+        app = row["application_name"] or "(no app)"
+        lines.append(
+            f"pid={row['pid']} app={app} age={row['xact_age_s']}s last={row['query']!r}"
+        )
+    try:
+        await send_telegram_message("\n".join(lines))
+    except Exception as e:
+        logger.warning("Failed to send stuck-tx alert: %s", e)
+
+    return {"stuck": len(rows), "alerted": len(fresh)}
+
+
+@celery_app.task(name="app.tasks.sync_tasks.monitor_stuck_transactions")
+def monitor_stuck_transactions():
+    """Celery task: detect sessions stuck in 'idle in transaction'.
+
+    Alerts via Telegram with dedupe; does not auto-terminate (PG's
+    idle_in_transaction_session_timeout handles that).
+    """
+    return run_async(_monitor_stuck_transactions())
