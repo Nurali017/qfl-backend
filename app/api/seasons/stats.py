@@ -692,6 +692,15 @@ async def get_team_stats_table(
 async def get_season_statistics(
     season_id: int,
     max_round: int | None = Query(None, description="Filter stats up to this round (tour) number"),
+    match_count: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Restrict aggregation to the first N played matches of the season, ordered "
+            "by date asc (id asc as tiebreaker). Used for cross-season 'first N matches' "
+            "comparisons. Mutually exclusive with max_round."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -699,7 +708,15 @@ async def get_season_statistics(
 
     Returns match results, attendance, goals, penalties, fouls, and cards.
     When max_round is specified, only games with tour <= max_round are included.
+    When match_count is specified, only the first N played matches (by date asc)
+    are included — used for like-for-like cross-season comparisons.
     """
+    if max_round is not None and match_count is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="max_round and match_count are mutually exclusive",
+        )
+
     await _ensure_visible_season(db, season_id)
 
     # Verify season exists
@@ -741,6 +758,29 @@ async def get_season_statistics(
     if max_round is not None:
         game_base_filters.append(Game.tour <= max_round)
 
+    # First-N-matches comparison: pick the chronologically earliest N played
+    # matches (matching the same eligibility as game_base_filters), then make
+    # every downstream query restrict to that fixed set. ``Game.id`` is the
+    # deterministic tiebreaker when dates coincide.
+    first_n_ids_subq = None
+    if match_count is not None:
+        first_n_select = (
+            select(Game.id)
+            .where(
+                Game.season_id == season_id,
+                Game.home_score.isnot(None),
+                Game.away_score.isnot(None),
+            )
+        )
+        if not is_knockout:
+            first_n_select = first_n_select.where(Game.extended_stats_synced_at.isnot(None))
+        first_n_ids_subq = (
+            first_n_select.order_by(Game.date.asc().nullslast(), Game.id.asc())
+            .limit(match_count)
+            .subquery()
+        )
+        game_base_filters.append(Game.id.in_(select(first_n_ids_subq.c.id)))
+
     # Query 1: Match stats from Game table
     game_stats_query = select(
         func.count().label("matches_played"),
@@ -778,7 +818,7 @@ async def get_season_statistics(
     penalties = team_row.penalties or 0
 
     def _event_count_filters(event_type: GameEventType):
-        # Same tour-cap semantics as game_base_filters — only when explicit.
+        # Same tour-cap / first-N semantics as game_base_filters.
         filters = [
             Game.season_id == season_id,
             GameEvent.event_type == event_type,
@@ -787,6 +827,8 @@ async def get_season_statistics(
             filters.append(Game.extended_stats_synced_at.isnot(None))
         if max_round is not None:
             filters.append(Game.tour <= max_round)
+        if first_n_ids_subq is not None:
+            filters.append(Game.id.in_(select(first_n_ids_subq.c.id)))
         return filters
 
     penalty_scored_query = select(func.count()).select_from(GameEvent).join(
@@ -885,7 +927,7 @@ async def get_season_statistics(
     shots_on_target_pct = round(total_shots_on_goal / total_shots * 100, 1) if total_shots > 0 else 0.0
 
     # Query 5: Clean sheets — count of 0-0 draws
-    # Same tour-cap semantics as game_base_filters — only when explicit.
+    # Same tour-cap / first-N semantics as game_base_filters.
     clean_sheets_filters = [
         Game.season_id == season_id,
         Game.home_score == 0,
@@ -895,6 +937,8 @@ async def get_season_statistics(
         clean_sheets_filters.append(Game.extended_stats_synced_at.isnot(None))
     if max_round is not None:
         clean_sheets_filters.append(Game.tour <= max_round)
+    if first_n_ids_subq is not None:
+        clean_sheets_filters.append(Game.id.in_(select(first_n_ids_subq.c.id)))
     clean_sheets_query = select(
         func.count().label("clean_sheets"),
     ).where(*clean_sheets_filters)

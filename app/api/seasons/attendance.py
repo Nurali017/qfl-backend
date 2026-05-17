@@ -27,10 +27,25 @@ router = APIRouter(prefix="/seasons", tags=["seasons"])
 async def get_season_attendance(
     season_id: int,
     max_round: int | None = Query(None, description="Filter attendance stats up to this round (tour) number"),
+    match_count: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Restrict aggregation to the first N finished matches of the season, ordered "
+            "by date asc (id asc as tiebreaker). Used for cross-season 'first N matches' "
+            "comparisons. Mutually exclusive with max_round."
+        ),
+    ),
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed attendance statistics for a season."""
+    if max_round is not None and match_count is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="max_round and match_count are mutually exclusive",
+        )
+
     season_result = await db.execute(
         select(Season).where(
             Season.id == season_id,
@@ -61,6 +76,23 @@ async def get_season_attendance(
     ]
     if max_round is not None:
         base_filter.append(Game.tour <= max_round)
+    elif match_count is not None:
+        # First-N-matches comparison: pick the chronologically earliest N
+        # finished matches with attendance, then aggregate over that set.
+        # ``Game.id`` is the deterministic tiebreaker when dates match.
+        first_n_ids_subq = (
+            select(Game.id)
+            .where(
+                Game.season_id == season_id,
+                Game.visitors.isnot(None),
+                Game.visitors > 0,
+                Game.status == GameStatus.finished,
+            )
+            .order_by(Game.date.asc().nullslast(), Game.id.asc())
+            .limit(match_count)
+            .subquery()
+        )
+        base_filter.append(Game.id.in_(select(first_n_ids_subq.c.id)))
 
     # --- 1. Summary ---
     summary_q = select(

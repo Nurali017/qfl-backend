@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
-from app.models import Game
+from app.models import Game, GameStatus
 from app.models.media_video import MediaVideo
 
 router = APIRouter(prefix="/youtube-stats", tags=["youtube-stats"])
@@ -81,13 +81,34 @@ class YoutubeStatsOverview(BaseModel):
 async def get_youtube_stats_overview(
     season_id: int | None = Query(None),
     max_tour: int | None = Query(None, description="Include only games with tour <= max_tour"),
+    match_count: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Restrict to the first N finished matches of the season, ordered by date asc "
+            "(id asc tiebreaker). Requires season_id. Used for cross-season comparisons. "
+            "Mutually exclusive with max_tour."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> YoutubeStatsOverview:
     """Public overview: games with YouTube URLs + active media_videos with view_count.
 
-    ``max_tour`` filter caps games at the given tour (inclusive) — useful for
-    comparing current season vs previous season at the same progress point.
+    ``max_tour`` filter caps games at the given tour (inclusive).
+    ``match_count`` restricts to the first N finished matches by date — used for
+    like-for-like cross-season comparisons.
     """
+    if max_tour is not None and match_count is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="max_tour and match_count are mutually exclusive",
+        )
+    if match_count is not None and season_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="match_count requires season_id",
+        )
+
     stmt = (
         select(Game)
         .where(or_(Game.youtube_live_url.is_not(None), Game.video_review_url.is_not(None)))
@@ -101,6 +122,21 @@ async def get_youtube_stats_overview(
         stmt = stmt.where(Game.season_id == season_id)
     if max_tour is not None:
         stmt = stmt.where(Game.tour <= max_tour)
+    if match_count is not None:
+        # First N finished matches of the season (regardless of YouTube content).
+        # Games without YouTube URLs are still in the set but contribute zero
+        # views — the outer .where(or_(...)) drops them on the way out.
+        first_n_ids_subq = (
+            select(Game.id)
+            .where(
+                Game.season_id == season_id,
+                Game.status == GameStatus.finished,
+            )
+            .order_by(Game.date.asc().nullslast(), Game.id.asc())
+            .limit(match_count)
+            .subquery()
+        )
+        stmt = stmt.where(Game.id.in_(select(first_n_ids_subq.c.id)))
 
     games: list[Game] = list((await db.execute(stmt)).scalars().all())
 
