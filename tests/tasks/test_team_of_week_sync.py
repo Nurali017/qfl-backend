@@ -346,10 +346,12 @@ async def test_tow_dispatch_with_technical_defeat():
 
 @pytest.mark.asyncio
 async def test_tow_extended_dispatch_in_sync_aggregate_bundle():
-    """Sync aggregate bundle dispatches extended team-of-week sync for marked tours."""
-    mock_db1 = AsyncMock()
-    mock_db2 = AsyncMock()
+    """Sync aggregate bundle dispatches extended team-of-week sync for marked tours.
 
+    After the per-sub-step session isolation, each AsyncSessionLocal() call
+    returns a fresh mock session — the test no longer pins on a specific
+    session instance, only on the dispatched side effects.
+    """
     mock_orch = AsyncMock()
     mock_orch.sync_team_season_stats.return_value = 12
     mock_orch.sync_player_stats.return_value = 34
@@ -360,9 +362,9 @@ async def test_tow_extended_dispatch_in_sync_aggregate_bundle():
     mock_dispatch = AsyncMock()
 
     with patch("app.tasks.sync_tasks.AsyncSessionLocal") as mock_session:
-        mock_session.return_value.__aenter__ = AsyncMock(
-            side_effect=[mock_db1, mock_db2]
-        )
+        # Every `async with AsyncSessionLocal() as db:` yields a new AsyncMock,
+        # so we can't assert on identity — just count and check call args.
+        mock_session.return_value.__aenter__ = AsyncMock(side_effect=lambda: AsyncMock())
         mock_session.return_value.__aexit__ = AsyncMock(return_value=False)
         with patch("app.tasks.sync_tasks.SyncOrchestrator", return_value=mock_orch):
             with patch("app.tasks.tour_readiness.mark_tour_synced", mock_mark):
@@ -379,8 +381,14 @@ async def test_tow_extended_dispatch_in_sync_aggregate_bundle():
                         result = await _sync_extended_aggregate_bundle(100, {5})
 
     assert result["tour_stats"] == {5: 56}
-    mock_mark.assert_awaited_once_with(mock_db2, 100, 5)
-    mock_revalidate.assert_awaited_once_with(mock_db2, 100, 5)
+    assert result["teams"] == 12
+    assert result["players"] == 34
+    mock_mark.assert_awaited_once()
+    mark_args = mock_mark.await_args.args
+    assert mark_args[1:] == (100, 5)
+    mock_revalidate.assert_awaited_once()
+    reval_args = mock_revalidate.await_args.args
+    assert reval_args[1:] == (100, 5)
     mock_dispatch.assert_awaited_once_with(100, [5], "extended")
 
 

@@ -146,13 +146,15 @@ class PlayerSyncService(BaseSyncService):
                     entry["dry_match_rank"] = rank
                 except (ValueError, TypeError):
                     pass
-        # Reset stale ranks before re-populating from SOTA
-        await self.db.execute(
-            update(PlayerSeasonStats)
-            .where(PlayerSeasonStats.season_id == season_id)
-            .values(goal_rank=None, goal_pass_rank=None, dry_match_rank=None)
-        )
-
+        # Track which players we actually upsert so we can null-out ranks only
+        # for the "orphaned" rest in a single WHERE NOT IN sweep at the end.
+        # Order matters: do the upserts first (each row gets its fresh rank),
+        # then issue the targeted reset. The previous version did a blanket
+        # UPDATE … WHERE season_id=X before the upsert loop, which grabbed
+        # row locks on every player_season_stats row for that season and held
+        # them for the full duration of the loop — that's what blocked
+        # concurrent writers (sync_player_season_stats) with lock_timeout.
+        upserted_player_ids: set[int] = set()
         count = 0
         now = utcnow()
         for sota_id_str, metrics in combined.items():
@@ -183,17 +185,28 @@ class PlayerSyncService(BaseSyncService):
                 async with self.db.begin_nested():
                     await self.db.execute(stmt)
                 count += 1
+                upserted_player_ids.add(player_id)
             except DBAPIError as exc:
-                # reset rank UPDATE on line ~138 already ran; if we silently skip here,
-                # we'd commit a leaderboard with NULL ranks for un-repopulated rows.
-                # Fail the whole task — Celery will retry, and the framework rollback
-                # restores the prior leaderboard state.
+                # Fail the whole task — Celery will retry, and the framework
+                # rollback restores the prior leaderboard state.
                 logger.error(
                     "Aborting best_players sync for season %s after DB error on player %s: %s",
                     season_id, player_id, exc,
                 )
                 await self.db.rollback()
                 raise
+
+        # Targeted reset: only rows NOT just upserted. Holds row locks for a
+        # fraction of a second on (typically) a small set, instead of locking
+        # the entire season's player_season_stats up front.
+        reset_stmt = (
+            update(PlayerSeasonStats)
+            .where(PlayerSeasonStats.season_id == season_id)
+            .values(goal_rank=None, goal_pass_rank=None, dry_match_rank=None)
+        )
+        if upserted_player_ids:
+            reset_stmt = reset_stmt.where(PlayerSeasonStats.player_id.notin_(upserted_player_ids))
+        await self.db.execute(reset_stmt)
 
         await self.db.commit()
         logger.info("Synced best_players for season %d: %d rows upserted", season_id, count)

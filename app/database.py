@@ -39,6 +39,8 @@ def build_engine_kwargs(*, statement_timeout_ms: int | None = None) -> dict:
             "tcp_keepalives_interval": "10",
             "tcp_keepalives_count": "3",
         }
+        if settings.app_instance_name:
+            server_settings["application_name"] = settings.app_instance_name
         if statement_timeout_ms is not None and statement_timeout_ms > 0:
             server_settings["statement_timeout"] = str(statement_timeout_ms)
         engine_kwargs["connect_args"] = {"server_settings": server_settings}

@@ -129,16 +129,39 @@ async def _dispatch_tow_sync_for_tours(
             )
 
 
+async def _run_isolated(method_name: str, *args, **kwargs):
+    """Run one SyncOrchestrator method in its own session/transaction.
+
+    Each sub-step of the extended-stats bundle (team/player/tour aggregates)
+    gets its own connection so a failure in step N can't leave step N+1 working
+    on a broken outer-tx — and a hung HTTP call inside one step won't keep an
+    unrelated step's row locks held. Also lets PG's idle_in_transaction_session_timeout
+    actually fire on the offending session, instead of a 400+ savepoint super-tx
+    that's never continuously idle long enough to trip the threshold.
+    """
+    async with AsyncSessionLocal() as db:
+        try:
+            orchestrator = SyncOrchestrator(db)
+            result = await getattr(orchestrator, method_name)(*args, **kwargs)
+            await db.commit()
+            return result
+        except Exception:
+            await db.rollback()
+            raise
+
+
 async def _sync_extended_aggregate_bundle(
     season_id: int,
     tours: set[int] | None = None,
     *,
     force: bool = False,
 ) -> dict:
-    """Sync season-level aggregates in an isolated transaction bundle.
+    """Sync season-level aggregates, each sub-step in its own session.
 
     A failure here must not roll back already-persisted game-level extended
-    stats for individual matches.
+    stats for individual matches. OperationalError from any sub-step bubbles
+    up so Celery autoretries the whole task; other exceptions are collected
+    per-step so the rest of the bundle can still progress.
     """
     tours = tours or set()
     errors: list[str] = []
@@ -146,50 +169,35 @@ async def _sync_extended_aggregate_bundle(
     player_count = 0
     tour_counts: dict[int, int] = {}
 
-    async with AsyncSessionLocal() as db:
-        orchestrator = SyncOrchestrator(db)
+    try:
+        team_count = await _run_isolated("sync_team_season_stats", season_id, force=force)
+    except OperationalError:
+        # Lock timeout / deadlock — let Celery autoretry the whole task.
+        raise
+    except Exception as exc:
+        logger.exception("Team season stats failed for season %s", season_id)
+        errors.append(f"team_season_stats: {exc}")
 
+    try:
+        player_count = await _run_isolated("sync_player_stats", season_id, force=force)
+    except OperationalError:
+        raise
+    except Exception as exc:
+        logger.exception("Player season stats failed for season %s", season_id)
+        errors.append(f"player_season_stats: {exc}")
+
+    for tour in sorted(tours):
         try:
-            team_count = await orchestrator.sync_team_season_stats(season_id, force=force)
+            tour_counts[tour] = await _run_isolated(
+                "sync_player_tour_stats", season_id, tour, force=force
+            )
         except OperationalError:
-            # Lock timeout / deadlock — let Celery autoretry the whole task.
-            await db.rollback()
             raise
         except Exception as exc:
-            await db.rollback()
-            logger.exception("Team season stats failed for season %s", season_id)
-            errors.append(f"team_season_stats: {exc}")
-
-        try:
-            player_count = await orchestrator.sync_player_stats(season_id, force=force)
-        except OperationalError:
-            await db.rollback()
-            raise
-        except Exception as exc:
-            await db.rollback()
-            logger.exception("Player season stats failed for season %s", season_id)
-            errors.append(f"player_season_stats: {exc}")
-
-        for tour in sorted(tours):
-            try:
-                tour_counts[tour] = await orchestrator.sync_player_tour_stats(
-                    season_id, tour, force=force
-                )
-            except OperationalError:
-                await db.rollback()
-                raise
-            except Exception as exc:
-                await db.rollback()
-                logger.exception(
-                    "Player tour stats failed for season %s tour %s", season_id, tour
-                )
-                errors.append(f"player_tour_stats[{tour}]: {exc}")
-
-        try:
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
+            logger.exception(
+                "Player tour stats failed for season %s tour %s", season_id, tour
+            )
+            errors.append(f"player_tour_stats[{tour}]: {exc}")
 
     # Mark completed tours and trigger revalidation
     from app.tasks.tour_readiness import mark_tour_synced, maybe_trigger_tour_revalidation

@@ -48,5 +48,23 @@ def test_build_engine_kwargs_no_connect_args_for_non_asyncpg(monkeypatch):
     assert "connect_args" not in kwargs
 
 
+def test_build_engine_kwargs_sets_application_name_when_configured(monkeypatch):
+    monkeypatch.setattr(database.settings, "database_url", "postgresql+asyncpg://u:p@h/d")
+    monkeypatch.setattr(database.settings, "app_instance_name", "qfl-celery-worker")
+
+    kwargs = database.build_engine_kwargs()
+
+    assert kwargs["connect_args"]["server_settings"]["application_name"] == "qfl-celery-worker"
+
+
+def test_build_engine_kwargs_omits_application_name_when_blank(monkeypatch):
+    monkeypatch.setattr(database.settings, "database_url", "postgresql+asyncpg://u:p@h/d")
+    monkeypatch.setattr(database.settings, "app_instance_name", "")
+
+    kwargs = database.build_engine_kwargs()
+
+    assert "application_name" not in kwargs["connect_args"]["server_settings"]
+
+
 def test_api_deps_reexport_database_get_db():
     assert deps.get_db is database.get_db

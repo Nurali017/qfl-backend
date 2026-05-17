@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     # PG-level backstop: terminate sessions stuck in "idle in transaction" beyond this.
     # 900_000 ms = 15 min, above celery task_time_limit (660s) to avoid killing legit work.
     idle_in_transaction_timeout_ms: int = 900_000
+    # Identifies which container holds a PG session (web/worker/live-worker/beat) in
+    # pg_stat_activity. Empty = don't set application_name (keeps tests/local clean).
+    app_instance_name: str = ""
 
     # MinIO (S3-compatible object storage)
     minio_endpoint: str = "localhost:9000"
