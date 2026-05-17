@@ -399,13 +399,18 @@ async def get_news_item(
     response["content"] = normalized_content.content
 
     normalized_images: list[dict] = []
+    hero_url: str | None = None
     for img in images:
         image_data = get_file_data_with_url(img)
         image_data["url"] = normalize_news_media_url(
             image_data.get("url"),
             source_url=response.get("source_url"),
         )
+        object_name = image_data.get("object_name") or img.get("object_name") or ""
+        if hero_url is None and object_name.endswith("-hero.webp"):
+            hero_url = image_data["url"]
         normalized_images.append(image_data)
 
     response["images"] = normalized_images
+    response["image_hero_url"] = hero_url
     return response

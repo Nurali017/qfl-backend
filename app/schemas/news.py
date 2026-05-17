@@ -21,6 +21,7 @@ class NewsResponse(BaseModel):
     content: str | None = None
     content_text: str | None = None
     image_url: str | None = None
+    image_hero_url: str | None = None  # 1200x630 Discover-ready variant (WebP)
     video_url: str | None = None  # YouTube embed URL
     championship_code: str | None = None  # Championship code: pl, 1l, cup, 2l, el
     article_type: str | None = None

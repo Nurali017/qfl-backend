@@ -23,6 +23,11 @@ _OPTIMIZE_CATEGORIES = {"player_photos", "coach_photos"}
 _MAX_IMAGE_SIZE = (800, 1200)
 _WEBP_QUALITY = 85
 
+# Discover-ready landscape hero generated alongside news cover uploads.
+_NEWS_HERO_SIZE = (1200, 630)
+_NEWS_HERO_QUALITY = 88
+_NEWS_HERO_SUFFIX = "-hero.webp"
+
 # Lazy-loaded rembg session (u2netp is a lightweight 4.7 MB model)
 _rembg_session = None
 
@@ -110,6 +115,48 @@ def _optimize_image(
     return buf.getvalue(), "image/webp"
 
 
+def _generate_news_hero(file_data: bytes) -> bytes:
+    """Generate a 1200x630 WebP hero variant from a news cover image.
+
+    Cover-style fit: scales the source so it fully covers 1200x630, then
+    center-crops. Result is RGB WebP — used as ``og:image`` and the JSON-LD
+    ``ImageObject`` for Google Discover.
+    """
+    img = Image.open(io.BytesIO(file_data))
+
+    if img.mode in ("RGBA", "LA", "P"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        if img.mode == "RGBA":
+            background.paste(img, mask=img.split()[-1])
+        else:
+            background.paste(img.convert("RGB"))
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    target_w, target_h = _NEWS_HERO_SIZE
+    src_w, src_h = img.size
+    scale = max(target_w / src_w, target_h / src_h)
+    new_w = max(target_w, int(round(src_w * scale)))
+    new_h = max(target_h, int(round(src_h * scale)))
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    left = (new_w - target_w) // 2
+    top = (new_h - target_h) // 2
+    img = img.crop((left, top, left + target_w, top + target_h))
+
+    buf = io.BytesIO()
+    img.save(buf, format="WEBP", quality=_NEWS_HERO_QUALITY)
+    return buf.getvalue()
+
+
+def _news_hero_object_name(news_id: str | int, file_id: str) -> str:
+    """Canonical path of the hero sibling for a news cover upload."""
+    return f"news_image/{news_id}/{file_id}{_NEWS_HERO_SUFFIX}"
+
+
 class FileStorageService:
     """Service for storing and retrieving files using MinIO."""
 
@@ -186,6 +233,40 @@ class FileStorageService:
                 content_type=content_type,
                 metadata=file_metadata,
             )
+
+            # Sibling 1200x630 hero variant for news covers — used as og:image
+            # and the NewsArticle ImageObject. Non-fatal: a hero failure must
+            # not block the primary upload.
+            if (
+                not skip_optimization
+                and category == "news_image"
+                and content_type.startswith("image/")
+                and news_id is not None
+            ):
+                try:
+                    hero_bytes = await _run_sync(_generate_news_hero, raw_bytes)
+                    hero_object_name = _news_hero_object_name(news_id, file_id)
+                    await _run_sync(
+                        client.put_object,
+                        bucket_name=bucket,
+                        object_name=hero_object_name,
+                        data=io.BytesIO(hero_bytes),
+                        length=len(hero_bytes),
+                        content_type="image/webp",
+                        metadata={
+                            "category": "news_image_hero",
+                            "parent-file-id": file_id,
+                        },
+                    )
+                    logger.info(
+                        "Generated news hero variant: %s (%d bytes)",
+                        hero_object_name,
+                        len(hero_bytes),
+                    )
+                except Exception:
+                    logger.warning(
+                        "News hero generation failed (non-fatal)", exc_info=True
+                    )
 
             return {
                 "file_id": file_id,
