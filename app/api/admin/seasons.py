@@ -5,7 +5,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.models import Championship, Season, SeasonParticipant
+from app.models import Championship, Game, Season, SeasonParticipant
+from app.services.season_filters import get_group_team_ids
 from app.services.season_api_cache import invalidate_season_api_cache
 from app.services.season_visibility import invalidate_season_cache, is_season_visible_clause
 from app.schemas.admin.seasons import (
@@ -42,6 +43,34 @@ async def list_seasons(
     )
     items = [AdminSeasonResponse.model_validate(s) for s in result.scalars().all()]
     return AdminSeasonsListResponse(items=items, total=total)
+
+
+@router.get("/{id}/tours")
+async def get_season_tours(
+    id: int,
+    group: str | None = Query(default=None, description="Filter tours by group name"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return distinct tour numbers actually present in games for the season.
+
+    Optional `group` narrows to tours where both teams belong to that group.
+    Useful when Season.total_rounds is null (e.g. multi-group leagues).
+    """
+    query = select(Game.tour).where(
+        Game.season_id == id,
+        Game.tour.is_not(None),
+    )
+    if group:
+        team_ids = await get_group_team_ids(db, id, group)
+        if not team_ids:
+            return {"season_id": id, "tours": []}
+        query = query.where(
+            Game.home_team_id.in_(team_ids),
+            Game.away_team_id.in_(team_ids),
+        )
+    result = await db.execute(query.distinct().order_by(Game.tour))
+    tours = [row[0] for row in result.all() if row[0] is not None]
+    return {"season_id": id, "tours": tours}
 
 
 @router.get("/{id}/groups")
