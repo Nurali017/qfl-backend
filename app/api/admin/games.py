@@ -41,6 +41,7 @@ from app.services.game_lifecycle import (
     InvalidTransition,
     VALID_ACTIONS,
 )
+from app.services.season_filters import get_group_team_ids
 from app.utils.game_event_assists import is_assist_supported_event_type
 from app.utils.has_stats import enrich_games_has_stats, compute_single_has_stats
 
@@ -118,6 +119,7 @@ async def list_games(
     tour: int | None = Query(default=None),
     status: str | None = Query(default=None, description="upcoming, live, finished, postponed, cancelled"),
     team_id: int | None = Query(default=None),
+    group: str | None = Query(default=None, description="Filter by group name (e.g. 'A', 'B'); requires season_id"),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     limit: int = Query(default=50, le=200),
@@ -145,6 +147,14 @@ async def list_games(
         filters.append(Game.date >= date_from)
     if date_to is not None:
         filters.append(Game.date <= date_to)
+    if group:
+        if season_id is None:
+            raise HTTPException(status_code=400, detail="group filter requires season_id")
+        group_team_ids = await get_group_team_ids(db, season_id, group)
+        if not group_team_ids:
+            return AdminGamesListResponse(items=[], total=0)
+        filters.append(Game.home_team_id.in_(group_team_ids))
+        filters.append(Game.away_team_id.in_(group_team_ids))
 
     today = datetime.now(ZoneInfo("Asia/Almaty")).date()
     if status == "live":
