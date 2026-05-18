@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_db
 from app.api.admin.deps import require_roles
-from app.models import Championship, Season
+from app.models import Championship, Season, SeasonParticipant
 from app.services.season_api_cache import invalidate_season_api_cache
 from app.services.season_visibility import invalidate_season_cache, is_season_visible_clause
 from app.schemas.admin.seasons import (
@@ -42,6 +42,22 @@ async def list_seasons(
     )
     items = [AdminSeasonResponse.model_validate(s) for s in result.scalars().all()]
     return AdminSeasonsListResponse(items=items, total=total)
+
+
+@router.get("/{id}/groups")
+async def get_season_groups(id: int, db: AsyncSession = Depends(get_db)):
+    """Return list of distinct group names for the season (e.g. ['A', 'B'])."""
+    result = await db.execute(
+        select(SeasonParticipant.group_name)
+        .where(
+            SeasonParticipant.season_id == id,
+            SeasonParticipant.group_name.is_not(None),
+        )
+        .distinct()
+        .order_by(SeasonParticipant.group_name)
+    )
+    groups = [row[0] for row in result.all() if row[0]]
+    return {"season_id": id, "groups": groups}
 
 
 @router.get("/{id}", response_model=AdminSeasonResponse)
