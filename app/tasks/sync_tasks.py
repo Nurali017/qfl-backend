@@ -748,8 +748,13 @@ def sync_apps_kit_colors(days_back: int | None = None, days_fwd: int | None = No
     return run_async(_sync_apps_kit_colors(days_back, days_fwd))
 
 
-_STUCK_TX_THRESHOLD_SECONDS = 300  # alert if idle-in-tx older than 5 min
+_STUCK_TX_THRESHOLD_SECONDS = 600  # alert if idle-in-tx older than 10 min
 _STUCK_TX_ALERT_DEDUPE_SECONDS = 1800  # 30 min dedupe per (pid, xact_start)
+# Why 10 min and not 5: a batch (15 players × ~7s/HTTP) finishes in ~100s on
+# healthy SOTA but can take 5-7 min during SOTA latency spikes
+# (ConnectTimeout + httpx retry backoff). 5 min threshold flagged these
+# healthy slow batches; 10 min still catches real stuck tx well before the
+# 15-min idle_in_transaction_session_timeout kills them.
 
 
 async def _monitor_stuck_transactions() -> dict:
