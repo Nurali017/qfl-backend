@@ -8,6 +8,7 @@ import logging
 import time
 
 import httpx
+import redis as redis_lib
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -17,6 +18,10 @@ from sqlalchemy.exc import DBAPIError
 # Separate from player_season_stats / team_season_stats namespaces.
 _PLAYER_TOUR_STATS_LOCK_NS = 3
 _LOCK_TIMEOUT = "60s"
+# Batch commit by *processed* count + time cap. See player_sync for the rationale.
+_BATCH_PROCESSED_SIZE = 15
+_BATCH_TIME_CAP_SECONDS = 60.0
+_OUTER_LOCK_TTL_SECONDS = 7200
 
 from app.config import get_settings
 from app.models import Player, PlayerTeam
@@ -31,6 +36,11 @@ from app.services.sync.guardrails import (
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+class _SkipPlayer(Exception):
+    """Internal sentinel to fall through to the batch-commit check
+    without bypassing it via `continue`."""
 
 # Fields we store as proper columns (subset of PLAYER_SEASON_STATS_FIELDS)
 PLAYER_TOUR_STATS_COLUMNS = {
@@ -49,6 +59,14 @@ class PlayerTourStatsSyncService(BaseSyncService):
     def _has_useful_stats(stats: dict) -> bool:
         return bool(stats and stats.get("games_played"))
 
+    async def _acquire_tx_locks(self, season_id: int) -> None:
+        """Per-tx lock_timeout + advisory_xact_lock; reapplied after batch commits."""
+        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+            {"ns": _PLAYER_TOUR_STATS_LOCK_NS, "sid": season_id},
+        )
+
     async def sync_tour(self, season_id: int, tour: int) -> int:
         """
         Sync cumulative stats for all players in a season for a given tour.
@@ -56,11 +74,31 @@ class PlayerTourStatsSyncService(BaseSyncService):
         Returns:
             Number of player stats rows upserted
         """
-        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
-        await self.db.execute(
-            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
-            {"ns": _PLAYER_TOUR_STATS_LOCK_NS, "sid": season_id},
-        )
+        settings = get_settings()
+        # Outer-job mutex keyed on (season, tour). Per-tx advisory lock is
+        # released on every batch commit; Redis lease keeps a parallel
+        # invocation from slipping in between batches.
+        lock_key = f"qfl:sync-lock:player_tour_stats:{season_id}:{tour}"
+        redis_client = redis_lib.from_url(settings.redis_url)
+        if not redis_client.set(lock_key, "1", nx=True, ex=_OUTER_LOCK_TTL_SECONDS):
+            logger.info(
+                "sync_tour skipped for season %d tour %d: outer lock held",
+                season_id, tour,
+            )
+            return 0
+        try:
+            return await self._sync_tour_locked(season_id, tour)
+        finally:
+            try:
+                redis_client.delete(lock_key)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to release outer lock for season %d tour %d: %s",
+                    season_id, tour, exc,
+                )
+
+    async def _sync_tour_locked(self, season_id: int, tour: int) -> int:
+        await self._acquire_tx_locks(season_id)
         # Get all players in this season with their team
         player_teams_result = await self.db.execute(
             select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
@@ -84,8 +122,11 @@ class PlayerTourStatsSyncService(BaseSyncService):
         timings = SyncTimingMetrics(enabled=settings.debug_sync_timings)
 
         count = 0
+        processed_since_commit = 0
+        last_commit_ts = time.monotonic()
         for player_id, team_id, sota_id in player_teams:
             timings.players_processed += 1
+            processed_since_commit += 1
             try:
                 # Try each SOTA season ID (player belongs to one conference)
                 stats = {}
@@ -139,7 +180,7 @@ class PlayerTourStatsSyncService(BaseSyncService):
                         break
 
                 if not stats:
-                    continue
+                    raise _SkipPlayer
 
                 # Separate known columns from extra stats
                 extra_stats = {
@@ -189,27 +230,43 @@ class PlayerTourStatsSyncService(BaseSyncService):
                     },
                 )
                 db_started = time.monotonic()
+                upsert_ok = False
                 try:
                     async with self.db.begin_nested():
                         await self.db.execute(stmt)
+                    upsert_ok = True
                 except DBAPIError as db_exc:
                     logger.warning(
                         "DB error upserting player_tour_stats for player %d season %d tour %d: %s",
                         player_id, season_id, tour, db_exc,
                     )
-                    continue
-                timings.add_db(time.monotonic() - db_started)
-                count += 1
+                if upsert_ok:
+                    timings.add_db(time.monotonic() - db_started)
+                    count += 1
+            except _SkipPlayer:
+                pass  # no stats for this player — skip to batch-commit check
             except Exception as e:
                 logger.warning(
                     "Failed to sync tour stats for player %d, season %d, tour %d: %s",
                     player_id, season_id, tour, e,
                 )
-                continue
+                # fall through to sleep + batch-commit check
 
             sleep_started = time.monotonic()
             await asyncio.sleep(0.15)
             timings.add_sleep(time.monotonic() - sleep_started)
+
+            # Bound outer-tx age. Trigger by processed count + time cap so a
+            # season where SOTA mostly 404s still commits regularly.
+            now_mono = time.monotonic()
+            if (
+                processed_since_commit >= _BATCH_PROCESSED_SIZE
+                or (now_mono - last_commit_ts) >= _BATCH_TIME_CAP_SECONDS
+            ):
+                await self.db.commit()
+                await self._acquire_tx_locks(season_id)
+                processed_since_commit = 0
+                last_commit_ts = time.monotonic()
 
         await self.db.commit()
         timings.log_summary(

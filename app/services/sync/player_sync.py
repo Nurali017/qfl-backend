@@ -8,6 +8,7 @@ import logging
 import time
 
 import httpx
+import redis as redis_lib
 
 from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -27,6 +28,17 @@ _BEST_PLAYERS_LOCK_NS = 2
 # Bound advisory-lock wait so the task doesn't hold a Celery soft-time-limit slot
 # blocked on a stuck writer. On timeout asyncpg raises LockNotAvailableError → Celery retry.
 _LOCK_TIMEOUT = "60s"
+# Bound outer-tx age. Counted by *processed* players (not successful upserts):
+# a season where SOTA mostly returns 404/empty would otherwise commit rarely.
+# Time cap is the real safety net — a single player can take up to ~90s in the
+# worst case (SotaClient retries 3× with 30s timeout each), so 15 × 90s would
+# still be 22 min without it.
+_BATCH_PROCESSED_SIZE = 15
+_BATCH_TIME_CAP_SECONDS = 60.0
+# Outer-job mutex TTL (Redis). sync_player_season_stats / sync_player_tour_stats
+# rarely take >30 min even on slow SOTA; 2h is a defensive ceiling so a crashed
+# worker can't permanently lock the season.
+_OUTER_LOCK_TTL_SECONDS = 7200
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
 from app.services.sync.guardrails import (
@@ -40,6 +52,11 @@ from app.config import get_settings
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+class _SkipPlayer(Exception):
+    """Internal sentinel: exit the per-player try-block without `continue`,
+    so we still hit the batch-commit check at the bottom of the loop body."""
 
 
 class PlayerSyncService(BaseSyncService):
@@ -212,6 +229,22 @@ class PlayerSyncService(BaseSyncService):
         logger.info("Synced best_players for season %d: %d rows upserted", season_id, count)
         return count
 
+    async def _acquire_player_stats_tx_locks(self, season_id: int) -> None:
+        """Set per-tx lock_timeout and re-take the per-season advisory lock.
+
+        Called at task start AND after every batch commit, because both
+        SET LOCAL and pg_advisory_xact_lock are transaction-scoped: once we
+        commit, they're released and must be reacquired for the next batch.
+        Sub-second gap between commit and re-lock is acceptable — concurrent
+        sync_best_players (NS=2) is on a different namespace and only
+        sync_player_season_stats itself can race here (NS=1).
+        """
+        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+            {"ns": _PLAYER_STATS_LOCK_NS, "sid": season_id},
+        )
+
     async def sync_player_season_stats(self, season_id: int) -> int:
         """
         Sync season stats for ALL players in a season from SOTA API v2.
@@ -228,11 +261,31 @@ class PlayerSyncService(BaseSyncService):
         Returns:
             Number of player stats synced
         """
-        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
-        await self.db.execute(
-            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
-            {"ns": _PLAYER_STATS_LOCK_NS, "sid": season_id},
-        )
+        # Outer-job mutex. sync_player_stats is invoked from at least three
+        # paths (_sync_extended_aggregate_bundle, _sync_season_aggregates, admin
+        # force=True). The per-tx advisory lock inside this function is
+        # released on every batch commit, which would otherwise let a parallel
+        # invocation slip in between batches. The Redis lease guards against
+        # that without depending on advisory-lock timing.
+        settings = get_settings()
+        lock_key = f"qfl:sync-lock:player_season_stats:{season_id}"
+        redis_client = redis_lib.from_url(settings.redis_url)
+        if not redis_client.set(lock_key, "1", nx=True, ex=_OUTER_LOCK_TTL_SECONDS):
+            logger.info(
+                "sync_player_season_stats skipped for season %d: outer lock held",
+                season_id,
+            )
+            return 0
+        try:
+            return await self._sync_player_season_stats_locked(season_id)
+        finally:
+            try:
+                redis_client.delete(lock_key)
+            except Exception as exc:
+                logger.warning("Failed to release outer lock for season %d: %s", season_id, exc)
+
+    async def _sync_player_season_stats_locked(self, season_id: int) -> int:
+        await self._acquire_player_stats_tx_locks(season_id)
         # Get all players in this season with their team
         player_teams_result = await self.db.execute(
             select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
@@ -256,8 +309,11 @@ class PlayerSyncService(BaseSyncService):
         timings = SyncTimingMetrics(enabled=settings.debug_sync_timings)
 
         count = 0
+        processed_since_commit = 0
+        last_commit_ts = time.monotonic()
         for player_id, team_id, sota_id in player_teams:
             timings.players_processed += 1
+            processed_since_commit += 1
             try:
                 # Try each SOTA season ID until we get stats (player belongs to one conference)
                 stats = {}
@@ -308,8 +364,10 @@ class PlayerSyncService(BaseSyncService):
                     if self._has_useful_stats(stats):
                         break
 
+                # If we have no stats we still need to reach the batch-commit
+                # check at the bottom — use a flag instead of `continue`.
                 if not stats:
-                    continue
+                    raise _SkipPlayer
 
                 # Extract extra stats (fields not in our known list)
                 extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}
@@ -467,20 +525,36 @@ class PlayerSyncService(BaseSyncService):
                     },
                 )
                 db_started = time.monotonic()
+                upsert_ok = False
                 try:
                     async with self.db.begin_nested():
                         await self.db.execute(stmt)
+                    upsert_ok = True
                 except DBAPIError as db_exc:
                     logger.warning(
                         "DB error upserting player_season_stats for player %s: %s",
                         player_id, db_exc,
                     )
-                    continue
-                timings.add_db(time.monotonic() - db_started)
-                count += 1
+                if upsert_ok:
+                    timings.add_db(time.monotonic() - db_started)
+                    count += 1
+            except _SkipPlayer:
+                pass  # no stats for this player — skip to batch-commit check
             except Exception as e:
                 logger.warning(f"Failed to sync player season stats for player {player_id}: {e}")
-                continue  # Skip players without v2 stats
+                # fall through to batch-commit check below — do NOT continue
+            # Bound outer-tx age. Trigger by processed (not successful) count
+            # so a season where SOTA mostly returns 404/empty still commits
+            # regularly. Time cap is the real safety net for slow HTTP.
+            now = time.monotonic()
+            if (
+                processed_since_commit >= _BATCH_PROCESSED_SIZE
+                or (now - last_commit_ts) >= _BATCH_TIME_CAP_SECONDS
+            ):
+                await self.db.commit()
+                await self._acquire_player_stats_tx_locks(season_id)
+                processed_since_commit = 0
+                last_commit_ts = time.monotonic()
 
         await self.db.commit()
         timings.log_summary(service="player_season_stats", season_id=season_id)
