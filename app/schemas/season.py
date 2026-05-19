@@ -102,6 +102,12 @@ class SeasonStatisticsResponse(BaseModel):
     kazakh_minutes_pct: float = 0.0
     average_age: float = 0.0
 
+    # Media (YouTube)
+    broadcast_views: int = 0
+    broadcast_match_count: int = 0
+    review_views: int = 0
+    review_match_count: int = 0
+
     class Config:
         from_attributes = True
 

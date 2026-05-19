@@ -1012,6 +1012,31 @@ async def get_season_statistics(
     age_result = await db.execute(age_query)
     average_age = round(float(age_result.scalar() or 0), 1)
 
+    # Query 7: YouTube media — total views + match counts for live broadcasts and reviews
+    media_query = select(
+        func.coalesce(
+            func.sum(
+                case((Game.youtube_live_url.isnot(None), Game.youtube_live_view_count), else_=0)
+            ),
+            0,
+        ).label("broadcast_views"),
+        func.coalesce(
+            func.sum(case((Game.youtube_live_url.isnot(None), 1), else_=0)),
+            0,
+        ).label("broadcast_match_count"),
+        func.coalesce(
+            func.sum(
+                case((Game.video_review_url.isnot(None), Game.video_review_view_count), else_=0)
+            ),
+            0,
+        ).label("review_views"),
+        func.coalesce(
+            func.sum(case((Game.video_review_url.isnot(None), 1), else_=0)),
+            0,
+        ).label("review_match_count"),
+    ).where(*game_base_filters)
+    media_row = (await db.execute(media_query)).one()
+
     return SeasonStatisticsResponse(
         season_id=season_id,
         season_name=season.name,
@@ -1037,6 +1062,10 @@ async def get_season_statistics(
         total_minutes=total_minutes,
         kazakh_minutes_pct=kazakh_minutes_pct,
         average_age=average_age,
+        broadcast_views=int(media_row.broadcast_views or 0),
+        broadcast_match_count=int(media_row.broadcast_match_count or 0),
+        review_views=int(media_row.review_views or 0),
+        review_match_count=int(media_row.review_match_count or 0),
     )
 
 
