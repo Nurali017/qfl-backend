@@ -704,7 +704,6 @@ async def _download_and_link(
         logger.exception("MinIO upload failed for event %s", event.id)
         return False
 
-    previous_game_id: int | None = None
     previous_object_name: str | None = None
     if (
         previous_record is not None
@@ -720,7 +719,6 @@ async def _download_and_link(
             attached_object_name = to_object_name(previous_event.video_url)
             if attached_object_name == previous_record.object_name:
                 previous_event.video_url = None
-                previous_game_id = previous_event.game_id
                 previous_object_name = previous_record.object_name
             else:
                 logger.warning(
@@ -750,20 +748,6 @@ async def _download_and_link(
         drive_file.name, event.id, event.game_id, event.player_name, event.minute,
         len(payload) / 1024 / 1024,
     )
-
-    # Bust the ISR cache of the match page so the fresh video_url is picked up
-    # by the public site without waiting for the revalidate interval.
-    try:
-        from app.services.game_lifecycle import _revalidate_match_page
-        await _revalidate_match_page(event.game_id)
-        if previous_game_id and previous_game_id != event.game_id:
-            await _revalidate_match_page(previous_game_id)
-    except Exception:
-        logger.exception(
-            "revalidate match page failed for game %s (previous_game=%s)",
-            event.game_id,
-            previous_game_id,
-        )
 
     # Attach the video on the media host while we still have the local payload.
     # If that fails, fall back to the Celery retry path, which will re-read

@@ -1144,7 +1144,6 @@ async def post_pregame_lineup(db: AsyncSession, game_id: int) -> bool:
     from pathlib import Path
     from app.services.lineup_renderer import render_lineup_field_png
     from app.services.telegram_user_client import send_public_user_photo
-    from app.services.game_lifecycle import _revalidate_match_page
 
     q = (
         select(Game)
@@ -1172,12 +1171,6 @@ async def post_pregame_lineup(db: AsyncSession, game_id: int) -> bool:
     new_hash = _hash_lineup(starters)
     if game.lineup_telegram_hash == new_hash and game.lineup_telegram_sent_at is not None:
         return False
-
-    # Invalidate the public match page cache so the screenshot captures fresh lineup.
-    try:
-        await _revalidate_match_page(game_id)
-    except Exception:
-        logger.warning("ISR revalidate failed for game %s (non-fatal)", game_id)
 
     # Render the field image from the public site
     tmp_dir = Path(tempfile.gettempdir()) / "qfl_lineups"
