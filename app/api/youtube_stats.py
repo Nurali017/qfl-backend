@@ -112,6 +112,9 @@ async def get_youtube_stats_overview(
     stmt = (
         select(Game)
         .where(or_(Game.youtube_live_url.is_not(None), Game.video_review_url.is_not(None)))
+        # Only count played matches: YouTube live URLs are added before kickoff, so
+        # unplayed fixtures would otherwise inflate counts and skew season comparisons.
+        .where(Game.status == GameStatus.finished)
         .options(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
