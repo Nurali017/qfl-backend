@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import time as time_type
 
 from app.utils.decided_in import compute_decided_in_lite
 from app.utils.game_status import compute_game_status
@@ -311,6 +312,120 @@ def _build_bracket_game(game: CupGameBrief) -> BracketGameBrief:
     )
 
 
+def _pair_key(game: CupGameBrief) -> frozenset | tuple:
+    """Key that groups the two legs of a tie (both legs share the same team pair)."""
+    if game.home_team and game.away_team:
+        return frozenset({game.home_team.id, game.away_team.id})
+    return ("solo", game.id)
+
+
+def _sum_tie_goals(
+    legs: list[CupGameBrief], top_id: int, bottom_id: int
+) -> tuple[int | None, int | None]:
+    """Aggregate goals across legs for the top/bottom team. None if no leg has a score."""
+    top = 0
+    bottom = 0
+    counted = False
+    for leg in legs:
+        if leg.home_score is None or leg.away_score is None:
+            continue
+        counted = True
+        if leg.home_team and leg.home_team.id == top_id:
+            top += leg.home_score
+            bottom += leg.away_score
+        else:
+            top += leg.away_score
+            bottom += leg.home_score
+    if not counted:
+        return None, None
+    return top, bottom
+
+
+def _tie_penalties(
+    last_leg: CupGameBrief, top_id: int
+) -> tuple[int | None, int | None]:
+    """Return (top_pen, bottom_pen) from the return leg, oriented to the tie's top team."""
+    hp = last_leg.home_penalty_score
+    ap = last_leg.away_penalty_score
+    if hp is None or ap is None:
+        return None, None
+    if last_leg.home_team and last_leg.home_team.id == top_id:
+        return hp, ap
+    return ap, hp
+
+
+def _aggregate_tie(legs: list[CupGameBrief]) -> tuple[BracketGameBrief, list[BracketGameBrief]]:
+    """Aggregate two (or more) legs into a single bracket entry oriented to the first-leg host.
+
+    Winner is decided by aggregate goals (extra time is already reflected in the return
+    leg's score); a level aggregate is broken by the return leg's penalty shootout.
+    """
+    ordered = sorted(legs, key=lambda g: (g.date, g.time or time_type.min))
+    bracket_legs = [_build_bracket_game(leg) for leg in ordered]
+
+    first = ordered[0]
+    last = ordered[-1]
+    top_team = bracket_legs[0].home_team  # first-leg host
+    bottom_team = bracket_legs[0].away_team
+    top_id = top_team.id if top_team else (first.home_team.id if first.home_team else 0)
+    bottom_id = bottom_team.id if bottom_team else (first.away_team.id if first.away_team else 0)
+
+    top_goals, bottom_goals = _sum_tie_goals(ordered, top_id, bottom_id)
+
+    live_leg = next((bl for bl in bracket_legs if bl.is_live), None)
+    all_finished = all(leg.status == "finished" for leg in ordered)
+    if live_leg is not None:
+        agg_status = "live"
+    elif all_finished:
+        agg_status = "finished"
+    else:
+        agg_status = "upcoming"
+
+    winner_id: int | None = None
+    decided_by_penalties = False
+    top_pen: int | None = None
+    bottom_pen: int | None = None
+    if all_finished and top_goals is not None:
+        if top_goals > bottom_goals:
+            winner_id = top_id
+        elif bottom_goals > top_goals:
+            winner_id = bottom_id
+        else:
+            top_pen, bottom_pen = _tie_penalties(last, top_id)
+            if top_pen is not None and bottom_pen is not None:
+                if top_pen > bottom_pen:
+                    winner_id, decided_by_penalties = top_id, True
+                elif bottom_pen > top_pen:
+                    winner_id, decided_by_penalties = bottom_id, True
+
+    winner_team = None
+    if winner_id == top_id:
+        winner_team = top_team
+    elif winner_id == bottom_id:
+        winner_team = bottom_team
+
+    decisive = live_leg or bracket_legs[-1]
+    aggregate = BracketGameBrief(
+        id=decisive.id,
+        date=decisive.date,
+        time=decisive.time,
+        home_team=top_team,
+        away_team=bottom_team,
+        home_score=top_goals,
+        away_score=bottom_goals,
+        home_penalty_score=top_pen if decided_by_penalties else None,
+        away_penalty_score=bottom_pen if decided_by_penalties else None,
+        decided_in="penalties" if decided_by_penalties else None,
+        status=agg_status,
+        is_live=live_leg is not None,
+        minute=live_leg.minute if live_leg else None,
+        half=live_leg.half if live_leg else None,
+        live_phase=live_leg.live_phase if live_leg else None,
+        winner_team=winner_team,
+    )
+    return aggregate, bracket_legs
+
+
 def build_playoff_bracket_from_rounds(
     season_id: int,
     rounds: list[CupRound],
@@ -328,13 +443,30 @@ def build_playoff_bracket_from_rounds(
         if round_item.round_key not in fallback_round_order:
             fallback_round_order.append(round_item.round_key)
 
+        # Group games into ties: two legs of a tie share the same team pair.
+        pair_groups: list[list[CupGameBrief]] = []
+        pair_index: dict[frozenset | tuple, int] = {}
+        for game in round_item.games:
+            key = _pair_key(game)
+            if key in pair_index:
+                pair_groups[pair_index[key]].append(game)
+            else:
+                pair_index[key] = len(pair_groups)
+                pair_groups.append([game])
+
         entries: list[PlayoffBracketEntry] = []
         side_counters: dict[str, int] = {"left": 0, "right": 0, "center": 0}
-        for index, game in enumerate(round_item.games):
+        for index, group in enumerate(pair_groups):
             if round_item.round_key in {"final", "3rd_place"}:
                 side = "center"
             else:
                 side = "left" if index % 2 == 0 else "right"
+
+            is_two_legged = len(group) >= 2
+            if is_two_legged:
+                aggregate_game, legs = _aggregate_tie(group)
+            else:
+                aggregate_game, legs = _build_bracket_game(group[0]), []
 
             side_counters[side] += 1
             entries.append(
@@ -344,7 +476,9 @@ def build_playoff_bracket_from_rounds(
                     side=side,
                     sort_order=side_counters[side],
                     is_third_place=round_item.round_key == "3rd_place",
-                    game=_build_bracket_game(game),
+                    game=aggregate_game,
+                    is_two_legged=is_two_legged,
+                    legs=legs,
                 )
             )
             synthetic_id += 1

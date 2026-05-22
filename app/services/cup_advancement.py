@@ -4,6 +4,7 @@ When a cup match finishes, the winner is inserted into the next round's
 CupDraw so they appear in the bracket without manual admin intervention.
 """
 import logging
+from datetime import time as time_type
 from math import ceil
 
 from sqlalchemy import select
@@ -50,6 +51,57 @@ def _determine_winner_loser(game: Game) -> tuple[int | None, int | None]:
         if ap > hp:
             return game.away_team_id, game.home_team_id
 
+    return None, None
+
+
+def _is_finished(game: Game) -> bool:
+    status = game.status.value if hasattr(game.status, "value") else game.status
+    return status == "finished"
+
+
+def _aggregate_winner_loser(legs: list[Game]) -> tuple[int | None, int | None]:
+    """Winner/loser across a two-legged tie.
+
+    Decided by aggregate goals (extra time is already in the return leg's score);
+    a level aggregate is broken by the return leg's penalty shootout. No away-goals rule.
+    """
+    ordered = sorted(legs, key=lambda g: (g.date, g.time or time_type.min))
+    first = ordered[0]
+    last = ordered[-1]
+    top_id = first.home_team_id
+    bottom_id = first.away_team_id
+    if not top_id or not bottom_id:
+        return None, None
+
+    top = 0
+    bottom = 0
+    for leg in ordered:
+        if leg.home_score is None or leg.away_score is None:
+            return None, None
+        if leg.home_team_id == top_id:
+            top += leg.home_score
+            bottom += leg.away_score
+        else:
+            top += leg.away_score
+            bottom += leg.home_score
+
+    if top > bottom:
+        return top_id, bottom_id
+    if bottom > top:
+        return bottom_id, top_id
+
+    hp = last.home_penalty_score
+    ap = last.away_penalty_score
+    if hp is None or ap is None:
+        return None, None
+    if last.home_team_id == top_id:
+        top_pen, bottom_pen = hp, ap
+    else:
+        top_pen, bottom_pen = ap, hp
+    if top_pen > bottom_pen:
+        return top_id, bottom_id
+    if bottom_pen > top_pen:
+        return bottom_id, top_id
     return None, None
 
 
@@ -149,8 +201,32 @@ async def advance_cup_winner(db: AsyncSession, game: Game) -> dict:
     if not season or season.frontend_code != "cup":
         return result
 
-    # Determine winner/loser
-    winner_id, loser_id = _determine_winner_loser(game)
+    # Gather all legs of this tie within the stage. Two-legged ties have two
+    # games between the same team pair; advancement waits until both finish.
+    legs = [game]
+    if game.stage_id and game.home_team_id and game.away_team_id:
+        sib_result = await db.execute(
+            select(Game).where(
+                Game.stage_id == game.stage_id,
+                Game.id != game.id,
+            )
+        )
+        pair = {game.home_team_id, game.away_team_id}
+        for sibling in sib_result.scalars().all():
+            if {sibling.home_team_id, sibling.away_team_id} == pair:
+                legs.append(sibling)
+
+    # Determine winner/loser (aggregate for two-legged ties)
+    if len(legs) >= 2:
+        if not all(_is_finished(leg) for leg in legs):
+            logger.info(
+                "Two-legged tie for game %s not complete; deferring advancement", game.id
+            )
+            return result
+        winner_id, loser_id = _aggregate_winner_loser(legs)
+    else:
+        winner_id, loser_id = _determine_winner_loser(game)
+
     if winner_id is None:
         logger.info("Cannot determine winner for game %s (draw without penalties?)", game.id)
         return result
@@ -168,19 +244,27 @@ async def advance_cup_winner(db: AsyncSession, game: Game) -> dict:
             current_sort_order = pair.get("sort_order", 1)
             current_side = pair.get("side", "left")
     elif game.stage_id:
-        # No draw — compute position from game order within stage
-        # Mirrors build_playoff_bracket_from_rounds logic
+        # No draw — compute position from tie (team-pair) order within the stage.
+        # Mirrors build_playoff_bracket_from_rounds, which groups legs into ties.
         stage_games = await db.execute(
-            select(Game.id)
+            select(Game)
             .where(Game.stage_id == game.stage_id)
             .order_by(Game.date, Game.time, Game.id)
         )
-        game_ids = [r[0] for r in stage_games.all()]
-        if game.id in game_ids:
-            index = game_ids.index(game.id)
+        pair_order: list[frozenset] = []
+        seen: set[frozenset] = set()
+        for g in stage_games.scalars().all():
+            if not g.home_team_id or not g.away_team_id:
+                continue
+            key = frozenset({g.home_team_id, g.away_team_id})
+            if key not in seen:
+                seen.add(key)
+                pair_order.append(key)
+        my_key = frozenset({game.home_team_id, game.away_team_id})
+        if my_key in pair_order:
+            index = pair_order.index(my_key)
             current_side = "left" if index % 2 == 0 else "right"
-            side_index = index // 2 + 1  # 1-based within each side
-            current_sort_order = side_index
+            current_sort_order = index // 2 + 1  # 1-based within each side
 
     # Advance winner to next round
     if next_round_key:

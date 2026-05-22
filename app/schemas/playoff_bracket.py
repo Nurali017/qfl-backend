@@ -47,6 +47,11 @@ class PlayoffBracketEntry(BaseModel):
     sort_order: int = 1
     is_third_place: bool = False
     game: BracketGameBrief | None = None
+    # Two-legged tie support: when True, ``game`` carries the aggregated result
+    # (sum of both legs, oriented to the first-leg home team) and ``legs`` holds
+    # the two individual matches ordered by date.
+    is_two_legged: bool = False
+    legs: list[BracketGameBrief] = []
 
     class Config:
         from_attributes = True
