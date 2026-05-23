@@ -674,92 +674,18 @@ async def _sync_extended_aggregates_for_season(
     season_id: int,
     tours: set[int] | None = None,
 ) -> dict:
-    """Run season aggregate sync in an isolated session.
+    """Run season aggregate sync with each sub-step in its own session.
 
-    This prevents a season-stats failure from rolling back already-synced
-    game-level extended stats.
+    Delegates to the shared bundle in sync_tasks, which isolates the
+    team/player/tour sub-steps into separate sessions so a hung HTTP call in
+    one step can't keep another step's connection idle-in-transaction, and a
+    failure in step N can't roll back already-synced game-level extended stats.
+    The `season_id` key is kept in the result for callers/tests that read it.
     """
-    from app.services.sync import SyncOrchestrator
+    from app.tasks.sync_tasks import _sync_extended_aggregate_bundle
 
-    tours = tours or set()
-    errors: list[str] = []
-    team_count = 0
-    player_count = 0
-    tour_counts: dict[int, int] = {}
-
-    async with AsyncSessionLocal() as db:
-        orchestrator = SyncOrchestrator(db)
-
-        try:
-            team_count = await orchestrator.sync_team_season_stats(season_id)
-        except OperationalError:
-            # Lock timeout / deadlock — let Celery autoretry the parent task.
-            await db.rollback()
-            raise
-        except Exception as exc:
-            await db.rollback()
-            logger.exception("Team season stats sync failed for season %s", season_id)
-            errors.append(f"team_season_stats: {exc}")
-
-        try:
-            player_count = await orchestrator.sync_player_stats(season_id)
-        except OperationalError:
-            await db.rollback()
-            raise
-        except Exception as exc:
-            await db.rollback()
-            logger.exception("Player season stats sync failed for season %s", season_id)
-            errors.append(f"player_season_stats: {exc}")
-
-        for tour in sorted(tours):
-            try:
-                tour_counts[tour] = await orchestrator.sync_player_tour_stats(season_id, tour)
-            except OperationalError:
-                await db.rollback()
-                raise
-            except Exception as exc:
-                await db.rollback()
-                logger.exception(
-                    "Player tour stats sync failed for season %s tour %s", season_id, tour
-                )
-                errors.append(f"player_tour_stats[{tour}]: {exc}")
-
-        try:
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
-
-        # Mark completed tours and trigger revalidation
-        from app.tasks.tour_readiness import mark_tour_synced, maybe_trigger_tour_revalidation
-
-        season_syncs_ok = not any(
-            "team_season_stats" in e or "player_season_stats" in e for e in errors
-        )
-        marked_tours: list[int] = []
-        for tour in sorted(tours):
-            tour_sync_ok = not any(f"player_tour_stats[{tour}]" in e for e in errors)
-            if season_syncs_ok and tour_sync_ok:
-                await mark_tour_synced(db, season_id, tour)
-                marked_tours.append(tour)
-
-        if marked_tours:
-            await db.commit()
-            for tour in marked_tours:
-                await maybe_trigger_tour_revalidation(db, season_id, tour)
-
-        # Dispatch team-of-week re-sync with extended stats data
-        if marked_tours:
-            from app.tasks.sync_tasks import _dispatch_tow_sync_for_tours
-            await _dispatch_tow_sync_for_tours(season_id, marked_tours, "extended")
-
-    return {
-        "season_id": season_id,
-        "teams": team_count,
-        "players": player_count,
-        "tour_stats": tour_counts,
-        "errors": errors,
-    }
+    bundle_result = await _sync_extended_aggregate_bundle(season_id, tours)
+    return {"season_id": season_id, **bundle_result}
 
 
 @celery_app.task(name="app.tasks.live_tasks.post_finish_followup", soft_time_limit=300, time_limit=360, **_DB_RETRY_KW)

@@ -8,6 +8,24 @@ from app.services.sync.player_sync import PlayerSyncService
 from app.services.sync.player_tour_stats_sync import PlayerTourStatsSyncService
 
 
+class _FakeMutexRedis:
+    """Stand-in for the per-season outer-mutex redis client so tests don't
+    require a live redis (the SET NX always succeeds, DELETE is a no-op)."""
+
+    def set(self, *args, **kwargs):
+        return True
+
+    def delete(self, *args, **kwargs):
+        return 1
+
+
+@pytest.fixture(autouse=True)
+def _fake_outer_mutex_redis(monkeypatch):
+    # Both player_sync and player_tour_stats_sync do `import redis as redis_lib`,
+    # so patching redis.from_url covers the outer-mutex client in both.
+    monkeypatch.setattr("redis.from_url", lambda *a, **k: _FakeMutexRedis())
+
+
 class FakeFetchAllResult:
     def __init__(self, rows):
         self._rows = rows
@@ -199,6 +217,7 @@ async def test_player_tour_stats_logs_summary_only_when_debug_enabled(monkeypatc
         "app.services.sync.player_tour_stats_sync.get_settings",
         lambda: SimpleNamespace(
             debug_sync_timings=True,
+            redis_url="redis://localhost:6379/0",
             sota_dead_season_min_404=30,
             sota_dead_season_404_ratio=0.8,
             sota_dead_season_ttl_seconds=3600,
@@ -228,6 +247,7 @@ async def test_player_tour_stats_does_not_log_summary_when_debug_disabled(monkey
         "app.services.sync.player_tour_stats_sync.get_settings",
         lambda: SimpleNamespace(
             debug_sync_timings=False,
+            redis_url="redis://localhost:6379/0",
             sota_dead_season_min_404=30,
             sota_dead_season_404_ratio=0.8,
             sota_dead_season_ttl_seconds=3600,

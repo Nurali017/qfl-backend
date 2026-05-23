@@ -4,11 +4,21 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+def chunked(seq: Sequence[_T], size: int) -> Iterator[Sequence[_T]]:
+    """Yield successive ``size``-length slices of ``seq``."""
+    for start in range(0, len(seq), size):
+        yield seq[start:start + size]
 
 
 @dataclass

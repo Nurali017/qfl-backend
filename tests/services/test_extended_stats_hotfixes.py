@@ -107,8 +107,14 @@ async def test_sync_extended_stats_for_game_persists_flag_when_aggregates_fail(
         await session.commit()
         game_id = game.id
 
+    from app.tasks import sync_tasks
+
     monkeypatch.setattr("app.services.sync.SyncOrchestrator", FakeSyncOrchestrator)
     monkeypatch.setattr(live_tasks, "AsyncSessionLocal", session_factory)
+    # The season-aggregate bundle now runs in sync_tasks (each sub-step isolated),
+    # so patch the orchestrator/session it actually resolves there too.
+    monkeypatch.setattr(sync_tasks, "SyncOrchestrator", FakeSyncOrchestrator)
+    monkeypatch.setattr(sync_tasks, "AsyncSessionLocal", session_factory)
 
     result = await live_tasks._sync_extended_stats_for_game(game_id)
 

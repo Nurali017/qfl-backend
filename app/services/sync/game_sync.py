@@ -7,9 +7,8 @@ import asyncio
 import logging
 from uuid import UUID
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import selectinload
 
 from app.models import (
     Game, Team, Player, GameTeamStats, GamePlayerStats,
@@ -118,6 +117,10 @@ class GameSyncService(BaseSyncService):
         if not game or not game.sota_id:
             return {"error": f"Game {game_id} not found or has no sota_id", "teams": 0, "players": 0}
         sota_uuid = str(game.sota_id)
+        season_id = game.season_id
+        # Release the connection back to the pool before the get_game_stats HTTP
+        # call (expire_on_commit=False keeps game's attributes usable below).
+        await self.db.commit()
 
         stats_data = await self.client.get_game_stats(sota_uuid)
 
@@ -327,7 +330,7 @@ class GameSyncService(BaseSyncService):
         # Skip for seasons without extended stats (e.g. Вторая Лига)
         v2_count = 0
         from app.config import get_settings
-        if game.season_id in get_settings().extended_stats_season_ids:
+        if season_id in get_settings().extended_stats_season_ids:
             try:
                 v2_count = await self._enrich_with_v2_stats(game_id, sota_uuid)
                 logger.info(f"v2 enrichment: {v2_count} players for game {game_id}")
@@ -490,90 +493,116 @@ class GameSyncService(BaseSyncService):
         return True
 
     async def _enrich_player_stats_from_em(self, game_id: int, sota_game_uuid: str) -> int:
-        """Fetch per-player stats from /em/{id}-players-{side}.json and store in extra_stats."""
+        """Fetch per-player stats from /em/{id}-players-{side}.json and store in extra_stats.
+
+        Collect-then-write: read the sota_id→row map and commit (releasing the
+        connection), fetch both sides with no transaction open, then apply the
+        merged extra_stats via explicit UPDATEs under a short write transaction.
+        """
+        # Phase A — read sota_id -> (row id, current extra_stats); then release.
         result = await self.db.execute(
-            select(GamePlayerStats)
-            .where(GamePlayerStats.game_id == game_id)
-            .options(selectinload(GamePlayerStats.player))
+            select(GamePlayerStats.id, GamePlayerStats.extra_stats, Player.sota_id)
+            .join(Player, Player.id == GamePlayerStats.player_id)
+            .where(GamePlayerStats.game_id == game_id, Player.sota_id.is_not(None))
         )
-        player_stats_rows = list(result.scalars().all())
-
-        # Build lookup: sota_id -> GamePlayerStats row
-        sota_lookup: dict[str, GamePlayerStats] = {}
-        for ps in player_stats_rows:
-            if ps.player and ps.player.sota_id:
-                sota_lookup[str(ps.player.sota_id)] = ps
-
+        sota_lookup: dict[str, tuple[int, dict]] = {
+            str(sota_id): (row_id, extra or {}) for row_id, extra, sota_id in result.all()
+        }
+        await self.db.commit()
         if not sota_lookup:
             return 0
 
+        # Phase B — fetch both sides (no transaction open); build {row_id: extra_stats}.
         SKIP_FIELDS = {"kind", "team", "first_name", "last_name", "full_name", "number"}
-        enriched = 0
-
+        updates: dict[int, dict] = {}
         for side in ("home", "away"):
             try:
                 em_players = await self.client.get_live_match_player_stats(sota_game_uuid, side)
             except Exception as e:
                 logger.warning(f"/em/ player stats for {side} failed: {e}")
                 continue
-
             if not isinstance(em_players, list):
                 continue
-
             for ep in em_players:
                 player_id = ep.get("id")
                 if not player_id:
                     continue
-                ps = sota_lookup.get(str(player_id))
-                if not ps:
+                entry = sota_lookup.get(str(player_id))
+                if not entry:
                     continue
+                row_id, current_extra = entry
                 em_data = {k: v for k, v in ep.items() if k not in SKIP_FIELDS and k != "id"}
                 if em_data:
-                    ps.extra_stats = {**(ps.extra_stats or {}), "em_stats": em_data}
-                    enriched += 1
-
+                    base = updates.get(row_id, current_extra)
+                    updates[row_id] = {**base, "em_stats": em_data}
             await asyncio.sleep(0.2)
 
-        if enriched:
-            await self.db.commit()
-        return enriched
+        # Phase C — write.
+        if not updates:
+            return 0
+        for row_id, extra in updates.items():
+            await self.db.execute(
+                update(GamePlayerStats).where(GamePlayerStats.id == row_id).values(extra_stats=extra)
+            )
+        await self.db.commit()
+        return len(updates)
 
     async def _enrich_with_v2_stats(self, game_id: int, sota_game_uuid: str) -> int:
-        """Fetch v2 per-player stats and merge into extra_stats JSONB."""
+        """Fetch v2 per-player stats and merge into extra_stats JSONB.
+
+        Worst-case path (~22 sequential per-player HTTP calls). Collect-then-write
+        keeps the connection out of the pool only for the final UPDATEs, not for
+        the whole v2 fetch loop.
+        """
+        # Phase A — read the columns we need, then release the connection.
         result = await self.db.execute(
-            select(GamePlayerStats)
-            .where(GamePlayerStats.game_id == game_id)
-            .options(selectinload(GamePlayerStats.player))
+            select(
+                GamePlayerStats.id,
+                GamePlayerStats.extra_stats,
+                GamePlayerStats.minutes_played,
+                GamePlayerStats.pass_accuracy,
+                Player.sota_id,
+            )
+            .join(Player, Player.id == GamePlayerStats.player_id)
+            .where(GamePlayerStats.game_id == game_id, Player.sota_id.is_not(None))
         )
-        player_stats_rows = list(result.scalars().all())
-        enriched = 0
-        for ps in player_stats_rows:
-            if not ps.player or not ps.player.sota_id:
-                continue
+        rows = result.all()
+        await self.db.commit()
+        if not rows:
+            return 0
+
+        # Phase B — fetch v2 per player (no transaction open); build UPDATE payloads.
+        updates: list[tuple[int, dict]] = []
+        for row_id, extra_stats, minutes_played, pass_accuracy, sota_id in rows:
             try:
-                v2_data = await self.client.get_player_game_stats_v2(
-                    str(ps.player.sota_id), sota_game_uuid
-                )
-                if v2_data:
-                    ps.extra_stats = {**(ps.extra_stats or {}), **v2_data}
-                    # Populate main columns from v2 data
-                    if ps.minutes_played is None and v2_data.get("time_on_field_total"):
-                        try:
-                            ps.minutes_played = int(v2_data["time_on_field_total"])
-                        except (ValueError, TypeError):
-                            pass
-                    if ps.pass_accuracy is None and v2_data.get("pass_ratio"):
-                        try:
-                            ps.pass_accuracy = float(v2_data["pass_ratio"])
-                        except (ValueError, TypeError):
-                            pass
-                    enriched += 1
+                v2_data = await self.client.get_player_game_stats_v2(str(sota_id), sota_game_uuid)
             except Exception as e:
-                logger.warning(f"v2 stats failed for player {ps.player_id}: {e}")
+                logger.warning(f"v2 stats failed for sota player {sota_id}: {e}")
+                v2_data = None
+            if v2_data:
+                values: dict = {"extra_stats": {**(extra_stats or {}), **v2_data}}
+                if minutes_played is None and v2_data.get("time_on_field_total"):
+                    try:
+                        values["minutes_played"] = int(v2_data["time_on_field_total"])
+                    except (ValueError, TypeError):
+                        pass
+                if pass_accuracy is None and v2_data.get("pass_ratio"):
+                    try:
+                        values["pass_accuracy"] = float(v2_data["pass_ratio"])
+                    except (ValueError, TypeError):
+                        pass
+                updates.append((row_id, values))
             await asyncio.sleep(0.2)
-        if enriched:
-            await self.db.commit()
-        return enriched
+
+        # Phase C — write.
+        if not updates:
+            return 0
+        for row_id, values in updates:
+            await self.db.execute(
+                update(GamePlayerStats).where(GamePlayerStats.id == row_id).values(**values)
+            )
+        await self.db.commit()
+        return len(updates)
 
     async def _get_or_create_player_by_sota(
         self,

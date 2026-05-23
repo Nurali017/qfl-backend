@@ -18,10 +18,9 @@ from sqlalchemy.exc import DBAPIError
 # Separate from player_season_stats / team_season_stats namespaces.
 _PLAYER_TOUR_STATS_LOCK_NS = 3
 _LOCK_TIMEOUT = "60s"
-# Batch commit by *processed* count + time cap. See player_sync for the rationale.
-_BATCH_PROCESSED_SIZE = 15
-_BATCH_TIME_CAP_SECONDS = 60.0
 _OUTER_LOCK_TTL_SECONDS = 7200
+# See player_sync._WRITE_CHUNK_SIZE — fetch a chunk (no tx), then persist it.
+_WRITE_CHUNK_SIZE = 500
 
 from app.config import get_settings
 from app.models import Player, PlayerTeam
@@ -30,6 +29,7 @@ from app.services.sync.base import BaseSyncService, PLAYER_SEASON_STATS_FIELDS
 from app.services.sync.guardrails import (
     DeadSeasonCounters,
     SyncTimingMetrics,
+    chunked,
     is_dead_season_pair,
     mark_dead_season_pair,
 )
@@ -37,10 +37,6 @@ from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
 
-
-class _SkipPlayer(Exception):
-    """Internal sentinel to fall through to the batch-commit check
-    without bypassing it via `continue`."""
 
 # Fields we store as proper columns (subset of PLAYER_SEASON_STATS_FIELDS)
 PLAYER_TOUR_STATS_COLUMNS = {
@@ -60,7 +56,7 @@ class PlayerTourStatsSyncService(BaseSyncService):
         return bool(stats and stats.get("games_played"))
 
     async def _acquire_tx_locks(self, season_id: int) -> None:
-        """Per-tx lock_timeout + advisory_xact_lock; reapplied after batch commits."""
+        """Per-tx lock_timeout + advisory_xact_lock; taken once before the write phase."""
         await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
         await self.db.execute(
             text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
@@ -98,8 +94,14 @@ class PlayerTourStatsSyncService(BaseSyncService):
                 )
 
     async def _sync_tour_locked(self, season_id: int, tour: int) -> int:
-        await self._acquire_tx_locks(season_id)
-        # Get all players in this season with their team
+        """Collect-then-write: fetch every player's tour stats from SOTA with no
+        transaction open, then persist them under one short write transaction.
+
+        See player_sync._sync_player_season_stats_locked for the rationale —
+        keeping HTTP out of the transaction is what avoids idle-in-transaction
+        pool starvation and long advisory-lock holds.
+        """
+        # Phase A — reads, then commit to release the connection for the fetch.
         player_teams_result = await self.db.execute(
             select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
             .join(Player, Player.id == PlayerTeam.player_id)
@@ -109,166 +111,31 @@ class PlayerTourStatsSyncService(BaseSyncService):
             )
         )
         player_teams = list(player_teams_result.fetchall())
-
         if not player_teams:
             logger.info("No players with sota_id for season %d", season_id)
+            await self.db.rollback()  # leave the session clean for the caller
             return 0
-
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
-        dead_counters = {sid: DeadSeasonCounters() for sid in sota_season_ids}
-        dead_sota_ids: set[int] = set()
-        logged_dead_pairs: set[tuple[int, int]] = set()
+        await self.db.commit()
+
         settings = get_settings()
         timings = SyncTimingMetrics(enabled=settings.debug_sync_timings)
 
+        # Dead-pair state persists across chunks (a pair marked dead early is
+        # skipped for the rest of the season).
+        dead_counters = {sid: DeadSeasonCounters() for sid in sota_season_ids}
+        dead_sota_ids: set[int] = set()
+        logged_dead_pairs: set[tuple[int, int]] = set()
+
+        # Fetch a chunk (no tx open), then persist it under one short write tx.
         count = 0
-        processed_since_commit = 0
-        last_commit_ts = time.monotonic()
-        for player_id, team_id, sota_id in player_teams:
-            timings.players_processed += 1
-            processed_since_commit += 1
-            try:
-                # Try each SOTA season ID (player belongs to one conference)
-                stats = {}
-                for sid in sota_season_ids:
-                    pair = (season_id, sid)
-                    if sid in dead_sota_ids or await is_dead_season_pair(season_id, sid):
-                        dead_sota_ids.add(sid)
-                        if pair not in logged_dead_pairs:
-                            logger.info(
-                                "Skipping dead SOTA pair for player tour stats local=%s sota=%s",
-                                season_id,
-                                sid,
-                            )
-                            logged_dead_pairs.add(pair)
-                        continue
+        for chunk in chunked(player_teams, _WRITE_CHUNK_SIZE):
+            collected = await self._fetch_tour_stats(
+                season_id, tour, chunk, sota_season_ids, timings,
+                dead_counters, dead_sota_ids, logged_dead_pairs,
+            )
+            count += await self._write_tour_stats(season_id, tour, collected, timings)
 
-                    fetch_started = time.monotonic()
-                    try:
-                        stats = await self.client.get_player_game_stats_v2_by_tour(
-                            str(sota_id), sid, tour
-                        )
-                    except httpx.HTTPStatusError as exc:
-                        timings.add_fetch(time.monotonic() - fetch_started)
-                        if exc.response is not None and exc.response.status_code == 404:
-                            counters = dead_counters[sid]
-                            counters.record_not_found()
-                            timings.not_found_count += 1
-                            if counters.should_mark_dead():
-                                await mark_dead_season_pair(season_id, sid)
-                                dead_sota_ids.add(sid)
-                                if pair not in logged_dead_pairs:
-                                    logger.warning(
-                                        "Marked dead SOTA pair for player tour stats local=%s sota=%s attempted=%s not_found=%s",
-                                        season_id,
-                                        sid,
-                                        counters.attempted,
-                                        counters.not_found,
-                                    )
-                                    logged_dead_pairs.add(pair)
-                            continue
-                        raise
-                    else:
-                        timings.add_fetch(time.monotonic() - fetch_started)
-                        if self._has_useful_stats(stats):
-                            dead_counters[sid].record_success()
-                            timings.success_count += 1
-                        else:
-                            dead_counters[sid].record_empty()
-
-                    if self._has_useful_stats(stats):
-                        break
-
-                if not stats:
-                    raise _SkipPlayer
-
-                # Separate known columns from extra stats
-                extra_stats = {
-                    k: v for k, v in stats.items()
-                    if k not in PLAYER_SEASON_STATS_FIELDS
-                }
-
-                now = utcnow()
-                stmt = insert(PlayerTourStats).values(
-                    player_id=player_id,
-                    season_id=season_id,
-                    team_id=team_id,
-                    tour=tour,
-                    games_played=stats.get("games_played"),
-                    time_on_field_total=stats.get("time_on_field_total"),
-                    goal=stats.get("goal"),
-                    goal_pass=stats.get("goal_pass"),
-                    shot=stats.get("shot"),
-                    passes=stats.get("pass"),
-                    pass_ratio=stats.get("pass_ratio"),
-                    xg=stats.get("xg"),
-                    duel=stats.get("duel"),
-                    tackle=stats.get("tackle"),
-                    yellow_cards=stats.get("yellow_cards"),
-                    red_cards=stats.get("red_cards"),
-                    extra_stats=extra_stats if extra_stats else None,
-                    updated_at=now,
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["player_id", "season_id", "tour"],
-                    set_={
-                        "team_id": stmt.excluded.team_id,
-                        "games_played": stmt.excluded.games_played,
-                        "time_on_field_total": stmt.excluded.time_on_field_total,
-                        "goal": stmt.excluded.goal,
-                        "goal_pass": stmt.excluded.goal_pass,
-                        "shot": stmt.excluded.shot,
-                        "passes": stmt.excluded.passes,
-                        "pass_ratio": stmt.excluded.pass_ratio,
-                        "xg": stmt.excluded.xg,
-                        "duel": stmt.excluded.duel,
-                        "tackle": stmt.excluded.tackle,
-                        "yellow_cards": stmt.excluded.yellow_cards,
-                        "red_cards": stmt.excluded.red_cards,
-                        "extra_stats": stmt.excluded.extra_stats,
-                        "updated_at": stmt.excluded.updated_at,
-                    },
-                )
-                db_started = time.monotonic()
-                upsert_ok = False
-                try:
-                    async with self.db.begin_nested():
-                        await self.db.execute(stmt)
-                    upsert_ok = True
-                except DBAPIError as db_exc:
-                    logger.warning(
-                        "DB error upserting player_tour_stats for player %d season %d tour %d: %s",
-                        player_id, season_id, tour, db_exc,
-                    )
-                if upsert_ok:
-                    timings.add_db(time.monotonic() - db_started)
-                    count += 1
-            except _SkipPlayer:
-                pass  # no stats for this player — skip to batch-commit check
-            except Exception as e:
-                logger.warning(
-                    "Failed to sync tour stats for player %d, season %d, tour %d: %s",
-                    player_id, season_id, tour, e,
-                )
-                # fall through to sleep + batch-commit check
-
-            sleep_started = time.monotonic()
-            await asyncio.sleep(0.15)
-            timings.add_sleep(time.monotonic() - sleep_started)
-
-            # Bound outer-tx age. Trigger by processed count + time cap so a
-            # season where SOTA mostly 404s still commits regularly.
-            now_mono = time.monotonic()
-            if (
-                processed_since_commit >= _BATCH_PROCESSED_SIZE
-                or (now_mono - last_commit_ts) >= _BATCH_TIME_CAP_SECONDS
-            ):
-                await self.db.commit()
-                await self._acquire_tx_locks(season_id)
-                processed_since_commit = 0
-                last_commit_ts = time.monotonic()
-
-        await self.db.commit()
         timings.log_summary(
             service="player_tour_stats",
             season_id=season_id,
@@ -279,6 +146,185 @@ class PlayerTourStatsSyncService(BaseSyncService):
             count, season_id, tour,
         )
         return count
+
+    async def _write_tour_stats(
+        self,
+        season_id: int,
+        tour: int,
+        collected: list[tuple[int, int, dict]],
+        timings: SyncTimingMetrics,
+    ) -> int:
+        """Persist one chunk of collected tour stats under a short write tx.
+
+        Skips the advisory lock / transaction entirely when nothing was
+        collected.
+        """
+        if not collected:
+            return 0
+        await self._acquire_tx_locks(season_id)
+        count = 0
+        for player_id, team_id, stats in collected:
+            stmt = self._build_tour_upsert(player_id, team_id, season_id, tour, stats)
+            db_started = time.monotonic()
+            try:
+                async with self.db.begin_nested():
+                    await self.db.execute(stmt)
+            except DBAPIError as db_exc:
+                logger.warning(
+                    "DB error upserting player_tour_stats for player %d season %d tour %d: %s",
+                    player_id, season_id, tour, db_exc,
+                )
+                continue
+            timings.add_db(time.monotonic() - db_started)
+            count += 1
+        await self.db.commit()
+        return count
+
+    async def _fetch_tour_stats(
+        self,
+        season_id: int,
+        tour: int,
+        player_teams: list,
+        sota_season_ids: list[int],
+        timings: SyncTimingMetrics,
+        dead_counters: dict,
+        dead_sota_ids: set[int],
+        logged_dead_pairs: set,
+    ) -> list[tuple[int, int, dict]]:
+        """Fetch tour stats for a chunk of players from SOTA (no DB transaction).
+
+        Returns ``(player_id, team_id, stats)`` only for players with useful
+        stats. Keeps the small per-player sleep to stay polite to SOTA.
+        Dead-pair state is passed in so it persists across chunks.
+        """
+        collected: list[tuple[int, int, dict]] = []
+
+        for player_id, team_id, sota_id in player_teams:
+            timings.players_processed += 1
+            try:
+                stats = await self._fetch_one_tour_stats(
+                    season_id, tour, sota_id, sota_season_ids,
+                    dead_counters, dead_sota_ids, logged_dead_pairs, timings,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to fetch tour stats for player %d, season %d, tour %d: %s",
+                    player_id, season_id, tour, e,
+                )
+                stats = {}
+            if self._has_useful_stats(stats):
+                collected.append((player_id, team_id, stats))
+
+            sleep_started = time.monotonic()
+            await asyncio.sleep(0.15)
+            timings.add_sleep(time.monotonic() - sleep_started)
+        return collected
+
+    async def _fetch_one_tour_stats(
+        self,
+        season_id: int,
+        tour: int,
+        sota_id: int,
+        sota_season_ids: list[int],
+        dead_counters: dict,
+        dead_sota_ids: set[int],
+        logged_dead_pairs: set,
+        timings: SyncTimingMetrics,
+    ) -> dict:
+        """Try each SOTA season id until useful tour stats are found."""
+        stats: dict = {}
+        for sid in sota_season_ids:
+            pair = (season_id, sid)
+            if sid in dead_sota_ids or await is_dead_season_pair(season_id, sid):
+                dead_sota_ids.add(sid)
+                if pair not in logged_dead_pairs:
+                    logger.info(
+                        "Skipping dead SOTA pair for player tour stats local=%s sota=%s",
+                        season_id, sid,
+                    )
+                    logged_dead_pairs.add(pair)
+                continue
+
+            fetch_started = time.monotonic()
+            try:
+                stats = await self.client.get_player_game_stats_v2_by_tour(
+                    str(sota_id), sid, tour
+                )
+            except httpx.HTTPStatusError as exc:
+                timings.add_fetch(time.monotonic() - fetch_started)
+                if exc.response is not None and exc.response.status_code == 404:
+                    counters = dead_counters[sid]
+                    counters.record_not_found()
+                    timings.not_found_count += 1
+                    if counters.should_mark_dead():
+                        await mark_dead_season_pair(season_id, sid)
+                        dead_sota_ids.add(sid)
+                        if pair not in logged_dead_pairs:
+                            logger.warning(
+                                "Marked dead SOTA pair for player tour stats local=%s sota=%s attempted=%s not_found=%s",
+                                season_id, sid, counters.attempted, counters.not_found,
+                            )
+                            logged_dead_pairs.add(pair)
+                    continue
+                raise
+            timings.add_fetch(time.monotonic() - fetch_started)
+            if self._has_useful_stats(stats):
+                dead_counters[sid].record_success()
+                timings.success_count += 1
+                break
+            dead_counters[sid].record_empty()
+        return stats
+
+    def _build_tour_upsert(
+        self, player_id: int, team_id: int, season_id: int, tour: int, stats: dict
+    ):
+        """Build the PlayerTourStats upsert statement for one player."""
+        # Separate known columns from extra stats
+        extra_stats = {
+            k: v for k, v in stats.items()
+            if k not in PLAYER_SEASON_STATS_FIELDS
+        }
+
+        stmt = insert(PlayerTourStats).values(
+            player_id=player_id,
+            season_id=season_id,
+            team_id=team_id,
+            tour=tour,
+            games_played=stats.get("games_played"),
+            time_on_field_total=stats.get("time_on_field_total"),
+            goal=stats.get("goal"),
+            goal_pass=stats.get("goal_pass"),
+            shot=stats.get("shot"),
+            passes=stats.get("pass"),
+            pass_ratio=stats.get("pass_ratio"),
+            xg=stats.get("xg"),
+            duel=stats.get("duel"),
+            tackle=stats.get("tackle"),
+            yellow_cards=stats.get("yellow_cards"),
+            red_cards=stats.get("red_cards"),
+            extra_stats=extra_stats if extra_stats else None,
+            updated_at=utcnow(),
+        )
+        return stmt.on_conflict_do_update(
+            index_elements=["player_id", "season_id", "tour"],
+            set_={
+                "team_id": stmt.excluded.team_id,
+                "games_played": stmt.excluded.games_played,
+                "time_on_field_total": stmt.excluded.time_on_field_total,
+                "goal": stmt.excluded.goal,
+                "goal_pass": stmt.excluded.goal_pass,
+                "shot": stmt.excluded.shot,
+                "passes": stmt.excluded.passes,
+                "pass_ratio": stmt.excluded.pass_ratio,
+                "xg": stmt.excluded.xg,
+                "duel": stmt.excluded.duel,
+                "tackle": stmt.excluded.tackle,
+                "yellow_cards": stmt.excluded.yellow_cards,
+                "red_cards": stmt.excluded.red_cards,
+                "extra_stats": stmt.excluded.extra_stats,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
 
     async def backfill_season(self, season_id: int, max_tour: int) -> dict:
         """

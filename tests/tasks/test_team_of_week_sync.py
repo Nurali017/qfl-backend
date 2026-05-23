@@ -406,10 +406,12 @@ async def test_tow_extended_dispatch_in_live_aggregate_path():
     mock_revalidate = AsyncMock()
     mock_dispatch = AsyncMock()
 
-    with patch("app.tasks.live_tasks.AsyncSessionLocal") as mock_session:
+    # The live aggregate path now delegates to sync_tasks._sync_extended_aggregate_bundle,
+    # which resolves AsyncSessionLocal/SyncOrchestrator from the sync_tasks module.
+    with patch("app.tasks.sync_tasks.AsyncSessionLocal") as mock_session:
         mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session.return_value.__aexit__ = AsyncMock(return_value=False)
-        with patch("app.services.sync.SyncOrchestrator", return_value=mock_orch):
+        with patch("app.tasks.sync_tasks.SyncOrchestrator", return_value=mock_orch):
             with patch("app.tasks.tour_readiness.mark_tour_synced", mock_mark):
                 with patch(
                     "app.tasks.tour_readiness.maybe_trigger_tour_revalidation",

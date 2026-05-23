@@ -28,22 +28,20 @@ _BEST_PLAYERS_LOCK_NS = 2
 # Bound advisory-lock wait so the task doesn't hold a Celery soft-time-limit slot
 # blocked on a stuck writer. On timeout asyncpg raises LockNotAvailableError → Celery retry.
 _LOCK_TIMEOUT = "60s"
-# Bound outer-tx age. Counted by *processed* players (not successful upserts):
-# a season where SOTA mostly returns 404/empty would otherwise commit rarely.
-# Time cap is the real safety net — a single player can take up to ~90s in the
-# worst case (SotaClient retries 3× with 30s timeout each), so 15 × 90s would
-# still be 22 min without it.
-_BATCH_PROCESSED_SIZE = 15
-_BATCH_TIME_CAP_SECONDS = 60.0
 # Outer-job mutex TTL (Redis). sync_player_season_stats / sync_player_tour_stats
 # rarely take >30 min even on slow SOTA; 2h is a defensive ceiling so a crashed
 # worker can't permanently lock the season.
 _OUTER_LOCK_TTL_SECONDS = 7200
+# Write-phase chunk size: fetch this many players (no tx open), persist them in
+# one short write transaction, then move to the next chunk. Bounds peak RAM and
+# the write-tx / advisory-lock hold time. PL (~300 players) fits in one chunk.
+_WRITE_CHUNK_SIZE = 500
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
 from app.services.sync.guardrails import (
     DeadSeasonCounters,
     SyncTimingMetrics,
+    chunked,
     is_dead_season_pair,
     mark_dead_season_pair,
 )
@@ -52,11 +50,6 @@ from app.config import get_settings
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
-
-
-class _SkipPlayer(Exception):
-    """Internal sentinel: exit the per-player try-block without `continue`,
-    so we still hit the batch-commit check at the bottom of the loop body."""
 
 
 class PlayerSyncService(BaseSyncService):
@@ -82,18 +75,33 @@ class PlayerSyncService(BaseSyncService):
         Returns:
             Number of player stats rows upserted
         """
-        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
-        await self.db.execute(
-            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
-            {"ns": _BEST_PLAYERS_LOCK_NS, "sid": season_id},
-        )
+        # Phase A — reads. Resolve SOTA season ids and the active player→team
+        # lookup, then commit so the connection is free during the HTTP fetch.
+        # (Decouples HTTP from the advisory-locked transaction — the incident
+        # that motivated this refactor explicitly involved sync_best_players.)
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
+        player_teams_result = await self.db.execute(
+            select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
+            .join(Player, Player.id == PlayerTeam.player_id)
+            .where(
+                PlayerTeam.season_id == season_id,
+                PlayerTeam.is_active == True,
+                Player.sota_id.is_not(None),
+            )
+        )
+        lookup: dict[str, tuple[int, int]] = {
+            str(sota_id): (player_id, team_id)
+            for player_id, team_id, sota_id in player_teams_result.fetchall()
+        }
+        await self.db.commit()
+        if not lookup:
+            logger.info("No active player-team mappings for season %d", season_id)
+            return 0
 
-        # Fetch top scorers, assisters, and clean sheets across all SOTA seasons
+        # Phase B — fetch top scorers, assisters, clean sheets (no transaction open).
         scorers: list = []
         assisters: list = []
         keepers: list = []
-
         for sota_season_id in sota_season_ids:
             try:
                 scorers.extend(await self.client.get_best_players(sota_season_id, metric="goal"))
@@ -112,24 +120,6 @@ class PlayerSyncService(BaseSyncService):
 
         if not scorers and not assisters and not keepers:
             logger.info("No best_players data for season %d, skipping", season_id)
-            return 0
-
-        # Build lookup: sota_id (str) -> (player_id, team_id)
-        player_teams_result = await self.db.execute(
-            select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
-            .join(Player, Player.id == PlayerTeam.player_id)
-            .where(
-                PlayerTeam.season_id == season_id,
-                PlayerTeam.is_active == True,
-                Player.sota_id.is_not(None),
-            )
-        )
-        lookup: dict[str, tuple[int, int]] = {}
-        for player_id, team_id, sota_id in player_teams_result.fetchall():
-            lookup[str(sota_id)] = (player_id, team_id)
-
-        if not lookup:
-            logger.info("No active player-team mappings for season %d", season_id)
             return 0
 
         # Merge scorers + assisters + keepers into a combined dict keyed by sota_id
@@ -163,6 +153,12 @@ class PlayerSyncService(BaseSyncService):
                     entry["dry_match_rank"] = rank
                 except (ValueError, TypeError):
                     pass
+        # Phase C — write under the best_players advisory lock (NS=2).
+        await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, :sid)"),
+            {"ns": _BEST_PLAYERS_LOCK_NS, "sid": season_id},
+        )
         # Track which players we actually upsert so we can null-out ranks only
         # for the "orphaned" rest in a single WHERE NOT IN sweep at the end.
         # Order matters: do the upserts first (each row gets its fresh rank),
@@ -230,13 +226,13 @@ class PlayerSyncService(BaseSyncService):
         return count
 
     async def _acquire_player_stats_tx_locks(self, season_id: int) -> None:
-        """Set per-tx lock_timeout and re-take the per-season advisory lock.
+        """Set per-tx lock_timeout and take the per-season advisory lock.
 
-        Called at task start AND after every batch commit, because both
-        SET LOCAL and pg_advisory_xact_lock are transaction-scoped: once we
-        commit, they're released and must be reacquired for the next batch.
-        Sub-second gap between commit and re-lock is acceptable — concurrent
-        sync_best_players (NS=2) is on a different namespace and only
+        Called once at the start of the write phase (after the HTTP fetch phase
+        has already collected every player's stats with no transaction open).
+        Both SET LOCAL and pg_advisory_xact_lock are transaction-scoped and are
+        released by the single commit that ends the write phase. Concurrent
+        sync_best_players (NS=2) is on a different namespace; only
         sync_player_season_stats itself can race here (NS=1).
         """
         await self.db.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
@@ -285,8 +281,15 @@ class PlayerSyncService(BaseSyncService):
                 logger.warning("Failed to release outer lock for season %d: %s", season_id, exc)
 
     async def _sync_player_season_stats_locked(self, season_id: int) -> int:
-        await self._acquire_player_stats_tx_locks(season_id)
-        # Get all players in this season with their team
+        """Collect-then-write: fetch every player's stats from SOTA with no
+        transaction open, then persist them under one short write transaction.
+
+        Decoupling HTTP from the transaction is what keeps connections out of
+        ``idle in transaction`` and shrinks the advisory-lock hold time to just
+        the (fast, local) write phase — see the extended-stats incident notes.
+        """
+        # Phase A — reads. Resolve the player roster and SOTA season ids, then
+        # commit so the connection returns to the pool for the fetch phase.
         player_teams_result = await self.db.execute(
             select(PlayerTeam.player_id, PlayerTeam.team_id, Player.sota_id)
             .join(Player, Player.id == PlayerTeam.player_id)
@@ -296,267 +299,307 @@ class PlayerSyncService(BaseSyncService):
             )
         )
         player_teams = list(player_teams_result.fetchall())
-
         if not player_teams:
+            await self.db.rollback()  # leave the session clean for the caller
             return 0
-
         # Resolve all SOTA season IDs (usually 1, but 2L has SW+NE)
         sota_season_ids = await self.get_all_sota_season_ids(season_id)
-        dead_counters = {sid: DeadSeasonCounters() for sid in sota_season_ids}
-        dead_sota_ids: set[int] = set()
-        logged_dead_pairs: set[tuple[int, int]] = set()
+        await self.db.commit()
+
         settings = get_settings()
         timings = SyncTimingMetrics(enabled=settings.debug_sync_timings)
 
+        # Dead-pair state must persist across chunks so a pair marked dead in an
+        # early chunk is skipped for the rest of the season.
+        dead_counters = {sid: DeadSeasonCounters() for sid in sota_season_ids}
+        dead_sota_ids: set[int] = set()
+        logged_dead_pairs: set[tuple[int, int]] = set()
+
+        # Process in chunks: fetch a chunk (no tx open), then persist it under one
+        # short write transaction. Bounds RAM and write-tx/advisory-lock hold time.
         count = 0
-        processed_since_commit = 0
-        last_commit_ts = time.monotonic()
-        for player_id, team_id, sota_id in player_teams:
-            timings.players_processed += 1
-            processed_since_commit += 1
-            try:
-                # Try each SOTA season ID until we get stats (player belongs to one conference)
-                stats = {}
-                for sid in sota_season_ids:
-                    pair = (season_id, sid)
-                    if sid in dead_sota_ids or await is_dead_season_pair(season_id, sid):
-                        dead_sota_ids.add(sid)
-                        if pair not in logged_dead_pairs:
-                            logger.info(
-                                "Skipping dead SOTA pair for player season stats local=%s sota=%s",
-                                season_id,
-                                sid,
-                            )
-                            logged_dead_pairs.add(pair)
-                        continue
+        for chunk in chunked(player_teams, _WRITE_CHUNK_SIZE):
+            collected = await self._fetch_player_season_stats(
+                season_id, chunk, sota_season_ids, timings,
+                dead_counters, dead_sota_ids, logged_dead_pairs,
+            )
+            count += await self._write_season_stats(season_id, collected, timings)
 
-                    fetch_started = time.monotonic()
-                    try:
-                        stats = await self.client.get_player_season_stats(str(sota_id), sid)
-                    except httpx.HTTPStatusError as exc:
-                        timings.add_fetch(time.monotonic() - fetch_started)
-                        if exc.response is not None and exc.response.status_code == 404:
-                            counters = dead_counters[sid]
-                            counters.record_not_found()
-                            timings.not_found_count += 1
-                            if counters.should_mark_dead():
-                                await mark_dead_season_pair(season_id, sid)
-                                dead_sota_ids.add(sid)
-                                if pair not in logged_dead_pairs:
-                                    logger.warning(
-                                        "Marked dead SOTA pair for player season stats local=%s sota=%s attempted=%s not_found=%s",
-                                        season_id,
-                                        sid,
-                                        counters.attempted,
-                                        counters.not_found,
-                                    )
-                                    logged_dead_pairs.add(pair)
-                            continue
-                        raise
-                    else:
-                        timings.add_fetch(time.monotonic() - fetch_started)
-                        if self._has_useful_stats(stats):
-                            dead_counters[sid].record_success()
-                            timings.success_count += 1
-                        else:
-                            dead_counters[sid].record_empty()
-
-                    if self._has_useful_stats(stats):
-                        break
-
-                # If we have no stats we still need to reach the batch-commit
-                # check at the bottom — use a flag instead of `continue`.
-                if not stats:
-                    raise _SkipPlayer
-
-                # Extract extra stats (fields not in our known list)
-                extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}
-
-                stmt = insert(PlayerSeasonStats).values(
-                    player_id=player_id,
-                    season_id=season_id,
-                    team_id=team_id,
-                    # Basic stats
-                    games_played=stats.get("games_played"),
-                    games_starting=stats.get("games_starting"),
-                    games_as_subst=stats.get("games_as_subst"),
-                    games_be_subst=stats.get("games_be_subst"),
-                    games_unused=stats.get("games_unused"),
-                    time_on_field_total=stats.get("time_on_field_total"),
-                    # Goals & Assists
-                    goal=stats.get("goal"),
-                    goal_pass=stats.get("goal_pass"),
-                    goal_and_assist=stats.get("goal_and_assist"),
-                    goal_out_box=stats.get("goal_out_box"),
-                    owngoal=stats.get("owngoal"),
-                    penalty_success=stats.get("penalty_success"),
-                    xg=stats.get("xg"),
-                    xg_per_90=stats.get("xg_per_90"),
-                    # Shots
-                    shot=stats.get("shot"),
-                    shots_on_goal=stats.get("shots_on_goal"),
-                    shots_blocked_opponent=stats.get("shots_blocked_opponent"),
-                    # Passes
-                    passes=stats.get("pass"),
-                    pass_ratio=stats.get("pass_ratio"),
-                    pass_acc=stats.get("pass_acc"),
-                    key_pass=stats.get("key_pass"),
-                    pass_forward=stats.get("pass_forward"),
-                    pass_forward_ratio=stats.get("pass_forward_ratio"),
-                    pass_progressive=stats.get("pass_progressive"),
-                    pass_cross=stats.get("pass_cross"),
-                    pass_cross_acc=stats.get("pass_cross_acc"),
-                    pass_cross_ratio=stats.get("pass_cross_ratio"),
-                    pass_cross_per_90=stats.get("pass_cross_per_90"),
-                    pass_to_box=stats.get("pass_to_box"),
-                    pass_to_box_ratio=stats.get("pass_to_box_ratio"),
-                    pass_to_3rd=stats.get("pass_to_3rd"),
-                    pass_to_3rd_ratio=stats.get("pass_to_3rd_ratio"),
-                    # Duels
-                    duel=stats.get("duel"),
-                    duel_success=stats.get("duel_success"),
-                    aerial_duel=stats.get("aerial_duel"),
-                    aerial_duel_success=stats.get("aerial_duel_success"),
-                    ground_duel=stats.get("ground_duel"),
-                    ground_duel_success=stats.get("ground_duel_success"),
-                    # Defense
-                    tackle=stats.get("tackle"),
-                    tackle_per_90=stats.get("tackle_per_90"),
-                    interception=stats.get("interception"),
-                    recovery=stats.get("recovery"),
-                    # Dribbles
-                    dribble=stats.get("dribble"),
-                    dribble_success=stats.get("dribble_success"),
-                    dribble_per_90=stats.get("dribble_per_90"),
-                    # Other
-                    corner=stats.get("corner"),
-                    offside=stats.get("offside"),
-                    foul=stats.get("foul"),
-                    foul_taken=stats.get("foul_taken"),
-                    # Discipline
-                    yellow_cards=stats.get("yellow_cards"),
-                    second_yellow_cards=stats.get("second_yellow_cards"),
-                    red_cards=stats.get("red_cards"),
-                    # Goalkeeper
-                    goals_conceded=stats.get("goals_conceded"),
-                    goals_conceded_penalty=stats.get("goals_conceded_penalty"),
-                    goals_conceeded_per_90=stats.get("goals_conceeded_per_90"),
-                    save_shot=stats.get("save_shot"),
-                    save_shot_ratio=stats.get("save_shot_ratio"),
-                    saved_shot_per_90=stats.get("saved_shot_per_90"),
-                    save_shot_penalty=stats.get("save_shot_penalty"),
-                    save_shot_penalty_success=stats.get("save_shot_penalty_success"),
-                    dry_match=stats.get("dry_match"),
-                    exit=stats.get("exit"),
-                    exit_success=stats.get("exit_success"),
-                    # Extra stats for unknown fields
-                    extra_stats=extra_stats if extra_stats else None,
-                    updated_at=utcnow(),
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["player_id", "season_id"],
-                    set_={
-                        "team_id": stmt.excluded.team_id,
-                        "games_played": stmt.excluded.games_played,
-                        "games_starting": stmt.excluded.games_starting,
-                        "games_as_subst": stmt.excluded.games_as_subst,
-                        "games_be_subst": stmt.excluded.games_be_subst,
-                        "games_unused": stmt.excluded.games_unused,
-                        "time_on_field_total": stmt.excluded.time_on_field_total,
-                        "goal": stmt.excluded.goal,
-                        "goal_pass": stmt.excluded.goal_pass,
-                        "goal_and_assist": stmt.excluded.goal_and_assist,
-                        "goal_out_box": stmt.excluded.goal_out_box,
-                        "owngoal": stmt.excluded.owngoal,
-                        "penalty_success": stmt.excluded.penalty_success,
-                        "xg": stmt.excluded.xg,
-                        "xg_per_90": stmt.excluded.xg_per_90,
-                        "shot": stmt.excluded.shot,
-                        "shots_on_goal": stmt.excluded.shots_on_goal,
-                        "shots_blocked_opponent": stmt.excluded.shots_blocked_opponent,
-                        "passes": stmt.excluded.passes,
-                        "pass_ratio": stmt.excluded.pass_ratio,
-                        "pass_acc": stmt.excluded.pass_acc,
-                        "key_pass": stmt.excluded.key_pass,
-                        "pass_forward": stmt.excluded.pass_forward,
-                        "pass_forward_ratio": stmt.excluded.pass_forward_ratio,
-                        "pass_progressive": stmt.excluded.pass_progressive,
-                        "pass_cross": stmt.excluded.pass_cross,
-                        "pass_cross_acc": stmt.excluded.pass_cross_acc,
-                        "pass_cross_ratio": stmt.excluded.pass_cross_ratio,
-                        "pass_cross_per_90": stmt.excluded.pass_cross_per_90,
-                        "pass_to_box": stmt.excluded.pass_to_box,
-                        "pass_to_box_ratio": stmt.excluded.pass_to_box_ratio,
-                        "pass_to_3rd": stmt.excluded.pass_to_3rd,
-                        "pass_to_3rd_ratio": stmt.excluded.pass_to_3rd_ratio,
-                        "duel": stmt.excluded.duel,
-                        "duel_success": stmt.excluded.duel_success,
-                        "aerial_duel": stmt.excluded.aerial_duel,
-                        "aerial_duel_success": stmt.excluded.aerial_duel_success,
-                        "ground_duel": stmt.excluded.ground_duel,
-                        "ground_duel_success": stmt.excluded.ground_duel_success,
-                        "tackle": stmt.excluded.tackle,
-                        "tackle_per_90": stmt.excluded.tackle_per_90,
-                        "interception": stmt.excluded.interception,
-                        "recovery": stmt.excluded.recovery,
-                        "dribble": stmt.excluded.dribble,
-                        "dribble_success": stmt.excluded.dribble_success,
-                        "dribble_per_90": stmt.excluded.dribble_per_90,
-                        "corner": stmt.excluded.corner,
-                        "offside": stmt.excluded.offside,
-                        "foul": stmt.excluded.foul,
-                        "foul_taken": stmt.excluded.foul_taken,
-                        "yellow_cards": stmt.excluded.yellow_cards,
-                        "second_yellow_cards": stmt.excluded.second_yellow_cards,
-                        "red_cards": stmt.excluded.red_cards,
-                        "goals_conceded": stmt.excluded.goals_conceded,
-                        "goals_conceded_penalty": stmt.excluded.goals_conceded_penalty,
-                        "goals_conceeded_per_90": stmt.excluded.goals_conceeded_per_90,
-                        "save_shot": stmt.excluded.save_shot,
-                        "save_shot_ratio": stmt.excluded.save_shot_ratio,
-                        "saved_shot_per_90": stmt.excluded.saved_shot_per_90,
-                        "save_shot_penalty": stmt.excluded.save_shot_penalty,
-                        "save_shot_penalty_success": stmt.excluded.save_shot_penalty_success,
-                        "dry_match": stmt.excluded.dry_match,
-                        "exit": stmt.excluded.exit,
-                        "exit_success": stmt.excluded.exit_success,
-                        "extra_stats": stmt.excluded.extra_stats,
-                        "updated_at": stmt.excluded.updated_at,
-                    },
-                )
-                db_started = time.monotonic()
-                upsert_ok = False
-                try:
-                    async with self.db.begin_nested():
-                        await self.db.execute(stmt)
-                    upsert_ok = True
-                except DBAPIError as db_exc:
-                    logger.warning(
-                        "DB error upserting player_season_stats for player %s: %s",
-                        player_id, db_exc,
-                    )
-                if upsert_ok:
-                    timings.add_db(time.monotonic() - db_started)
-                    count += 1
-            except _SkipPlayer:
-                pass  # no stats for this player — skip to batch-commit check
-            except Exception as e:
-                logger.warning(f"Failed to sync player season stats for player {player_id}: {e}")
-                # fall through to batch-commit check below — do NOT continue
-            # Bound outer-tx age. Trigger by processed (not successful) count
-            # so a season where SOTA mostly returns 404/empty still commits
-            # regularly. Time cap is the real safety net for slow HTTP.
-            now = time.monotonic()
-            if (
-                processed_since_commit >= _BATCH_PROCESSED_SIZE
-                or (now - last_commit_ts) >= _BATCH_TIME_CAP_SECONDS
-            ):
-                await self.db.commit()
-                await self._acquire_player_stats_tx_locks(season_id)
-                processed_since_commit = 0
-                last_commit_ts = time.monotonic()
-
-        await self.db.commit()
         timings.log_summary(service="player_season_stats", season_id=season_id)
         logger.info(f"Synced {count} player season stats for season {season_id}")
         return count
+
+    async def _write_season_stats(
+        self,
+        season_id: int,
+        collected: list[tuple[int, int, dict]],
+        timings: SyncTimingMetrics,
+    ) -> int:
+        """Persist one chunk of collected season stats under a short write tx.
+
+        Skips the advisory lock / transaction entirely when nothing was
+        collected, so an all-empty pass never opens a write transaction.
+        """
+        if not collected:
+            return 0
+        await self._acquire_player_stats_tx_locks(season_id)
+        count = 0
+        for player_id, team_id, stats in collected:
+            stmt = self._build_season_upsert(player_id, team_id, season_id, stats)
+            db_started = time.monotonic()
+            try:
+                async with self.db.begin_nested():
+                    await self.db.execute(stmt)
+            except DBAPIError as db_exc:
+                logger.warning(
+                    "DB error upserting player_season_stats for player %s: %s",
+                    player_id, db_exc,
+                )
+                continue
+            timings.add_db(time.monotonic() - db_started)
+            count += 1
+        await self.db.commit()
+        return count
+
+    async def _fetch_player_season_stats(
+        self,
+        season_id: int,
+        player_teams: list,
+        sota_season_ids: list[int],
+        timings: SyncTimingMetrics,
+        dead_counters: dict,
+        dead_sota_ids: set[int],
+        logged_dead_pairs: set,
+    ) -> list[tuple[int, int, dict]]:
+        """Fetch season stats for a chunk of players from SOTA (no DB transaction).
+
+        Returns ``(player_id, team_id, stats)`` only for players with useful
+        stats. Network errors for a single player are logged and skipped.
+        Dead-pair state is passed in so it persists across chunks.
+        """
+        collected: list[tuple[int, int, dict]] = []
+
+        for player_id, team_id, sota_id in player_teams:
+            timings.players_processed += 1
+            try:
+                stats = await self._fetch_one_player_season_stats(
+                    season_id, sota_id, sota_season_ids,
+                    dead_counters, dead_sota_ids, logged_dead_pairs, timings,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to fetch player season stats for player {player_id}: {e}")
+                continue
+            if self._has_useful_stats(stats):
+                collected.append((player_id, team_id, stats))
+        return collected
+
+    async def _fetch_one_player_season_stats(
+        self,
+        season_id: int,
+        sota_id: int,
+        sota_season_ids: list[int],
+        dead_counters: dict,
+        dead_sota_ids: set[int],
+        logged_dead_pairs: set,
+        timings: SyncTimingMetrics,
+    ) -> dict:
+        """Try each SOTA season id (player belongs to one conference) until
+        useful stats are found. Returns ``{}`` when none yield stats."""
+        stats: dict = {}
+        for sid in sota_season_ids:
+            pair = (season_id, sid)
+            if sid in dead_sota_ids or await is_dead_season_pair(season_id, sid):
+                dead_sota_ids.add(sid)
+                if pair not in logged_dead_pairs:
+                    logger.info(
+                        "Skipping dead SOTA pair for player season stats local=%s sota=%s",
+                        season_id, sid,
+                    )
+                    logged_dead_pairs.add(pair)
+                continue
+
+            fetch_started = time.monotonic()
+            try:
+                stats = await self.client.get_player_season_stats(str(sota_id), sid)
+            except httpx.HTTPStatusError as exc:
+                timings.add_fetch(time.monotonic() - fetch_started)
+                if exc.response is not None and exc.response.status_code == 404:
+                    counters = dead_counters[sid]
+                    counters.record_not_found()
+                    timings.not_found_count += 1
+                    if counters.should_mark_dead():
+                        await mark_dead_season_pair(season_id, sid)
+                        dead_sota_ids.add(sid)
+                        if pair not in logged_dead_pairs:
+                            logger.warning(
+                                "Marked dead SOTA pair for player season stats local=%s sota=%s attempted=%s not_found=%s",
+                                season_id, sid, counters.attempted, counters.not_found,
+                            )
+                            logged_dead_pairs.add(pair)
+                    continue
+                raise
+            timings.add_fetch(time.monotonic() - fetch_started)
+            if self._has_useful_stats(stats):
+                dead_counters[sid].record_success()
+                timings.success_count += 1
+                break
+            dead_counters[sid].record_empty()
+        return stats
+
+    def _build_season_upsert(self, player_id: int, team_id: int, season_id: int, stats: dict):
+        """Build the PlayerSeasonStats upsert statement for one player."""
+        # Extract extra stats (fields not in our known list)
+        extra_stats = {k: v for k, v in stats.items() if k not in PLAYER_SEASON_STATS_FIELDS}
+
+        stmt = insert(PlayerSeasonStats).values(
+            player_id=player_id,
+            season_id=season_id,
+            team_id=team_id,
+            # Basic stats
+            games_played=stats.get("games_played"),
+            games_starting=stats.get("games_starting"),
+            games_as_subst=stats.get("games_as_subst"),
+            games_be_subst=stats.get("games_be_subst"),
+            games_unused=stats.get("games_unused"),
+            time_on_field_total=stats.get("time_on_field_total"),
+            # Goals & Assists
+            goal=stats.get("goal"),
+            goal_pass=stats.get("goal_pass"),
+            goal_and_assist=stats.get("goal_and_assist"),
+            goal_out_box=stats.get("goal_out_box"),
+            owngoal=stats.get("owngoal"),
+            penalty_success=stats.get("penalty_success"),
+            xg=stats.get("xg"),
+            xg_per_90=stats.get("xg_per_90"),
+            # Shots
+            shot=stats.get("shot"),
+            shots_on_goal=stats.get("shots_on_goal"),
+            shots_blocked_opponent=stats.get("shots_blocked_opponent"),
+            # Passes
+            passes=stats.get("pass"),
+            pass_ratio=stats.get("pass_ratio"),
+            pass_acc=stats.get("pass_acc"),
+            key_pass=stats.get("key_pass"),
+            pass_forward=stats.get("pass_forward"),
+            pass_forward_ratio=stats.get("pass_forward_ratio"),
+            pass_progressive=stats.get("pass_progressive"),
+            pass_cross=stats.get("pass_cross"),
+            pass_cross_acc=stats.get("pass_cross_acc"),
+            pass_cross_ratio=stats.get("pass_cross_ratio"),
+            pass_cross_per_90=stats.get("pass_cross_per_90"),
+            pass_to_box=stats.get("pass_to_box"),
+            pass_to_box_ratio=stats.get("pass_to_box_ratio"),
+            pass_to_3rd=stats.get("pass_to_3rd"),
+            pass_to_3rd_ratio=stats.get("pass_to_3rd_ratio"),
+            # Duels
+            duel=stats.get("duel"),
+            duel_success=stats.get("duel_success"),
+            aerial_duel=stats.get("aerial_duel"),
+            aerial_duel_success=stats.get("aerial_duel_success"),
+            ground_duel=stats.get("ground_duel"),
+            ground_duel_success=stats.get("ground_duel_success"),
+            # Defense
+            tackle=stats.get("tackle"),
+            tackle_per_90=stats.get("tackle_per_90"),
+            interception=stats.get("interception"),
+            recovery=stats.get("recovery"),
+            # Dribbles
+            dribble=stats.get("dribble"),
+            dribble_success=stats.get("dribble_success"),
+            dribble_per_90=stats.get("dribble_per_90"),
+            # Other
+            corner=stats.get("corner"),
+            offside=stats.get("offside"),
+            foul=stats.get("foul"),
+            foul_taken=stats.get("foul_taken"),
+            # Discipline
+            yellow_cards=stats.get("yellow_cards"),
+            second_yellow_cards=stats.get("second_yellow_cards"),
+            red_cards=stats.get("red_cards"),
+            # Goalkeeper
+            goals_conceded=stats.get("goals_conceded"),
+            goals_conceded_penalty=stats.get("goals_conceded_penalty"),
+            goals_conceeded_per_90=stats.get("goals_conceeded_per_90"),
+            save_shot=stats.get("save_shot"),
+            save_shot_ratio=stats.get("save_shot_ratio"),
+            saved_shot_per_90=stats.get("saved_shot_per_90"),
+            save_shot_penalty=stats.get("save_shot_penalty"),
+            save_shot_penalty_success=stats.get("save_shot_penalty_success"),
+            dry_match=stats.get("dry_match"),
+            exit=stats.get("exit"),
+            exit_success=stats.get("exit_success"),
+            # Extra stats for unknown fields
+            extra_stats=extra_stats if extra_stats else None,
+            updated_at=utcnow(),
+        )
+        return stmt.on_conflict_do_update(
+            index_elements=["player_id", "season_id"],
+            set_={
+                "team_id": stmt.excluded.team_id,
+                "games_played": stmt.excluded.games_played,
+                "games_starting": stmt.excluded.games_starting,
+                "games_as_subst": stmt.excluded.games_as_subst,
+                "games_be_subst": stmt.excluded.games_be_subst,
+                "games_unused": stmt.excluded.games_unused,
+                "time_on_field_total": stmt.excluded.time_on_field_total,
+                "goal": stmt.excluded.goal,
+                "goal_pass": stmt.excluded.goal_pass,
+                "goal_and_assist": stmt.excluded.goal_and_assist,
+                "goal_out_box": stmt.excluded.goal_out_box,
+                "owngoal": stmt.excluded.owngoal,
+                "penalty_success": stmt.excluded.penalty_success,
+                "xg": stmt.excluded.xg,
+                "xg_per_90": stmt.excluded.xg_per_90,
+                "shot": stmt.excluded.shot,
+                "shots_on_goal": stmt.excluded.shots_on_goal,
+                "shots_blocked_opponent": stmt.excluded.shots_blocked_opponent,
+                "passes": stmt.excluded.passes,
+                "pass_ratio": stmt.excluded.pass_ratio,
+                "pass_acc": stmt.excluded.pass_acc,
+                "key_pass": stmt.excluded.key_pass,
+                "pass_forward": stmt.excluded.pass_forward,
+                "pass_forward_ratio": stmt.excluded.pass_forward_ratio,
+                "pass_progressive": stmt.excluded.pass_progressive,
+                "pass_cross": stmt.excluded.pass_cross,
+                "pass_cross_acc": stmt.excluded.pass_cross_acc,
+                "pass_cross_ratio": stmt.excluded.pass_cross_ratio,
+                "pass_cross_per_90": stmt.excluded.pass_cross_per_90,
+                "pass_to_box": stmt.excluded.pass_to_box,
+                "pass_to_box_ratio": stmt.excluded.pass_to_box_ratio,
+                "pass_to_3rd": stmt.excluded.pass_to_3rd,
+                "pass_to_3rd_ratio": stmt.excluded.pass_to_3rd_ratio,
+                "duel": stmt.excluded.duel,
+                "duel_success": stmt.excluded.duel_success,
+                "aerial_duel": stmt.excluded.aerial_duel,
+                "aerial_duel_success": stmt.excluded.aerial_duel_success,
+                "ground_duel": stmt.excluded.ground_duel,
+                "ground_duel_success": stmt.excluded.ground_duel_success,
+                "tackle": stmt.excluded.tackle,
+                "tackle_per_90": stmt.excluded.tackle_per_90,
+                "interception": stmt.excluded.interception,
+                "recovery": stmt.excluded.recovery,
+                "dribble": stmt.excluded.dribble,
+                "dribble_success": stmt.excluded.dribble_success,
+                "dribble_per_90": stmt.excluded.dribble_per_90,
+                "corner": stmt.excluded.corner,
+                "offside": stmt.excluded.offside,
+                "foul": stmt.excluded.foul,
+                "foul_taken": stmt.excluded.foul_taken,
+                "yellow_cards": stmt.excluded.yellow_cards,
+                "second_yellow_cards": stmt.excluded.second_yellow_cards,
+                "red_cards": stmt.excluded.red_cards,
+                "goals_conceded": stmt.excluded.goals_conceded,
+                "goals_conceded_penalty": stmt.excluded.goals_conceded_penalty,
+                "goals_conceeded_per_90": stmt.excluded.goals_conceeded_per_90,
+                "save_shot": stmt.excluded.save_shot,
+                "save_shot_ratio": stmt.excluded.save_shot_ratio,
+                "saved_shot_per_90": stmt.excluded.saved_shot_per_90,
+                "save_shot_penalty": stmt.excluded.save_shot_penalty,
+                "save_shot_penalty_success": stmt.excluded.save_shot_penalty_success,
+                "dry_match": stmt.excluded.dry_match,
+                "exit": stmt.excluded.exit,
+                "exit_success": stmt.excluded.exit_success,
+                "extra_stats": stmt.excluded.extra_stats,
+                "updated_at": stmt.excluded.updated_at,
+            },
+        )
