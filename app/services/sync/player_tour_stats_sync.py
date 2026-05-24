@@ -19,8 +19,9 @@ from sqlalchemy.exc import DBAPIError
 _PLAYER_TOUR_STATS_LOCK_NS = 3
 _LOCK_TIMEOUT = "60s"
 _OUTER_LOCK_TTL_SECONDS = 7200
-# See player_sync._WRITE_CHUNK_SIZE — fetch a chunk (no tx), then persist it.
-_WRITE_CHUNK_SIZE = 500
+# See player_sync._WRITE_CHUNK_SIZE — small chunk keeps the write tx / row-lock
+# hold short so concurrent best_players (NS=2) isn't timed out.
+_WRITE_CHUNK_SIZE = 50
 
 from app.config import get_settings
 from app.models import Player, PlayerTeam

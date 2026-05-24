@@ -148,20 +148,25 @@ async def test_no_transaction_open_during_http_fetch(_fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_writes_are_chunked_across_500(_fake_redis):
-    # 600 players → two write chunks (500 + 100).
-    player_rows = [(idx, 10 + idx, f"player-{idx}") for idx in range(1, 601)]
+async def test_writes_are_chunked(_fake_redis):
+    import math
+
+    from app.services.sync.player_sync import _WRITE_CHUNK_SIZE
+
+    # Span several chunks so we verify per-chunk lock + commit (short lock hold).
+    n = _WRITE_CHUNK_SIZE * 2 + 10
+    expected_chunks = math.ceil(n / _WRITE_CHUNK_SIZE)
+    player_rows = [(idx, 10 + idx, f"player-{idx}") for idx in range(1, n + 1)]
     db = SpyDB(player_rows, ("174", None))
     client = SpySeasonClient(db)
     service = PlayerSyncService(db, client)
 
     count = await service._sync_player_season_stats_locked(200)
 
-    assert count == 600
-    # Two chunks → two advisory-lock acquisitions and three commits
-    # (phase-A read commit + one per chunk).
-    assert db.ops.count("lock") == 2
-    assert db.ops.count("commit") == 3
+    assert count == n
+    # One advisory lock per chunk; commits = phase-A read commit + one per chunk.
+    assert db.ops.count("lock") == expected_chunks
+    assert db.ops.count("commit") == expected_chunks + 1
 
 
 @pytest.mark.asyncio

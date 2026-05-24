@@ -33,9 +33,12 @@ _LOCK_TIMEOUT = "60s"
 # worker can't permanently lock the season.
 _OUTER_LOCK_TTL_SECONDS = 7200
 # Write-phase chunk size: fetch this many players (no tx open), persist them in
-# one short write transaction, then move to the next chunk. Bounds peak RAM and
-# the write-tx / advisory-lock hold time. PL (~300 players) fits in one chunk.
-_WRITE_CHUNK_SIZE = 500
+# one short write transaction, then move to the next chunk. Kept small so the
+# write tx commits frequently — row locks on player_season_stats are released
+# every chunk, so a concurrent sync_best_players (NS=2, not serialized against
+# NS=1) isn't blocked long enough to hit lock_timeout. (A larger chunk held
+# locks for minutes under contention and timed best_players out.)
+_WRITE_CHUNK_SIZE = 50
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
 from app.services.sync.guardrails import (
