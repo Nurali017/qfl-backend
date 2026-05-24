@@ -500,10 +500,14 @@ class GameSyncService(BaseSyncService):
         merged extra_stats via explicit UPDATEs under a short write transaction.
         """
         # Phase A — read sota_id -> (row id, current extra_stats); then release.
+        # order_by(id): writers lock rows in a deterministic order so two
+        # concurrent enrichments of the same game (e.g. a redelivered Celery
+        # task) can't deadlock — see [[feedback_deadlock_strategy]].
         result = await self.db.execute(
             select(GamePlayerStats.id, GamePlayerStats.extra_stats, Player.sota_id)
             .join(Player, Player.id == GamePlayerStats.player_id)
             .where(GamePlayerStats.game_id == game_id, Player.sota_id.is_not(None))
+            .order_by(GamePlayerStats.id)
         )
         sota_lookup: dict[str, tuple[int, dict]] = {
             str(sota_id): (row_id, extra or {}) for row_id, extra, sota_id in result.all()
@@ -537,12 +541,12 @@ class GameSyncService(BaseSyncService):
                     updates[row_id] = {**base, "em_stats": em_data}
             await asyncio.sleep(0.2)
 
-        # Phase C — write.
+        # Phase C — write in ascending row-id order (deterministic lock order).
         if not updates:
             return 0
-        for row_id, extra in updates.items():
+        for row_id in sorted(updates):
             await self.db.execute(
-                update(GamePlayerStats).where(GamePlayerStats.id == row_id).values(extra_stats=extra)
+                update(GamePlayerStats).where(GamePlayerStats.id == row_id).values(extra_stats=updates[row_id])
             )
         await self.db.commit()
         return len(updates)
@@ -565,6 +569,7 @@ class GameSyncService(BaseSyncService):
             )
             .join(Player, Player.id == GamePlayerStats.player_id)
             .where(GamePlayerStats.game_id == game_id, Player.sota_id.is_not(None))
+            .order_by(GamePlayerStats.id)  # deterministic lock order vs concurrent dup task
         )
         rows = result.all()
         await self.db.commit()
@@ -594,10 +599,10 @@ class GameSyncService(BaseSyncService):
                 updates.append((row_id, values))
             await asyncio.sleep(0.2)
 
-        # Phase C — write.
+        # Phase C — write in ascending row-id order (deterministic lock order).
         if not updates:
             return 0
-        for row_id, values in updates:
+        for row_id, values in sorted(updates, key=lambda u: u[0]):
             await self.db.execute(
                 update(GamePlayerStats).where(GamePlayerStats.id == row_id).values(**values)
             )

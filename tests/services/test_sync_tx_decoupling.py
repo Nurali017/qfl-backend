@@ -345,6 +345,59 @@ async def test_game_v2_enrichment_fetch_sees_no_open_transaction():
     assert "commit" in db.ops[: db.ops.index("write")]
 
 
+class OrderRecordingDB(QueueSpyDB):
+    """Captures the row id targeted by each UPDATE (from the compiled WHERE bind)."""
+
+    def __init__(self, read_results):
+        super().__init__(read_results)
+        self.update_ids: list[int] = []
+
+    async def execute(self, stmt, params=None):
+        if "update" in type(stmt).__name__.lower():
+            compiled = stmt.compile()
+            for k, v in compiled.params.items():
+                if k.startswith("id"):
+                    self.update_ids.append(v)
+                    break
+        return await super().execute(stmt, params)
+
+
+@pytest.mark.asyncio
+async def test_v2_enrichment_writes_in_ascending_id_order():
+    # Rows arrive shuffled; UPDATEs must still go out in ascending id order so
+    # two concurrent enrichments of the same game can't deadlock.
+    rows = [
+        (30, {}, None, None, "sota-30"),
+        (10, {}, None, None, "sota-10"),
+        (20, {}, None, None, "sota-20"),
+    ]
+    db = OrderRecordingDB([FakeResult(rows)])
+    client = InTxRecordingClient(db, "get_player_game_stats_v2", {"time_on_field_total": 80})
+    service = GameSyncService(db, client)
+
+    await service._enrich_with_v2_stats(1, "game-uuid")
+
+    assert db.update_ids == [10, 20, 30]
+
+
+@pytest.mark.asyncio
+async def test_em_enrichment_writes_in_ascending_id_order():
+    rows = [(30, {}, "sota-30"), (10, {}, "sota-10"), (20, {}, "sota-20")]
+    db = OrderRecordingDB([FakeResult(rows)])
+
+    class EmClient:
+        async def get_live_match_player_stats(self, uuid, side):
+            if side == "home":
+                return [{"id": "sota-30", "shots": 1}, {"id": "sota-10", "shots": 2}]
+            return [{"id": "sota-20", "shots": 3}]
+
+    service = GameSyncService(db, EmClient())
+
+    await service._enrich_player_stats_from_em(1, "game-uuid")
+
+    assert db.update_ids == [10, 20, 30]
+
+
 @pytest.mark.asyncio
 async def test_best_players_fetch_sees_no_open_transaction():
     # Phase A reads sota ids then the active player→team lookup, commits, then
