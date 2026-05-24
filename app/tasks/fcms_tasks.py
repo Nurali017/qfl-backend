@@ -13,17 +13,31 @@ _ROSTER_LOCK_TTL = 600  # 10 min — sync takes ~30-60s for 30 teams
 _REFEREES_LOCK_KEY = "qfl:fcms-referee-sync"
 _REFEREES_LOCK_TTL = 600  # 10 min
 
+_BULK_IMPORT_LOCK_KEY = "qfl:fcms-bulk-import"
+_BULK_IMPORT_LOCK_TTL = 600  # 10 min — guards the */15 beat against overlap
+
 
 @celery_app.task(name="app.tasks.fcms_tasks.fcms_bulk_import")
 def fcms_bulk_import():
-    """Sync FCMS match IDs and update game times. Runs 2x/day."""
+    """Sync FCMS match IDs and update game dates/times. Runs every 15 min."""
     return run_async(_fcms_bulk_import())
 
 
 async def _fcms_bulk_import() -> dict:
     from scripts.fcms_bulk_import import bulk_import
-    await bulk_import()
-    return {"status": "done"}
+    from app.utils.redis_lock import acquire_token_lock, release_token_lock
+
+    # Mutex: at a 15-min cadence a slow FCMS run must not overlap the next beat
+    # (concurrent runs race on game bind/create). Mirrors roster/referee sync.
+    token = await acquire_token_lock(_BULK_IMPORT_LOCK_KEY, _BULK_IMPORT_LOCK_TTL)
+    if token is None:
+        logger.info("FCMS bulk import already running, skipping")
+        return {"status": "already_running"}
+    try:
+        await bulk_import()
+        return {"status": "done"}
+    finally:
+        await release_token_lock(_BULK_IMPORT_LOCK_KEY, token)
 
 
 @celery_app.task(name="app.tasks.fcms_tasks.fetch_fcms_pregame_lineups")

@@ -141,9 +141,9 @@ if settings.fcms_enabled:
         "task": "app.tasks.fcms_tasks.sync_fcms_post_match_protocol",
         "schedule": crontab(minute="*/15"),
     }
-    celery_app.conf.beat_schedule["fcms-bulk-import-daily"] = {
+    celery_app.conf.beat_schedule["fcms-bulk-import"] = {
         "task": "app.tasks.fcms_tasks.fcms_bulk_import",
-        "schedule": crontab(minute="0", hour="11,18"),
+        "schedule": crontab(minute="*/15"),  # keep game dates/times fresh from FCMS
     }
     celery_app.conf.beat_schedule["sync-fcms-rosters-daily"] = {
         "task": "app.tasks.fcms_tasks.sync_fcms_rosters",
