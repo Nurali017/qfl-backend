@@ -39,3 +39,33 @@ def pick_default_season(
             best = key
             best_id = season_id
     return best_id
+
+
+def pick_active_season_by_playtime(
+    candidates: Iterable[tuple[int, int | None, str | None]],
+    playtime: dict[int, tuple[int, int]],
+) -> int | None:
+    """Pick the season where the player plays most among active candidates.
+
+    Used for the "current league" of a player who holds several active contracts
+    in the current season (e.g. youth registered in both Premier and First League).
+    Ranks by minutes desc, then games desc; ties — including the start-of-season
+    case where nobody has playtime yet — fall back to ``pick_default_season``
+    (league priority + recency).
+
+    Args:
+        candidates: iterable of (season_id, season_year, frontend_code) tuples.
+        playtime: mapping season_id -> (minutes, games).
+    Returns:
+        Winning season_id, or None if candidates is empty.
+    """
+    cands = list(candidates)
+    if not cands:
+        return None
+
+    def _key(candidate: tuple[int, int | None, str | None]) -> tuple[int, int]:
+        return playtime.get(candidate[0], (0, 0))
+
+    best = max(_key(c) for c in cands)
+    top = [c for c in cands if _key(c) == best]
+    return pick_default_season(top)

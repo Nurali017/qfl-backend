@@ -264,6 +264,10 @@ class PlayerTournamentHistoryResponse(BaseModel):
     items: list[PlayerTournamentHistoryEntry]
     total: int
     default_season_id: int | None = None
+    # Season where the player currently plays, derived from the active contract
+    # (PlayerTeam.is_active) in the current season (Season.is_current). Falls back
+    # to default_season_id when there is no active current contract.
+    current_season_id: int | None = None
 
 
 class PlayerMatchHistoryTeam(BaseModel):

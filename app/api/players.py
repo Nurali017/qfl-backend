@@ -22,7 +22,10 @@ from app.schemas.player import (
 from app.schemas.game import GameResponse, GameListResponse
 from app.schemas.team import TeamInGame
 from app.models.game_lineup import GameLineup, LineupType
-from app.services.default_season import pick_default_season
+from app.services.default_season import (
+    pick_active_season_by_playtime,
+    pick_default_season,
+)
 from app.services.season_visibility import ensure_visible_season_or_404, resolve_visible_season_id
 from app.utils.localization import get_localized_field, get_localized_name
 from app.utils.numbers import sanitize_non_finite_numbers
@@ -732,8 +735,39 @@ async def get_player_tournament_history(
         (it.season_id, it.season_year, it.frontend_code) for it in items
     )
 
+    # Current league = season of the player's active contract in the current season.
+    # This reflects "where the player plays now" rather than the year/priority heuristic.
+    # When several active contracts exist (e.g. youth in PL + First League), pick the
+    # league where the player actually plays most (minutes, then games).
+    current_result = await db.execute(
+        select(Season.id, Season.date_start, Season.frontend_code)
+        .join(PlayerTeam, PlayerTeam.season_id == Season.id)
+        .where(
+            PlayerTeam.player_id == player_id,
+            PlayerTeam.is_active.is_(True),
+            PlayerTeam.is_hidden.is_(False),
+            Season.is_current.is_(True),
+            Season.is_visible.is_(True),
+        )
+    )
+    current_rows = current_result.all()  # list[(season_id, date_start, frontend_code)]
+
+    # Playing time per season comes from the already-built stats items.
+    playtime_by_season = {
+        it.season_id: ((it.time_on_field_total or 0), (it.games_played or 0))
+        for it in items
+    }
+    current_season_id = pick_active_season_by_playtime(
+        ((sid, (ds.year if ds else None), code) for sid, ds, code in current_rows),
+        playtime_by_season,
+    )
+    # No active contract in the current season — fall back to the heuristic default.
+    if current_season_id is None:
+        current_season_id = default_season_id
+
     return PlayerTournamentHistoryResponse(
         items=items,
         total=len(items),
         default_season_id=default_season_id,
+        current_season_id=current_season_id,
     )

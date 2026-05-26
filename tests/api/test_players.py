@@ -188,3 +188,136 @@ class TestPlayersAPI:
         response = await client.get(f"/api/v1/players/{player.id}")
         assert response.status_code == 200
         assert response.json()["top_role"] is None
+
+
+@pytest.mark.asyncio
+class TestPlayerTournamentsCurrentLeague:
+    """Tests for current_season_id on GET /players/{id}/tournaments.
+
+    The bar on the player page reflects the league where the player plays NOW,
+    derived from the active contract in the current season (with playtime as the
+    tie-break when several active contracts exist).
+    """
+
+    async def _setup(self, test_session):
+        """Create a player, a championship, and PL/1L current seasons + an old PL season."""
+        from uuid import uuid4
+        from datetime import date
+        from app.models.championship import Championship
+        from app.models.player import Player
+        from app.models.season import Season
+        from app.models.team import Team
+        from app.models.player_team import PlayerTeam
+        from app.models.player_season_stats import PlayerSeasonStats
+
+        champ = Championship(id=500, name="Test Champ")
+        pl_now = Season(
+            id=200, name="ПЛ 2026", championship_id=500, frontend_code="pl",
+            date_start=date(2026, 3, 1), is_current=True, is_visible=True,
+        )
+        l1_now = Season(
+            id=204, name="Первая 2026", championship_id=500, frontend_code="1l",
+            date_start=date(2026, 3, 1), is_current=True, is_visible=True,
+        )
+        pl_old = Season(
+            id=61, name="ПЛ 2025", championship_id=500, frontend_code="pl",
+            date_start=date(2025, 3, 1), is_current=False, is_visible=True,
+        )
+        teams = [Team(id=701, name="A"), Team(id=702, name="B")]
+        player = Player(
+            sota_id=uuid4(), first_name="Young", last_name="Talent",
+            birthday=date(2006, 1, 1), player_type="forward",
+        )
+        test_session.add_all([champ, pl_now, l1_now, pl_old, *teams, player])
+        await test_session.commit()
+        await test_session.refresh(player)
+        return player
+
+    async def test_current_league_from_active_first_league_contract(
+        self, client: AsyncClient, test_session
+    ):
+        """Active contract in current First League, stats only in old PL → current = 1l."""
+        from app.models.player_team import PlayerTeam
+        from app.models.player_season_stats import PlayerSeasonStats
+
+        player = await self._setup(test_session)
+        # Active contract in current First League season (no stats yet).
+        test_session.add(PlayerTeam(
+            player_id=player.id, team_id=702, season_id=204,
+            is_active=True, is_hidden=False,
+        ))
+        # Historical PL stats (old season) — should NOT drive the current league.
+        test_session.add(PlayerSeasonStats(
+            player_id=player.id, season_id=61, team_id=701,
+            games_played=20, time_on_field_total=1800,
+        ))
+        await test_session.commit()
+
+        resp = await client.get(f"/api/v1/players/{player.id}/tournaments")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Season 204 is the First League season.
+        assert body["current_season_id"] == 204
+
+    async def test_dual_registration_picks_league_with_more_playtime(
+        self, client: AsyncClient, test_session
+    ):
+        """Active in both PL and 1L; more minutes in 1L → current = 1l season (not priority)."""
+        from app.models.player_team import PlayerTeam
+        from app.models.player_season_stats import PlayerSeasonStats
+
+        player = await self._setup(test_session)
+        test_session.add_all([
+            PlayerTeam(player_id=player.id, team_id=701, season_id=200,
+                       is_active=True, is_hidden=False),
+            PlayerTeam(player_id=player.id, team_id=702, season_id=204,
+                       is_active=True, is_hidden=False),
+            # Barely plays in PL, plays a lot in First League.
+            PlayerSeasonStats(player_id=player.id, season_id=200, team_id=701,
+                              games_played=1, time_on_field_total=20),
+            PlayerSeasonStats(player_id=player.id, season_id=204, team_id=702,
+                              games_played=15, time_on_field_total=1300),
+        ])
+        await test_session.commit()
+
+        resp = await client.get(f"/api/v1/players/{player.id}/tournaments")
+        assert resp.status_code == 200
+        assert resp.json()["current_season_id"] == 204  # First League
+
+    async def test_dual_registration_no_playtime_falls_back_to_priority(
+        self, client: AsyncClient, test_session
+    ):
+        """Active in both PL and 1L, no playtime yet → priority pl > 1l → current = pl season."""
+        from app.models.player_team import PlayerTeam
+
+        player = await self._setup(test_session)
+        test_session.add_all([
+            PlayerTeam(player_id=player.id, team_id=701, season_id=200,
+                       is_active=True, is_hidden=False),
+            PlayerTeam(player_id=player.id, team_id=702, season_id=204,
+                       is_active=True, is_hidden=False),
+        ])
+        await test_session.commit()
+
+        resp = await client.get(f"/api/v1/players/{player.id}/tournaments")
+        assert resp.status_code == 200
+        assert resp.json()["current_season_id"] == 200  # Premier League
+
+    async def test_no_active_current_contract_falls_back_to_default(
+        self, client: AsyncClient, test_session
+    ):
+        """No active contract in a current season → fall back to default_season_id's code."""
+        from app.models.player_season_stats import PlayerSeasonStats
+
+        player = await self._setup(test_session)
+        # Only historical PL stats, no active current-season contract.
+        test_session.add(PlayerSeasonStats(
+            player_id=player.id, season_id=61, team_id=701,
+            games_played=20, time_on_field_total=1800,
+        ))
+        await test_session.commit()
+
+        resp = await client.get(f"/api/v1/players/{player.id}/tournaments")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["current_season_id"] == body["default_season_id"] == 61

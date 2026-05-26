@@ -1,6 +1,9 @@
 """Tests for pick_default_season — player/team default season resolution."""
 
-from app.services.default_season import pick_default_season
+from app.services.default_season import (
+    pick_active_season_by_playtime,
+    pick_default_season,
+)
 
 
 def test_empty_returns_none():
@@ -83,3 +86,40 @@ def test_tiebreak_by_season_id_desc():
     # Same year, same priority — newer id wins.
     entries = [(61, 2025, "pl"), (60, 2025, "pl")]
     assert pick_default_season(entries) == 61
+
+
+# --- pick_active_season_by_playtime: current league for dual-registered players ---
+
+# A youth player active in both PL (200) and First League (204) in the same season.
+_DUAL = [(200, 2026, "pl"), (204, 2026, "1l")]
+
+
+def test_playtime_empty_returns_none():
+    assert pick_active_season_by_playtime([], {}) is None
+
+
+def test_playtime_more_minutes_wins():
+    # Plays more minutes in First League → First League is the current league.
+    playtime = {200: (90, 1), 204: (900, 10)}
+    assert pick_active_season_by_playtime(_DUAL, playtime) == 204
+
+    # More minutes in PL → PL.
+    playtime_pl = {200: (900, 10), 204: (90, 1)}
+    assert pick_active_season_by_playtime(_DUAL, playtime_pl) == 200
+
+
+def test_playtime_equal_minutes_breaks_by_games():
+    # Equal minutes, more games in First League → First League.
+    playtime = {200: (450, 5), 204: (450, 9)}
+    assert pick_active_season_by_playtime(_DUAL, playtime) == 204
+
+
+def test_playtime_tie_falls_back_to_priority():
+    # No playtime yet (start of season) → league priority pl > 1l.
+    assert pick_active_season_by_playtime(_DUAL, {}) == 200
+    # Same when both explicitly zero.
+    assert pick_active_season_by_playtime(_DUAL, {200: (0, 0), 204: (0, 0)}) == 200
+
+
+def test_playtime_single_candidate():
+    assert pick_active_season_by_playtime([(204, 2026, "1l")], {}) == 204
