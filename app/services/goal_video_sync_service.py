@@ -634,6 +634,9 @@ async def _ai_candidates_for_game(
     if team_ids:
         teams = await db.execute(select(Team).where(Team.id.in_(team_ids)))
         team_names = {t.id: t.name for t in teams.scalars().all()}
+        # Release the teams read before the caller's per-video ai.match() HTTP
+        # loop — keeps this read off the idle-in-transaction path on qfl-db.
+        await db.commit()
 
     label = f"{active.home_name} vs {active.away_name}"
     candidates: list[CandidateGoal] = []
@@ -856,6 +859,11 @@ async def sync_goal_videos(db: AsyncSession) -> SyncResult:
     actives = await _load_active_games(db)
     if not actives:
         return result
+    # Release the game_events read snapshot before the slow Drive/AI/MinIO work
+    # below — otherwise this connection sits idle-in-transaction on qfl-db,
+    # holding a pool slot and pinning the vacuum xmin horizon. expire_on_commit
+    # is False, so `actives`/events stay usable after the commit.
+    await db.commit()
 
     since_query = datetime.now(timezone.utc) - timedelta(minutes=_LOOKBACK_MINUTES)
     drive = get_drive_client()
