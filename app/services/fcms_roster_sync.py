@@ -54,6 +54,20 @@ def _resolve_position(fcms_position_id: int | None) -> tuple[str, str, str] | No
     return mapped
 
 
+def _is_deregistered(fcms_player: dict) -> bool:
+    """True if an FCMS competitor entry should be hidden from the squad.
+
+    A player is treated as deregistered when they have no jersey number, or when
+    FCMS has flipped ``isActiveInTeam`` to False after a mid-season transfer
+    (FCMS keeps the historical row, sets ``validTo``, and clears the active flag).
+    Such rows must never be (re)activated locally, otherwise the player keeps
+    showing in the old team's squad (e.g. Еркен still listed under Кайсар).
+    """
+    if not fcms_player.get("jerseyNumber"):
+        return True
+    return fcms_player.get("isActiveInTeam") is False
+
+
 def _name_key(ln: str | None, fn: str | None):
     if ln and fn:
         return (ln.strip().lower(), fn.strip().lower())
@@ -261,8 +275,8 @@ class FcmsRosterSyncService:
             # Extract player position (FCMS may return null for young/new players)
             position = _resolve_position(fp.get("playerPositionId"))
 
-            # Step 0: no jersey number = deregistered → hide from roster
-            if num is None:
+            # Step 0: deregistered (no jersey number OR isActiveInTeam=False) → hide from roster
+            if _is_deregistered(fp):
                 match, method = self._find_in_roster(
                     fn_ru, ln_ru, fn_en, ln_en, person_id, None,
                     local_by_fcms, local_by_name, {},
