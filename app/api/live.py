@@ -6,9 +6,11 @@ from pydantic import BaseModel
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models.game_event import GameEvent, GameEventType
+from app.utils.localization import get_localized_full_name
 
 router = APIRouter(prefix="/live", tags=["live"])
 logger = logging.getLogger(__name__)
@@ -45,12 +47,41 @@ class GameEventsListResponse(BaseModel):
     total: int
 
 
+def _localized_event(event: GameEvent, lang: str) -> GameEventResponse:
+    """Build a response with player names resolved to the requested language.
+
+    Names are denormalized RU snapshots on the event row, so we resolve the
+    localized full name from the linked Player when available, falling back to
+    the stored string for manual events without a player_id.
+    """
+    response = GameEventResponse.model_validate(event)
+
+    def resolve(player, stored: str | None) -> str | None:
+        if player is not None:
+            localized = get_localized_full_name(player, lang)
+            if localized:
+                return localized
+        return stored
+
+    return response.model_copy(
+        update={
+            "player_name": resolve(event.player, event.player_name),
+            "player2_name": resolve(event.player2, event.player2_name),
+            "assist_player_name": resolve(
+                event.assist_player, event.assist_player_name
+            ),
+        }
+    )
+
+
 @router.get("/events/{game_id}", response_model=GameEventsListResponse)
-async def get_game_events(game_id: int, db: AsyncSession = Depends(get_db)):
-    """Get all events for a match."""
+async def get_game_events(
+    game_id: int, lang: str = "ru", db: AsyncSession = Depends(get_db)
+):
+    """Get all events for a match, with player names in the requested language."""
     from app.utils.cache import cache_get, cache_set
 
-    cache_key = f"events:{game_id}"
+    cache_key = f"events:{game_id}:{lang}"
     cached = cache_get(cache_key)
     if cached is not None:
         return Response(content=cached, media_type="application/json")
@@ -60,11 +91,16 @@ async def get_game_events(game_id: int, db: AsyncSession = Depends(get_db)):
         .where(GameEvent.game_id == game_id)
         .where(GameEvent.event_type != GameEventType.assist)
         .order_by(GameEvent.half, GameEvent.minute)
+        .options(
+            selectinload(GameEvent.player),
+            selectinload(GameEvent.player2),
+            selectinload(GameEvent.assist_player),
+        )
     )
     events = result.scalars().all()
     response_data = GameEventsListResponse(
         game_id=game_id,
-        events=[GameEventResponse.model_validate(e) for e in events],
+        events=[_localized_event(e, lang) for e in events],
         total=len(events),
     )
     json_bytes = response_data.model_dump_json().encode()
