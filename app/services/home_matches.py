@@ -173,12 +173,22 @@ async def _get_widget_week(
         return await _fallback(db, season_id, frontend_code, lang)
 
     anchor_start, anchor_end = _iso_week_bounds(anchor_date)
-    prev_start = anchor_start - timedelta(days=7)
-    prev_end = anchor_start - timedelta(days=1)
 
-    week_games = await _load_date_range(db, season_id, prev_start, anchor_end)
-    anchor_games = [g for g in week_games if anchor_start <= g.date <= anchor_end]
-    prev_games = [g for g in week_games if prev_start <= g.date <= prev_end]
+    # "Previous" week is anchored on the most recent played matchday, not
+    # strictly the calendar week before the anchor — otherwise, when the gap
+    # to the next round exceeds one week (e.g. 2L round 8 on 26-27 May, round
+    # 9 only on 9-10 Jun), the just-played round falls outside the window and
+    # the finished tab goes empty. For gap-free weekly tours the last finished
+    # match lands in the immediately-previous week, so behaviour is unchanged.
+    last_finished = await _find_last_finished_date(db, season_id, anchor_start)
+    if last_finished is not None:
+        prev_start, prev_end = _iso_week_bounds(last_finished)
+    else:
+        prev_start = anchor_start - timedelta(days=7)
+        prev_end = anchor_start - timedelta(days=1)
+
+    anchor_games = await _load_date_range(db, season_id, anchor_start, anchor_end)
+    prev_games = await _load_date_range(db, season_id, prev_start, prev_end)
 
     anchor_terminal = [g for g in anchor_games if g.status in TERMINAL_STATUSES]
     anchor_playable_unfinished = [
@@ -342,6 +352,18 @@ async def _find_anchor_date(
         return upcoming
     latest_query = select(func.max(Game.date)).where(Game.season_id == season_id)
     return (await db.execute(latest_query)).scalar()
+
+
+async def _find_last_finished_date(
+    db: AsyncSession, season_id: int, before: date,
+) -> date | None:
+    """Latest date of a terminal game strictly before *before* (anchor week start)."""
+    query = select(func.max(Game.date)).where(
+        Game.season_id == season_id,
+        Game.date < before,
+        Game.status.in_(list(TERMINAL_STATUSES)),
+    )
+    return (await db.execute(query)).scalar()
 
 
 def _finished_games(games: list[Game]) -> list[Game]:

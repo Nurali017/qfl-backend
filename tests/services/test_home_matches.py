@@ -424,6 +424,69 @@ async def test_get_home_widget_keeps_finished_default_before_next_round_kicks_of
 
 
 @pytest.mark.asyncio
+async def test_get_home_widget_surfaces_last_finished_round_across_week_gap(
+    test_session,
+    sample_season,
+    sample_teams,
+):
+    """Real 2L-2026 scenario: round 8 played 26-27 May, next round 9 only on
+    9-10 June (a full empty week 1-7 June sits between). The anchor week is
+    the upcoming round's week (8-14 June); its calendar-previous week (1-7
+    June) has no games. The finished tab must still surface the last played
+    round (round 8) instead of going empty — regression for finished matches
+    vanishing whenever the gap to the next round exceeds one week.
+    """
+    today = date(2026, 5, 27)  # Wednesday — round 8 just played 26-27 May
+    now = datetime(2026, 5, 27, 22, 0, tzinfo=ALMATY_TZ)
+    restore = _set_clock(now)
+
+    sample_season.frontend_code = "2l"
+    sample_season.is_current = True
+    sid = sample_season.id
+
+    round8_may26 = _make_game(
+        season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[1].id,
+        game_date=date(2026, 5, 26), game_time=time(17, 0), tour=8,
+        status=GameStatus.finished, home_score=1, away_score=0,
+        finished_at=_utc_from_almaty(datetime(2026, 5, 26, 19, 0, tzinfo=ALMATY_TZ)),
+    )
+    round8_may27 = _make_game(
+        season_id=sid, home_team_id=sample_teams[1].id, away_team_id=sample_teams[2].id,
+        game_date=date(2026, 5, 27), game_time=time(17, 0), tour=8,
+        status=GameStatus.finished, home_score=2, away_score=1,
+        finished_at=_utc_from_almaty(datetime(2026, 5, 27, 19, 0, tzinfo=ALMATY_TZ)),
+    )
+    round9_jun9 = _make_game(
+        season_id=sid, home_team_id=sample_teams[2].id, away_team_id=sample_teams[0].id,
+        game_date=date(2026, 6, 9), game_time=time(17, 0), tour=9,
+        status=GameStatus.created,
+    )
+    round9_jun10 = _make_game(
+        season_id=sid, home_team_id=sample_teams[0].id, away_team_id=sample_teams[2].id,
+        game_date=date(2026, 6, 10), game_time=time(16, 0), tour=9,
+        status=GameStatus.created,
+    )
+    test_session.add_all([round8_may26, round8_may27, round9_jun9, round9_jun10])
+    await test_session.commit()
+
+    try:
+        result = await get_home_widget(test_session, "2l", "ru")
+    finally:
+        restore()
+
+    finished_ids = {g.id for grp in result.finished_groups for g in grp.games}
+    upcoming_ids = {g.id for grp in result.upcoming_groups for g in grp.games}
+
+    # Last played round (8) must still be visible in the finished tab.
+    assert {round8_may26.id, round8_may27.id} <= finished_ids
+    assert {round9_jun9.id, round9_jun10.id} <= upcoming_ids
+    assert result.show_tabs is True
+    # Within 48h of the last match → finished stays default.
+    assert result.window_state == "completed_window"
+    assert result.default_tab == "finished"
+
+
+@pytest.mark.asyncio
 async def test_resolve_season_uses_almaty_today_helper(
     test_session,
     sample_championship,
