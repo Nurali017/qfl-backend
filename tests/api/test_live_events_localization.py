@@ -47,26 +47,44 @@ async def sample_events(test_session, sample_game, localized_players) -> None:
         GameEvent(
             game_id=sample_game.id, half=1, minute=12,
             event_type=GameEventType.goal,
-            team_id=sample_game.home_team_id,
+            team_id=sample_game.home_team_id, team_name="Astana",
             player_id=scorer.id, player_name="Иван Петров",
             assist_player_id=assistant.id, assist_player_name="Олег Сидоров",
         ),
         GameEvent(
             game_id=sample_game.id, half=2, minute=67,
             event_type=GameEventType.yellow_card,
-            team_id=sample_game.home_team_id,
+            team_id=sample_game.home_team_id, team_name="Astana",
             player_id=ru_only.id, player_name="Сергей Ким",
+        ),
+        # Substitution — player2 (coming on) is same team; player2_team_name set.
+        GameEvent(
+            game_id=sample_game.id, half=2, minute=70,
+            event_type=GameEventType.substitution,
+            team_id=sample_game.home_team_id, team_name="Astana",
+            player_id=ru_only.id, player_name="Сергей Ким",
+            player2_id=scorer.id, player2_name="Иван Петров",
+            player2_team_name="Astana",
         ),
         # Manual event with no linked player — must keep stored string.
         GameEvent(
             game_id=sample_game.id, half=2, minute=80,
             event_type=GameEventType.red_card,
-            team_id=sample_game.away_team_id,
+            team_id=sample_game.away_team_id, team_name="Kairat",
             player_id=None, player_name="Неизвестный Игрок",
         ),
     ]
     test_session.add_all(events)
     await test_session.commit()
+
+
+@pytest.fixture
+async def kz_team_names(test_session, sample_teams):
+    """Give the sample teams KZ names so team_name localization is observable."""
+    sample_teams[0].name_kz = "Астана-KZ"   # home
+    sample_teams[1].name_kz = "Қайрат"       # away
+    await test_session.commit()
+    return sample_teams
 
 
 def _by_minute(events: list[dict]) -> dict[int, dict]:
@@ -111,3 +129,29 @@ async def test_events_default_lang_is_russian(client, sample_game, sample_events
     resp = await client.get(f"/api/v1/live/events/{sample_game.id}")
     events = _by_minute(resp.json()["events"])
     assert events[12]["player_name"] == "Иван Петров"
+
+
+async def test_events_kz_localizes_team_name(
+    client, sample_game, kz_team_names, sample_events
+):
+    resp = await client.get(f"/api/v1/live/events/{sample_game.id}?lang=kz")
+    events = _by_minute(resp.json()["events"])
+    assert events[12]["team_name"] == "Астана-KZ"   # home
+    assert events[80]["team_name"] == "Қайрат"        # away
+
+
+async def test_events_kz_localizes_player2_team_name(
+    client, sample_game, kz_team_names, sample_events
+):
+    """Substitution player2_team_name resolves via the same team."""
+    resp = await client.get(f"/api/v1/live/events/{sample_game.id}?lang=kz")
+    events = _by_minute(resp.json()["events"])
+    assert events[70]["player2_team_name"] == "Астана-KZ"
+
+
+async def test_events_ru_keeps_stored_team_name(
+    client, sample_game, kz_team_names, sample_events
+):
+    resp = await client.get(f"/api/v1/live/events/{sample_game.id}?lang=ru")
+    events = _by_minute(resp.json()["events"])
+    assert events[12]["team_name"] == "Astana"

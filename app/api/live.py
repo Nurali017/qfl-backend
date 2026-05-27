@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.models.game_event import GameEvent, GameEventType
-from app.utils.localization import get_localized_full_name
+from app.utils.localization import get_localized_full_name, get_localized_name
 
 router = APIRouter(prefix="/live", tags=["live"])
 logger = logging.getLogger(__name__)
@@ -51,23 +51,34 @@ def _localized_event(event: GameEvent, lang: str) -> GameEventResponse:
     """Build a response with player names resolved to the requested language.
 
     Names are denormalized RU snapshots on the event row, so we resolve the
-    localized full name from the linked Player when available, falling back to
-    the stored string for manual events without a player_id.
+    localized name from the linked Player/Team when available, falling back to
+    the stored string for manual events without a linked row.
     """
     response = GameEventResponse.model_validate(event)
 
-    def resolve(player, stored: str | None) -> str | None:
+    def resolve_player(player, stored: str | None) -> str | None:
         if player is not None:
             localized = get_localized_full_name(player, lang)
             if localized:
                 return localized
         return stored
 
+    def resolve_team(team, stored: str | None) -> str | None:
+        # player2's team isn't an FK, but substitutions stay within one team,
+        # so event.team is the same team — safe to localize player2_team_name.
+        if team is not None and stored:
+            localized = get_localized_name(team, lang)
+            if localized:
+                return localized
+        return stored
+
     return response.model_copy(
         update={
-            "player_name": resolve(event.player, event.player_name),
-            "player2_name": resolve(event.player2, event.player2_name),
-            "assist_player_name": resolve(
+            "team_name": resolve_team(event.team, event.team_name),
+            "player2_team_name": resolve_team(event.team, event.player2_team_name),
+            "player_name": resolve_player(event.player, event.player_name),
+            "player2_name": resolve_player(event.player2, event.player2_name),
+            "assist_player_name": resolve_player(
                 event.assist_player, event.assist_player_name
             ),
         }
@@ -92,6 +103,7 @@ async def get_game_events(
         .where(GameEvent.event_type != GameEventType.assist)
         .order_by(GameEvent.half, GameEvent.minute)
         .options(
+            selectinload(GameEvent.team),
             selectinload(GameEvent.player),
             selectinload(GameEvent.player2),
             selectinload(GameEvent.assist_player),
