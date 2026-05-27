@@ -41,6 +41,12 @@ ACTION_TYPE_MAP = {
     "ЗАМЕНА": GameEventType.substitution,
 }
 
+# When matching an incoming SOTA event against an operator-entered (manual)
+# event, allow the minute to differ by this much. Operators often type a minute
+# that is off by one from SOTA's (e.g. 15' vs 16'); without tolerance the dedup
+# fails to recognise the manual event and creates a duplicate SOTA copy.
+MANUAL_MINUTE_TOLERANCE = 2
+
 logger = logging.getLogger(__name__)
 
 
@@ -1047,11 +1053,18 @@ class LiveSyncService:
         return (half, minute, event_type_value, player_id, name)
 
     @staticmethod
-    def _signatures_match(sig_a: tuple, sig_b: tuple) -> bool:
-        """Check if two event signatures match (by player_id OR by name)."""
+    def _signatures_match(sig_a: tuple, sig_b: tuple, minute_tolerance: int = 0) -> bool:
+        """Check if two event signatures match (by player_id OR by name).
+
+        ``minute_tolerance`` permits matching events whose minute differs
+        slightly. It defaults to 0 so SOTA-to-SOTA reconciliation keeps
+        requiring an exact minute; manual matching passes a small tolerance.
+        """
         half_a, min_a, type_a, pid_a, name_a = sig_a
         half_b, min_b, type_b, pid_b, name_b = sig_b
-        if half_a != half_b or min_a != min_b or type_a != type_b:
+        if half_a != half_b or type_a != type_b:
+            return False
+        if abs((min_a or 0) - (min_b or 0)) > minute_tolerance:
             return False
         if pid_a and pid_b and pid_a == pid_b:
             return True
@@ -1076,12 +1089,21 @@ class LiveSyncService:
 
         # Separate SOTA events from manual events
         sota_events = [e for e in existing_events if e.source == "sota"]
+        manual_events = [e for e in existing_events if e.source == "manual"]
 
         # Build list-based signature map for SOTA events
         sota_by_sig: dict[tuple, list[GameEvent]] = {}
         for e in sota_events:
             sig = self._event_signature(e.event_type.value, e.half, e.minute, e.player_id, e.player_name)
             sota_by_sig.setdefault(sig, []).append(e)
+
+        # Signature map for operator-entered events. A SOTA event matching one of
+        # these is already on the protocol manually, so we must not create a SOTA
+        # duplicate of it.
+        manual_by_sig: dict[tuple, list[GameEvent]] = {}
+        for e in manual_events:
+            sig = self._event_signature(e.event_type.value, e.half, e.minute, e.player_id, e.player_name)
+            manual_by_sig.setdefault(sig, []).append(e)
 
         # Get game for team IDs with eager loading of teams
         result = await self.db.execute(
@@ -1110,6 +1132,7 @@ class LiveSyncService:
 
         matcher = TeamNameMatcher.from_game(game)
         matched_db_events: set[int] = set()
+        matched_manual_events: set[int] = set()
         added = 0
         updated = 0
         assists_map: dict[tuple, dict] = {}
@@ -1203,8 +1226,25 @@ class LiveSyncService:
                 "player2_team_name": player2_team_name,
             }
 
-            # Try to match against existing SOTA event
             sota_sig = self._event_signature(event_type.value, half, minute, player_id, player_name)
+
+            # If an operator already entered this event manually, it is the
+            # authoritative copy: skip it so we never create a duplicate SOTA
+            # row. Any stale SOTA copy stays unmatched and is removed below.
+            manual_match = None
+            for sig, candidates in manual_by_sig.items():
+                if self._signatures_match(sota_sig, sig, minute_tolerance=MANUAL_MINUTE_TOLERANCE):
+                    for candidate in candidates:
+                        if candidate.id not in matched_manual_events:
+                            manual_match = candidate
+                            break
+                    if manual_match:
+                        break
+            if manual_match is not None:
+                matched_manual_events.add(manual_match.id)
+                continue
+
+            # Try to match against existing SOTA event
             matched_event = None
             for sig, candidates in sota_by_sig.items():
                 if self._signatures_match(sota_sig, sig):
