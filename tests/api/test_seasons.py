@@ -4,6 +4,9 @@ from uuid import uuid4
 from datetime import date, time, datetime
 
 
+pytestmark = pytest.mark.usefixtures("override_web_session_factory")
+
+
 async def _seed_score_table(
     test_session,
     *,

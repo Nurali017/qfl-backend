@@ -16,7 +16,10 @@ import pytest
 from httpx import AsyncClient
 
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.usefixtures("override_web_session_factory"),
+]
 
 
 async def _make_season_with_live(test_session, *, season_id: int = 305) -> tuple[int, int, int, int]:

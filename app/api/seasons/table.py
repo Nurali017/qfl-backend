@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.utils.cache import cache_get_or_compute
 
 from app.api.deps import get_db
-from app.database import WebAsyncSessionLocal
+from app import database
 from app.models import Game, GameStatus, ScoreTable, Season, Team
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids, get_group_for_team
 from app.services.standings import (
@@ -72,7 +72,7 @@ async def get_season_table(
     leader releases the lock.
     """
     # Phase A: validation + group/final resolution in a short session.
-    async with WebAsyncSessionLocal() as db:
+    async with database.get_web_session_factory()() as db:
         try:
             await _ensure_visible_season(db, season_id)
 
@@ -126,7 +126,7 @@ async def get_season_table(
     async def _compute() -> bytes:
         # Heavy work session is scoped to the leader caller only — the 29
         # waiters never touch the pool. Open here, close here.
-        async with WebAsyncSessionLocal() as compute_db:
+        async with database.get_web_session_factory()() as compute_db:
             try:
                 response = await _build_season_table_response(
                     db=compute_db, season_id=season_id, lang=lang,

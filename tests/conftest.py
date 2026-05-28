@@ -117,6 +117,27 @@ async def client(test_session) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(scope="function")
+def override_web_session_factory(test_engine, monkeypatch):
+    """Redirect database.get_web_session_factory() at the test engine.
+
+    Used by handlers that open WebAsyncSessionLocal() explicitly (e.g.
+    /seasons/{id}/table). Must be combined with the `client` fixture if the
+    handler is called via HTTP. monkeypatch targets the module attribute, so
+    the handler must `from app import database; database.get_web_session_factory()`
+    (NOT import the function directly) for the swap to take effect.
+    """
+    test_factory = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+    monkeypatch.setattr("app.database.get_web_session_factory", lambda: test_factory)
+    yield test_factory
+
+
 @pytest.fixture(autouse=True)
 def clear_runtime_caches():
     cache_clear()

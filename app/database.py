@@ -73,6 +73,19 @@ WebAsyncSessionLocal = async_sessionmaker(
 )
 
 
+def get_web_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Accessor for the web-side session factory.
+
+    Handlers that open sessions explicitly (instead of Depends(get_db)) should
+    go through this accessor so tests can monkeypatch the factory. Critically,
+    callers must import the database MODULE and call
+    `database.get_web_session_factory()()`, not import the function directly —
+    a `from app.database import get_web_session_factory` binding cannot be
+    replaced by monkeypatching app.database.
+    """
+    return WebAsyncSessionLocal
+
+
 class Base(DeclarativeBase):
     pass
 
