@@ -401,6 +401,26 @@ class TestSeasonsAPI:
         data = response.json()
         assert data["items"][0]["is_schedule_tentative"] is True
 
+    @pytest.mark.asyncio
+    async def test_get_player_stats_empty_group_returns_200_not_500(
+        self, client: AsyncClient, sample_season
+    ):
+        """Early-return on an empty group must include season_id/sort_by.
+
+        Regression: before the fix the handler returned
+        PlayerStatsTableResponse(items=[], total=0) without season_id /
+        sort_by, which Pydantic rejected → 500. Hit ~31x/day on prod.
+        """
+        response = await client.get(
+            f"/api/v1/seasons/{sample_season.id}/player-stats?group=NONEXISTENT&lang=ru"
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["items"] == []
+        assert data["total"] == 0
+        assert data["season_id"] == sample_season.id
+        assert data["sort_by"] == "goal"
+
     async def test_get_player_stats_includes_position_code(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_player
     ):

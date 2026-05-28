@@ -110,7 +110,12 @@ async def get_player_stats_table(
     if group:
         group_team_ids = await get_group_team_ids(db, season_id, group)
         if not group_team_ids:
-            return PlayerStatsTableResponse(items=[], total=0)
+            return PlayerStatsTableResponse(
+                season_id=season_id,
+                sort_by=sort_by,
+                items=[],
+                total=0,
+            )
 
     filters = [PlayerSeasonStats.season_id == season_id]
     # For rank-based sorts (goal, goal_pass, dry_match), only show SOTA-ranked players
