@@ -302,7 +302,31 @@ async def _sync_best_players():
     Each season runs in its own session so a soft-time-limit or a single-season
     failure can't leave a multi-season transaction stuck (which previously caused
     LockNotAvailableError on subsequent runs and stale leaderboard data).
+
+    Skipped while any game is live: best_players UPDATE'ит goal_rank /
+    goal_pass_rank / dry_match_rank on player_season_stats, which is the same hot
+    table web handlers read. The resulting row-lock contention exhausted the web
+    pool during HT/FT/goal bursts on 2026-05-28. The leaderboard catches up after
+    the match wraps up — users are watching live, not the table.
     """
+    async with AsyncSessionLocal() as db:
+        live_count = await db.scalar(
+            select(func.count())
+            .select_from(Game)
+            .where(Game.status == GameStatus.live)
+        )
+    if live_count:
+        logger.info(
+            "sync_best_players: skipped, %d live game(s) in progress",
+            live_count,
+        )
+        return {
+            "skipped": True,
+            "reason": "live_games_active",
+            "live_games": live_count,
+            "best_players_synced": 0,
+        }
+
     total = 0
     results_by_season: dict[str, int | str] = {}
     for season_id in settings.sync_season_ids:
