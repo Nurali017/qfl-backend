@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.utils.cache import cache_get_or_compute
 
 from app.api.deps import get_db
+from app.database import WebAsyncSessionLocal
 from app.models import Game, GameStatus, ScoreTable, Season, Team
 from app.services.season_filters import get_group_team_ids, get_final_stage_ids, get_group_for_team
 from app.services.standings import (
@@ -49,7 +50,6 @@ async def get_season_table(
     include_live: bool = Query(default=True, description="If false, exclude live games from standings (Flashscore-style snapshot)"),
     team_id: int | None = Query(default=None, description="Auto-resolve group from this team's SeasonParticipant entry"),
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Get league table for a season.
@@ -59,34 +59,55 @@ async def get_season_table(
     - tour_from: Starting matchweek (inclusive)
     - tour_to: Ending matchweek (inclusive)
     - home_away: "home" for home games only, "away" for away games only
+
+    Session lifecycle deliberately bypasses Depends(get_db). The default
+    FastAPI pattern would hold one session for the entire handler — and so
+    every concurrent caller waiting on cache_get_or_compute's per-key lock
+    would also hold a pool slot in idle-in-transaction. Instead we run
+    validation + group/final resolution in a SHORT explicit session, close
+    it, then enter the singleflight wait holding NO connection. The actual
+    work (executed by exactly one caller) opens its own fresh session
+    inside _compute. The other 29-of-30 callers wait on an asyncio.Lock
+    with no DB occupancy at all — they read the cached bytes when the
+    leader releases the lock.
     """
-    await _ensure_visible_season(db, season_id)
+    # Phase A: validation + group/final resolution in a short session.
+    async with WebAsyncSessionLocal() as db:
+        try:
+            await _ensure_visible_season(db, season_id)
 
-    if group and final:
-        raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
+            if group and final:
+                raise HTTPException(status_code=400, detail="group and final filters are mutually exclusive")
 
-    # Auto-resolve group from team_id when caller supplies a team but no
-    # explicit group / final filter — used by widgets on the team / match pages
-    # so the table is scoped to the team's conference, not the whole league.
-    if team_id is not None and not group and not final:
-        resolved = await get_group_for_team(db, season_id, team_id)
-        if resolved:
-            group = resolved
+            # Auto-resolve group from team_id when caller supplies a team but no
+            # explicit group / final filter — used by widgets on the team /
+            # match pages so the table is scoped to the team's conference.
+            if team_id is not None and not group and not final:
+                resolved = await get_group_for_team(db, season_id, team_id)
+                if resolved:
+                    group = resolved
 
-    # Resolve group team_ids if group filter is specified
-    group_team_ids: list[int] | None = None
-    if group:
-        group_team_ids = await get_group_team_ids(db, season_id, group)
-        if not group_team_ids:
-            filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
-            return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
+            group_team_ids: list[int] | None = None
+            if group:
+                group_team_ids = await get_group_team_ids(db, season_id, group)
+                if not group_team_ids:
+                    filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
+                    await db.commit()
+                    return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
 
-    final_stage_ids_list: list[int] | None = None
-    if final:
-        final_stage_ids_list = await get_final_stage_ids(db, season_id)
-        if not final_stage_ids_list:
-            filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
-            return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
+            final_stage_ids_list: list[int] | None = None
+            if final:
+                final_stage_ids_list = await get_final_stage_ids(db, season_id)
+                if not final_stage_ids_list:
+                    filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
+                    await db.commit()
+                    return ScoreTableResponse(season_id=season_id, filters=filters, table=[])
+
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    # Phase A session released — we now hold no DB connection.
 
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
@@ -94,8 +115,6 @@ async def get_season_table(
     # requests hit /seasons/{id}/table at once. Without coalescing each one
     # ran the full handler in parallel — ~330 PG queries from one burst,
     # backend CPU saturated, RU /table latency 5-12s (2026-05-28 incident).
-    # cache_get_or_compute serializes concurrent callers on the same key:
-    # first computes, the rest await and read the cached bytes.
     # Resolved `group` is used in the key (not raw team_id) so widgets on
     # team-pages share cache with the explicit ?group= query.
     cache_key = (
@@ -105,12 +124,22 @@ async def get_season_table(
     )
 
     async def _compute() -> bytes:
-        return (await _build_season_table_response(
-            db=db, season_id=season_id, lang=lang, include_live=include_live,
-            home_away=home_away, group_team_ids=group_team_ids,
-            final_stage_ids_list=final_stage_ids_list, tour_from=tour_from,
-            tour_to=tour_to, filters=filters,
-        )).model_dump_json().encode()
+        # Heavy work session is scoped to the leader caller only — the 29
+        # waiters never touch the pool. Open here, close here.
+        async with WebAsyncSessionLocal() as compute_db:
+            try:
+                response = await _build_season_table_response(
+                    db=compute_db, season_id=season_id, lang=lang,
+                    include_live=include_live, home_away=home_away,
+                    group_team_ids=group_team_ids,
+                    final_stage_ids_list=final_stage_ids_list,
+                    tour_from=tour_from, tour_to=tour_to, filters=filters,
+                )
+                await compute_db.commit()
+                return response.model_dump_json().encode()
+            except Exception:
+                await compute_db.rollback()
+                raise
 
     json_bytes = await cache_get_or_compute(cache_key, ttl=30, compute=_compute)
     return Response(content=json_bytes, media_type="application/json")
