@@ -442,13 +442,15 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
         return {"skipped": True, "reason": "serper_api_key not set"}
 
     today = date.today()
-    # +5/+3 — найти билеты заранее; +2/+1 — догнать матчи, по которым ссылка
-    # появилась только в последний момент (часто так с виджетами Яндекс.Афиши)
+    # +5/+3 — найти билеты заранее; +2/+1/+0 — догнать матчи, по которым ссылка
+    # появилась только в последний момент (часто так с виджетами Яндекс.Афиши,
+    # Ticketon новые события создаёт за день/в день матча)
     search_dates = {
         today + timedelta(days=5),
         today + timedelta(days=3),
         today + timedelta(days=2),
         today + timedelta(days=1),
+        today,
     }
 
     result = await db.execute(
