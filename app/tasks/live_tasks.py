@@ -10,6 +10,7 @@ Tasks:
 - post_finish_followup: Post-match pipeline (resync, tour check, extended stats)
 - sync_extended_stats_for_game: Game-scoped extended stats sync
 """
+import asyncio
 import logging
 import time
 from datetime import timedelta
@@ -587,6 +588,64 @@ def backfill_sota_game_ids():
 # ==================== Post-finish follow-up ====================
 
 
+async def _prewarm_cache_after_ft(game_id: int, season_id: int | None) -> None:
+    """Warm /table and /games/{id} TTL cache before the FT-triggered SSR burst.
+
+    The Telegram FT announcement fires within seconds of status flipping to
+    `finished`. Subscribers click → frontend SSR fans out 5-10 API requests
+    per page → up to 30+ parallel hits on /table within the first 30s. On
+    cold cache each one forces a backend compute. By issuing a handful of
+    self-calls here we prime in-process TTL cache so the burst lands on
+    warm keys.
+
+    Caveat: backend runs 2 gunicorn workers and each holds its own per-
+    process cache. Round-robin makes any single self-call warm only ONE
+    worker. We issue a few duplicated calls to raise the probability of
+    hitting both workers, but full coverage requires a Redis-shared cache
+    (separate backlog).
+
+    Fire-and-forget — failures are logged and don't propagate; the rest of
+    _post_finish_followup runs regardless.
+    """
+    import httpx
+
+    if not season_id:
+        return
+
+    backend_url = "http://qfl-backend:8000"
+    table_path = f"/api/v1/seasons/{season_id}/table"
+    game_path = f"/api/v1/games/{game_id}"
+
+    # Duplicate each (lang, endpoint) pair so a round-robin dispatcher is
+    # likely to land at least one call on each gunicorn worker. Cost is
+    # ~10 cheap HTTP calls run in parallel — negligible.
+    urls = [
+        f"{backend_url}{table_path}?lang=ru",
+        f"{backend_url}{table_path}?lang=ru",
+        f"{backend_url}{table_path}?lang=kz",
+        f"{backend_url}{table_path}?lang=kz",
+        f"{backend_url}{table_path}?lang=ru&include_live=false",
+        f"{backend_url}{table_path}?lang=kz&include_live=false",
+        f"{backend_url}{game_path}?lang=ru",
+        f"{backend_url}{game_path}?lang=ru",
+        f"{backend_url}{game_path}?lang=kz",
+        f"{backend_url}{game_path}?lang=kz",
+    ]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            results = await asyncio.gather(
+                *(client.get(url) for url in urls),
+                return_exceptions=True,
+            )
+        ok = sum(1 for r in results if not isinstance(r, BaseException))
+        logger.info(
+            "post_finish prewarm: game=%s season=%s warmed=%d/%d",
+            game_id, season_id, ok, len(urls),
+        )
+    except Exception:
+        logger.exception("post_finish prewarm failed for game %s", game_id)
+
+
 async def _post_finish_followup(game_id: int):
     """Post-match pipeline: resync, tour completion check, extended stats scheduling."""
     from app.utils.live_flag import get_redis
@@ -692,6 +751,15 @@ async def _post_finish_followup(game_id: int):
                         logger.exception("Extended stats schedule failed for game %s", game_id)
 
             await db.commit()
+
+            # Prewarm caches AFTER db commit but BEFORE returning so the
+            # Telegram FT push (dispatched after this task completes) lands
+            # on warm /table and /games/{id} keys.
+            try:
+                await _prewarm_cache_after_ft(game_id, game.season_id)
+            except Exception:
+                logger.exception("Prewarm cache failed for game %s", game_id)
+
             return {"game_id": game_id, "status": "completed"}
         except Exception:
             await db.rollback()
