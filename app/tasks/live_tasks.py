@@ -305,7 +305,28 @@ async def _auto_end_finished_games():
 
 
 async def _sync_post_match_protocol():
-    """Re-sync events & stats for recently finished games (within 6 hours)."""
+    """Re-sync events & stats for recently finished games (within 6 hours).
+
+    Skipped while any game is live. This task iterates over recently-finished
+    games and runs 3 sota.id HTTP calls per game inside a single DB session
+    (events + stats + player_stats). Observed 21.78s holder at FT g976 on
+    2026-05-28 — exactly the spike moment when 30+ SSR requests are also
+    landing on /table after the Telegram FT announcement. Post-match data
+    catches up on the next beat tick (per-minute) once live wraps up.
+    """
+    async with AsyncSessionLocal() as db:
+        live_count = await db.scalar(
+            select(func.count())
+            .select_from(Game)
+            .where(Game.status == GameStatus.live)
+        )
+    if live_count:
+        logger.info(
+            "_sync_post_match_protocol: skipped, %d live game(s) in progress",
+            live_count,
+        )
+        return {"skipped": True, "reason": "live_games_active", "live_games": live_count}
+
     cutoff = utcnow() - timedelta(hours=6)
 
     async with AsyncSessionLocal() as db:
