@@ -3,9 +3,12 @@
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
+
+from app.utils.cache import cache_get_or_compute
 
 from app.api.deps import get_db
 from app.models import Game, GameStatus, ScoreTable, Season, Team
@@ -13,6 +16,8 @@ from app.services.season_filters import get_group_team_ids, get_final_stage_ids,
 from app.services.standings import (
     _primary_sort_key,
     calculate_dynamic_table,
+    compute_table_from_games,
+    fetch_card_stats,
     read_score_table,
     get_next_games_for_teams,
 )
@@ -85,32 +90,88 @@ async def get_season_table(
 
     filters = ScoreTableFilters(tour_from=tour_from, tour_to=tour_to, home_away=home_away)
 
-    # Load full live games (with team names/logos) once — used both for the
-    # live_team_ids set and for inline live_match payloads on each row.
-    live_games_q = await db.execute(
+    # Singleflight + TTL cache. Under HT/FT/goal bursts dozens of SSR
+    # requests hit /seasons/{id}/table at once. Without coalescing each one
+    # ran the full handler in parallel — ~330 PG queries from one burst,
+    # backend CPU saturated, RU /table latency 5-12s (2026-05-28 incident).
+    # cache_get_or_compute serializes concurrent callers on the same key:
+    # first computes, the rest await and read the cached bytes.
+    # Resolved `group` is used in the key (not raw team_id) so widgets on
+    # team-pages share cache with the explicit ?group= query.
+    cache_key = (
+        f"season_table:v1:{season_id}:{group or ''}:{int(final)}:"
+        f"{tour_from or ''}:{tour_to or ''}:{home_away or ''}:"
+        f"{int(include_live)}:{lang}"
+    )
+
+    async def _compute() -> bytes:
+        return (await _build_season_table_response(
+            db=db, season_id=season_id, lang=lang, include_live=include_live,
+            home_away=home_away, group_team_ids=group_team_ids,
+            final_stage_ids_list=final_stage_ids_list, tour_from=tour_from,
+            tour_to=tour_to, filters=filters,
+        )).model_dump_json().encode()
+
+    json_bytes = await cache_get_or_compute(cache_key, ttl=30, compute=_compute)
+    return Response(content=json_bytes, media_type="application/json")
+
+
+async def _build_season_table_response(
+    *,
+    db: AsyncSession,
+    season_id: int,
+    lang: str,
+    include_live: bool,
+    home_away: str | None,
+    group_team_ids: list[int] | None,
+    final_stage_ids_list: list[int] | None,
+    tour_from: int | None,
+    tour_to: int | None,
+    filters: ScoreTableFilters,
+) -> ScoreTableResponse:
+    """Build the full /table response. Extracted into a helper so the
+    handler stays small and can wrap this body in cache_get_or_compute."""
+    # Load all standings-relevant games (live + finished + technical defeat)
+    # ONCE. We previously ran three near-identical SELECTs:
+    #   1. live_games_full (status=live)
+    #   2. calculate_dynamic_table(include_live=True)
+    #   3. calculate_dynamic_table(include_live=False)  ← only during live
+    # Each with selectinload(home_team, away_team) over ~150-200 games. Under
+    # HT/FT/goal bursts that was ~330 queries to PG in parallel (2026-05-28
+    # incident). Loading once and splitting in-memory cuts ~60% of the SQL.
+    standings_statuses = [GameStatus.finished, GameStatus.technical_defeat, GameStatus.live]
+    all_games_q = (
         select(Game)
         .where(
             Game.season_id == season_id,
-            Game.status == GameStatus.live,
+            Game.status.in_(standings_statuses),
         )
         .options(
             selectinload(Game.home_team),
             selectinload(Game.away_team),
         )
+        .order_by(Game.tour, Game.date, Game.time)
     )
-    live_games_full = list(live_games_q.scalars().all())
-
-    # Scope live games to the active phase (group / final). A live match in
-    # Conference A must not surface in Conference B's table or vice versa.
+    if tour_from is not None:
+        all_games_q = all_games_q.where(Game.tour >= tour_from)
+    if tour_to is not None:
+        all_games_q = all_games_q.where(Game.tour <= tour_to)
     if group_team_ids is not None:
-        gset = set(group_team_ids)
-        live_games_full = [
-            g for g in live_games_full
-            if g.home_team_id in gset and g.away_team_id in gset
-        ]
+        all_games_q = all_games_q.where(
+            Game.home_team_id.in_(group_team_ids),
+            Game.away_team_id.in_(group_team_ids),
+        )
     if final_stage_ids_list is not None:
-        sset = set(final_stage_ids_list)
-        live_games_full = [g for g in live_games_full if g.stage_id in sset]
+        all_games_q = all_games_q.where(Game.stage_id.in_(final_stage_ids_list))
+
+    all_games = list((await db.execute(all_games_q)).scalars().all())
+
+    finished_or_td = (GameStatus.finished, GameStatus.technical_defeat)
+    live_games_full = [g for g in all_games if g.status == GameStatus.live]
+    finished_games = [g for g in all_games if g.status in finished_or_td]
+
+    # Single card-stats fetch — covers both the live and pre-live computations.
+    card_stats = await fetch_card_stats(db, [g.id for g in all_games])
 
     live_team_ids = list({
         tid
@@ -153,13 +214,10 @@ async def get_season_table(
                 status_text=g.live_phase,
             )
 
-    # Always calculate table dynamically with full tiebreakers (H2H + cards)
-    table_data = await calculate_dynamic_table(
-        db, season_id, tour_from, tour_to, home_away, lang,
-        group_team_ids=group_team_ids,
-        final_stage_ids=final_stage_ids_list,
-        include_live=bool(live_count) and include_live,
-    )
+    # Always calculate table dynamically with full tiebreakers (H2H + cards).
+    # Uses the games we already loaded above — no extra SQL.
+    table_games = all_games if (bool(live_count) and include_live) else finished_games
+    table_data = compute_table_from_games(table_games, card_stats, home_away, lang)
 
     # Merge with score_table for: team list (teams with 0 games) + notes (point penalties)
     base_table = await read_score_table(db, season_id, group_team_ids, lang)
@@ -197,18 +255,10 @@ async def get_season_table(
     # Compute position_change only during LIVE matches — compares current live
     # standings vs standings before live games started (Flashscore-style).
     # When no live games, standings are static → no indicators shown.
+    # Reuses finished_games + card_stats from the single SQL load above.
     position_change_map: dict[int, int] = {}
     if live_count and include_live and not home_away:
-        # Compare positions within the same scope (group/final) — otherwise a
-        # league-wide pre-live rank would be irrelevant to a group view.
-        pre_live_table = await calculate_dynamic_table(
-            db, season_id,
-            tour_from=tour_from, tour_to=tour_to,
-            home_away=None, lang=lang,
-            group_team_ids=group_team_ids,
-            final_stage_ids=final_stage_ids_list,
-            include_live=False,
-        )
+        pre_live_table = compute_table_from_games(finished_games, card_stats, None, lang)
         position_change_map = {e["team_id"]: e["position"] for e in pre_live_table}
 
     team_ids = [entry["team_id"] for entry in table_data]
@@ -262,7 +312,10 @@ async def get_season_table(
             )
         )
 
-    return ScoreTableResponse(season_id=season_id, filters=filters, table=table, has_live=bool(live_count), live_team_ids=live_team_ids)
+    return ScoreTableResponse(
+        season_id=season_id, filters=filters, table=table,
+        has_live=bool(live_count), live_team_ids=live_team_ids,
+    )
 
 
 @router.get("/{season_id}/results-grid", response_model=ResultsGridResponse)

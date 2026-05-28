@@ -162,6 +162,123 @@ async def get_next_games_for_teams(
     return next_games
 
 
+async def fetch_card_stats(
+    db: AsyncSession, game_ids: list[int],
+) -> dict[int, dict]:
+    """Aggregate red/yellow cards per team across the given game_ids."""
+    card_stats: dict[int, dict] = defaultdict(lambda: {"red_cards": 0, "yellow_cards": 0})
+    if not game_ids:
+        return card_stats
+    card_query = select(GameTeamStats).where(GameTeamStats.game_id.in_(game_ids))
+    card_result = await db.execute(card_query)
+    for gts in card_result.scalars().all():
+        card_stats[gts.team_id]["red_cards"] += gts.red_cards or 0
+        card_stats[gts.team_id]["yellow_cards"] += gts.yellow_cards or 0
+    return card_stats
+
+
+def compute_table_from_games(
+    games: list,
+    card_stats: dict[int, dict],
+    home_away: str | None,
+    lang: str = "ru",
+) -> list[dict]:
+    """Aggregate already-loaded games into a sorted standings table.
+
+    Pure in-memory transform — no DB access. The handler can load games once
+    (covering both finished and live statuses) and call this twice with
+    different filters to avoid a second SQL roundtrip per /table request.
+    """
+    team_stats = _aggregate_team_stats(games, home_away, lang)
+
+    table_list = []
+    for team_id, stats in team_stats.items():
+        if stats["games_played"] > 0:
+            stats["goal_difference"] = stats["goals_scored"] - stats["goals_conceded"]
+            stats["form"] = "".join(stats["form_list"][-5:])
+            del stats["form_list"]
+            cs = card_stats.get(team_id, {})
+            stats["total_red_cards"] = cs.get("red_cards", 0)
+            stats["total_yellow_cards"] = cs.get("yellow_cards", 0)
+            table_list.append(stats)
+
+    table_list = _sort_with_tiebreakers(table_list, games, card_stats)
+    for i, entry in enumerate(table_list, 1):
+        entry["position"] = i
+    return table_list
+
+
+def _aggregate_team_stats(games: list, home_away: str | None, lang: str) -> dict:
+    """In-memory accumulation of W/D/L/goals per team. Extracted from
+    calculate_dynamic_table so handlers that pre-fetch games can reuse it."""
+    team_stats: dict[int, dict] = defaultdict(lambda: {
+        "team_id": 0,
+        "team_name": None,
+        "team_logo": None,
+        "games_played": 0,
+        "wins": 0,
+        "draws": 0,
+        "losses": 0,
+        "goals_scored": 0,
+        "goals_conceded": 0,
+        "points": 0,
+        "note": None,
+        "form_list": [],
+    })
+
+    for game in games:
+        home_id = game.home_team_id
+        away_id = game.away_team_id
+        if game.home_score is None and game.away_score is None:
+            continue
+        home_score = game.home_score if game.home_score is not None else 0
+        away_score = game.away_score if game.away_score is not None else 0
+
+        if home_away != "away":
+            stats = team_stats[home_id]
+            stats["team_id"] = home_id
+            stats["team_name"] = get_localized_field(game.home_team, "name", lang) if game.home_team else None
+            stats["team_logo"] = resolve_team_logo_url(game.home_team)
+            stats["games_played"] += 1
+            stats["goals_scored"] += home_score
+            stats["goals_conceded"] += away_score
+
+            if home_score > away_score:
+                stats["wins"] += 1
+                stats["points"] += 3
+                stats["form_list"].append("W")
+            elif home_score < away_score:
+                stats["losses"] += 1
+                stats["form_list"].append("L")
+            else:
+                stats["draws"] += 1
+                stats["points"] += 1
+                stats["form_list"].append("D")
+
+        if home_away != "home":
+            stats = team_stats[away_id]
+            stats["team_id"] = away_id
+            stats["team_name"] = get_localized_field(game.away_team, "name", lang) if game.away_team else None
+            stats["team_logo"] = resolve_team_logo_url(game.away_team)
+            stats["games_played"] += 1
+            stats["goals_scored"] += away_score
+            stats["goals_conceded"] += home_score
+
+            if away_score > home_score:
+                stats["wins"] += 1
+                stats["points"] += 3
+                stats["form_list"].append("W")
+            elif away_score < home_score:
+                stats["losses"] += 1
+                stats["form_list"].append("L")
+            else:
+                stats["draws"] += 1
+                stats["points"] += 1
+                stats["form_list"].append("D")
+
+    return team_stats
+
+
 async def calculate_dynamic_table(
     db: AsyncSession,
     season_id: int,
@@ -210,99 +327,8 @@ async def calculate_dynamic_table(
     result = await db.execute(query)
     games = result.scalars().all()
 
-    team_stats: dict[int, dict] = defaultdict(lambda: {
-        "team_id": 0,
-        "team_name": None,
-        "team_logo": None,
-        "games_played": 0,
-        "wins": 0,
-        "draws": 0,
-        "losses": 0,
-        "goals_scored": 0,
-        "goals_conceded": 0,
-        "points": 0,
-        "note": None,
-        "form_list": [],
-    })
-
-    for game in games:
-        home_id = game.home_team_id
-        away_id = game.away_team_id
-        # Skip live games that haven't had scores set yet
-        if game.home_score is None and game.away_score is None:
-            continue
-        home_score = game.home_score if game.home_score is not None else 0
-        away_score = game.away_score if game.away_score is not None else 0
-
-        if home_away != "away":
-            stats = team_stats[home_id]
-            stats["team_id"] = home_id
-            stats["team_name"] = get_localized_field(game.home_team, "name", lang) if game.home_team else None
-            stats["team_logo"] = resolve_team_logo_url(game.home_team)
-            stats["games_played"] += 1
-            stats["goals_scored"] += home_score
-            stats["goals_conceded"] += away_score
-
-            if home_score > away_score:
-                stats["wins"] += 1
-                stats["points"] += 3
-                stats["form_list"].append("W")
-            elif home_score < away_score:
-                stats["losses"] += 1
-                stats["form_list"].append("L")
-            else:
-                stats["draws"] += 1
-                stats["points"] += 1
-                stats["form_list"].append("D")
-
-        if home_away != "home":
-            stats = team_stats[away_id]
-            stats["team_id"] = away_id
-            stats["team_name"] = get_localized_field(game.away_team, "name", lang) if game.away_team else None
-            stats["team_logo"] = resolve_team_logo_url(game.away_team)
-            stats["games_played"] += 1
-            stats["goals_scored"] += away_score
-            stats["goals_conceded"] += home_score
-
-            if away_score > home_score:
-                stats["wins"] += 1
-                stats["points"] += 3
-                stats["form_list"].append("W")
-            elif away_score < home_score:
-                stats["losses"] += 1
-                stats["form_list"].append("L")
-            else:
-                stats["draws"] += 1
-                stats["points"] += 1
-                stats["form_list"].append("D")
-
-    # Collect card stats from GameTeamStats
-    game_ids = [g.id for g in games]
-    card_stats: dict[int, dict] = defaultdict(lambda: {"red_cards": 0, "yellow_cards": 0})
-    if game_ids:
-        card_query = select(GameTeamStats).where(GameTeamStats.game_id.in_(game_ids))
-        card_result = await db.execute(card_query)
-        for gts in card_result.scalars().all():
-            card_stats[gts.team_id]["red_cards"] += gts.red_cards or 0
-            card_stats[gts.team_id]["yellow_cards"] += gts.yellow_cards or 0
-
-    table_list = []
-    for team_id, stats in team_stats.items():
-        if stats["games_played"] > 0:
-            stats["goal_difference"] = stats["goals_scored"] - stats["goals_conceded"]
-            stats["form"] = "".join(stats["form_list"][-5:])
-            del stats["form_list"]
-            cs = card_stats.get(team_id, {})
-            stats["total_red_cards"] = cs.get("red_cards", 0)
-            stats["total_yellow_cards"] = cs.get("yellow_cards", 0)
-            table_list.append(stats)
-
-    table_list = _sort_with_tiebreakers(table_list, games, card_stats)
-
-    for i, entry in enumerate(table_list, 1):
-        entry["position"] = i
-
-    return table_list
+    card_stats = await fetch_card_stats(db, [g.id for g in games])
+    return compute_table_from_games(games, card_stats, home_away, lang)
 
 
 async def read_score_table(db: AsyncSession, season_id: int, group_team_ids: list[int] | None, lang: str):
