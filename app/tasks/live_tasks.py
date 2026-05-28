@@ -48,6 +48,30 @@ from app.utils.redis_lock import acquire_token_lock as _acquire_token_lock
 from app.utils.redis_lock import release_token_lock as _release_token_lock
 
 
+async def _run_live_step(coro_factory, *, step: str, game_id: int):
+    """Run one LiveSyncService.sync_live_* step in its OWN AsyncSession.
+
+    Each sub-step (events / time / lineup / stats / player_stats) holds an
+    HTTP call to sota.id while the session is open. Previously all 5 steps
+    shared one session for the entire 5-HTTP loop — a 200+s sota.id stall in
+    any one step held the pool slot for the full chain (observed 253s zombie
+    on game 979, 2026-05-28). Per-step sessions cap the holding window at
+    the slowest single step.
+
+    `coro_factory(db)` returns the awaitable to run with the per-step session.
+    Exceptions are caught and logged with `step` for diagnostics; events
+    step's result is returned, others fire-and-forget.
+    """
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await coro_factory(db)
+            await db.commit()
+            return result
+        except Exception:
+            await db.rollback()
+            raise
+
+
 async def _sync_single_game_impl(game_id: int, token: str):
     """Sync all live data for a single game.
 
@@ -55,73 +79,89 @@ async def _sync_single_game_impl(game_id: int, token: str):
     On completion (or failure) we compare-and-delete so only *our* reservation
     is removed.  If the TTL expired and a new cycle already re-reserved the
     key with a different token, our delete is a no-op.
+
+    Each sync_live_* sub-step runs in its own AsyncSession so a sota.id stall
+    in one step releases the connection between steps. Inter-step Game-mutation
+    ordering is preserved by running them sequentially (same as before).
     """
     lock_key = f"{_LOCK_KEY_PREFIX}:{game_id}"
     t0 = time.monotonic()
+    client = get_sota_client()
+
     try:
-        async with AsyncSessionLocal() as db:
-            try:
-                client = get_sota_client()
-                service = LiveSyncService(db, client)
+        # Events first — its return value is reported back to the dispatcher.
+        try:
+            sync_result = await _run_live_step(
+                lambda db: LiveSyncService(db, client).sync_live_events(game_id),
+                step="events", game_id=game_id,
+            )
+        except Exception as evt_err:
+            elapsed = time.monotonic() - t0
+            logger.error("Failed to sync game %s in %.1fs: %s", game_id, elapsed, evt_err)
+            return {"game_id": game_id, "error": str(evt_err), "elapsed": round(elapsed, 1)}
 
-                # Steps run sequentially because all 5 methods mutate the same
-                # Game object via shared AsyncSession and call db.commit().
-                # asyncio.gather() would cause lost updates.
-                # Inter-game parallelism (separate Celery tasks) is the main win;
-                # intra-game parallelism requires splitting fetch/apply phases
-                # in LiveSyncService (future refactor).
-                sync_result = await service.sync_live_events(game_id)
-                events_added = sync_result.get("added", 0)
+        events_added = sync_result.get("added", 0)
 
+        try:
+            await _run_live_step(
+                lambda db: LiveSyncService(db, client).sync_live_time(game_id),
+                step="time", game_id=game_id,
+            )
+        except Exception as time_err:
+            logger.warning("Failed to sync live time for game %s: %s", game_id, time_err)
+
+        try:
+            await _run_live_step(
+                lambda db: LiveSyncService(db, client).sync_live_lineup(game_id),
+                step="lineup", game_id=game_id,
+            )
+        except Exception as lineup_err:
+            logger.warning("Failed to sync lineup for game %s: %s", game_id, lineup_err)
+
+        try:
+            await _run_live_step(
+                lambda db: LiveSyncService(db, client).sync_live_stats(game_id),
+                step="stats", game_id=game_id,
+            )
+        except Exception as stats_err:
+            logger.warning("Failed to sync stats for game %s: %s", game_id, stats_err)
+
+        try:
+            await _run_live_step(
+                lambda db: LiveSyncService(db, client).sync_live_player_stats(game_id),
+                step="player_stats", game_id=game_id,
+            )
+        except Exception as ps_err:
+            logger.warning("Failed to sync player stats for game %s: %s", game_id, ps_err)
+
+        # Telegram dispatch uses its own short session — keeps the live-sync
+        # path free of any extra holding window.
+        try:
+            from app.tasks.telegram_tasks import dispatch_pending_event_posts
+            async with AsyncSessionLocal() as tg_db:
                 try:
-                    await service.sync_live_time(game_id)
-                except Exception as time_err:
-                    logger.warning("Failed to sync live time for game %s: %s", game_id, time_err)
-
-                try:
-                    await service.sync_live_lineup(game_id)
-                except Exception as lineup_err:
-                    logger.warning("Failed to sync lineup for game %s: %s", game_id, lineup_err)
-
-                try:
-                    await service.sync_live_stats(game_id)
-                except Exception as stats_err:
-                    logger.warning("Failed to sync stats for game %s: %s", game_id, stats_err)
-
-                try:
-                    await service.sync_live_player_stats(game_id)
-                except Exception as ps_err:
-                    logger.warning("Failed to sync player stats for game %s: %s", game_id, ps_err)
-
-                await db.commit()
-
-                try:
-                    from app.tasks.telegram_tasks import dispatch_pending_event_posts
-                    await dispatch_pending_event_posts(db, game_id)
+                    await dispatch_pending_event_posts(tg_db, game_id)
+                    await tg_db.commit()
                 except Exception:
-                    logger.exception(
-                        "Failed to dispatch telegram event posts for game %s", game_id
-                    )
+                    await tg_db.rollback()
+                    raise
+        except Exception:
+            logger.exception(
+                "Failed to dispatch telegram event posts for game %s", game_id
+            )
 
-                elapsed = time.monotonic() - t0
-                if events_added:
-                    logger.info("Synced %d new events for game %s", events_added, game_id)
-                logger.info("sync_single_game(%s) completed in %.1fs", game_id, elapsed)
-
-                return {
-                    "game_id": game_id,
-                    "new_events": events_added,
-                    "updated_events": sync_result.get("updated", 0),
-                    "deleted_events": sync_result.get("deleted", 0),
-                    "elapsed": round(elapsed, 1),
-                }
-            except Exception:
-                await db.rollback()
-                raise
-    except Exception as e:
         elapsed = time.monotonic() - t0
-        logger.error("Failed to sync game %s in %.1fs: %s", game_id, elapsed, e)
-        return {"game_id": game_id, "error": str(e), "elapsed": round(elapsed, 1)}
+        if events_added:
+            logger.info("Synced %d new events for game %s", events_added, game_id)
+        logger.info("sync_single_game(%s) completed in %.1fs", game_id, elapsed)
+
+        return {
+            "game_id": game_id,
+            "new_events": events_added,
+            "updated_events": sync_result.get("updated", 0),
+            "deleted_events": sync_result.get("deleted", 0),
+            "elapsed": round(elapsed, 1),
+        }
     finally:
         await _release_token_lock(lock_key, token)
 
