@@ -329,59 +329,74 @@ async def _sync_post_match_protocol():
 
     cutoff = utcnow() - timedelta(hours=6)
 
+    # Step 1: load the list of recently-finished games in a SHORT session and
+    # release the connection before we start the per-game HTTP loop. The old
+    # version held ONE session across SELECT + N games \u00d7 3 HTTP calls \u2014 that's
+    # how 5 finished games \u00d7 ~1.5s/call hit 21.78s holding (FT g976 burst).
     async with AsyncSessionLocal() as db:
-        try:
-            result = await db.execute(
-                select(Game).where(
-                    Game.status == GameStatus.finished,
-                    Game.finished_at.isnot(None),
-                    Game.finished_at >= cutoff,
-                    Game.sota_id.isnot(None),
-                    Game.sync_disabled == False,
-                )
+        result = await db.execute(
+            select(Game).where(
+                Game.status == GameStatus.finished,
+                Game.finished_at.isnot(None),
+                Game.finished_at >= cutoff,
+                Game.sota_id.isnot(None),
+                Game.sync_disabled == False,
             )
-            games = list(result.scalars().all())
-            if not games:
-                return {"synced": 0}
+        )
+        game_ids = [g.id for g in result.scalars().all()]
 
-            client = get_sota_client()
-            service = LiveSyncService(db, client)
-            changes_summary = []
+    if not game_ids:
+        return {"synced": 0}
 
-            for game in games:
-                try:
-                    events = await service.sync_live_events(game.id)
-                    await service.sync_live_stats(game.id)
-                    await service.sync_live_player_stats(game.id)
+    # Step 2: per-game, per-step sessions via _run_live_step. Each sota.id call
+    # now sits inside its own brief session \u2014 connection returns to the pool
+    # between every HTTP roundtrip, so a slow sota.id step can no longer hold
+    # a pool slot across the whole batch.
+    client = get_sota_client()
+    changes_summary = []
 
-                    has_changes = (
-                        events.get("added", 0) > 0
-                        or events.get("updated", 0) > 0
-                        or events.get("deleted", 0) > 0
-                    )
-                    if has_changes:
-                        changes_summary.append({
-                            "game_id": game.id,
-                            "events": events,
-                        })
-                except Exception:
-                    logger.exception("Post-match sync failed for game %s", game.id)
+    for game_id in game_ids:
+        try:
+            events = await _run_live_step(
+                lambda db: LiveSyncService(db, client).sync_live_events(game_id),
+                step="post_match_events", game_id=game_id,
+            )
+            try:
+                await _run_live_step(
+                    lambda db: LiveSyncService(db, client).sync_live_stats(game_id),
+                    step="post_match_stats", game_id=game_id,
+                )
+            except Exception as stats_err:
+                logger.warning("Post-match stats sync failed for game %s: %s", game_id, stats_err)
+            try:
+                await _run_live_step(
+                    lambda db: LiveSyncService(db, client).sync_live_player_stats(game_id),
+                    step="post_match_player_stats", game_id=game_id,
+                )
+            except Exception as ps_err:
+                logger.warning("Post-match player_stats sync failed for game %s: %s", game_id, ps_err)
 
-            if changes_summary:
-                lines = ["\U0001f4cb \u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u0440\u043e\u0442\u043e\u043a\u043e\u043b\u0430 \u043f\u043e\u0441\u043b\u0435 \u043c\u0430\u0442\u0447\u0430\n"]
-                for ch in changes_summary:
-                    ev = ch["events"]
-                    lines.append(
-                        f"\U0001f3df Game #{ch['game_id']}: "
-                        f"+{ev.get('added', 0)} / ~{ev.get('updated', 0)} / -{ev.get('deleted', 0)} \u0441\u043e\u0431\u044b\u0442\u0438\u0439"
-                    )
-                await send_telegram_message("\n".join(lines))
-
-            await db.commit()
-            return {"synced": len(games), "changes": len(changes_summary)}
+            has_changes = (
+                events.get("added", 0) > 0
+                or events.get("updated", 0) > 0
+                or events.get("deleted", 0) > 0
+            )
+            if has_changes:
+                changes_summary.append({"game_id": game_id, "events": events})
         except Exception:
-            await db.rollback()
-            raise
+            logger.exception("Post-match sync failed for game %s", game_id)
+
+    if changes_summary:
+        lines = ["\U0001f4cb \u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u0440\u043e\u0442\u043e\u043a\u043e\u043b\u0430 \u043f\u043e\u0441\u043b\u0435 \u043c\u0430\u0442\u0447\u0430\n"]
+        for ch in changes_summary:
+            ev = ch["events"]
+            lines.append(
+                f"\U0001f3df Game #{ch['game_id']}: "
+                f"+{ev.get('added', 0)} / ~{ev.get('updated', 0)} / -{ev.get('deleted', 0)} \u0441\u043e\u0431\u044b\u0442\u0438\u0439"
+            )
+        await send_telegram_message("\n".join(lines))
+
+    return {"synced": len(game_ids), "changes": len(changes_summary)}
 
 
 async def _fetch_pregame_lineups():
