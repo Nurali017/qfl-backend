@@ -1,6 +1,6 @@
 """Tests for team-of-week auto-sync dispatch and retry logic."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -29,11 +29,16 @@ async def test_tow_full_success():
 
     with patch("app.tasks.sync_tasks.AsyncSessionLocal") as mock_session_ctx:
         mock_db = AsyncMock()
+        mock_db.scalar = AsyncMock(return_value=0)  # No live games
         mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
         with patch("app.tasks.sync_tasks.SyncOrchestrator", return_value=mock_orch):
             from app.tasks.sync_tasks import _sync_team_of_week_for_tour
-            result = await _sync_team_of_week_for_tour(100, 5)
+            mock_task = MagicMock()
+            mock_task.request.retries = 0
+            # season_id=200 is in settings.extended_stats_season_ids so the
+            # orchestrator branch is reached.
+            result = await _sync_team_of_week_for_tour(mock_task, 200, 5)
 
     assert result["needs_retry"] is False
     assert result["tours_synced"] == 2
@@ -49,11 +54,14 @@ async def test_tow_retry_on_empty():
 
     with patch("app.tasks.sync_tasks.AsyncSessionLocal") as mock_session_ctx:
         mock_db = AsyncMock()
+        mock_db.scalar = AsyncMock(return_value=0)  # No live games
         mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
         with patch("app.tasks.sync_tasks.SyncOrchestrator", return_value=mock_orch):
             from app.tasks.sync_tasks import _sync_team_of_week_for_tour
-            result = await _sync_team_of_week_for_tour(100, 5)
+            mock_task = MagicMock()
+            mock_task.request.retries = 0
+            result = await _sync_team_of_week_for_tour(mock_task, 200, 5)
 
     assert result["needs_retry"] is True
 
@@ -68,11 +76,14 @@ async def test_tow_retry_on_partial_locale():
 
     with patch("app.tasks.sync_tasks.AsyncSessionLocal") as mock_session_ctx:
         mock_db = AsyncMock()
+        mock_db.scalar = AsyncMock(return_value=0)  # No live games
         mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
         with patch("app.tasks.sync_tasks.SyncOrchestrator", return_value=mock_orch):
             from app.tasks.sync_tasks import _sync_team_of_week_for_tour
-            result = await _sync_team_of_week_for_tour(100, 5)
+            mock_task = MagicMock()
+            mock_task.request.retries = 0
+            result = await _sync_team_of_week_for_tour(mock_task, 200, 5)
 
     assert result["needs_retry"] is True
 
@@ -87,11 +98,14 @@ async def test_tow_disabled_season_skipped():
 
     with patch("app.tasks.sync_tasks.AsyncSessionLocal") as mock_session_ctx:
         mock_db = AsyncMock()
+        mock_db.scalar = AsyncMock(return_value=0)  # No live games
         mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
         with patch("app.tasks.sync_tasks.SyncOrchestrator", return_value=mock_orch):
             from app.tasks.sync_tasks import _sync_team_of_week_for_tour
-            result = await _sync_team_of_week_for_tour(100, 5)
+            mock_task = MagicMock()
+            mock_task.request.retries = 0
+            result = await _sync_team_of_week_for_tour(mock_task, 100, 5)
 
     assert result["needs_retry"] is False
     assert result["skipped"] is True
@@ -164,7 +178,7 @@ def test_tow_telegram_only_on_final_success():
             result = sync_team_of_week_for_tour.run(100, 5)
 
     assert result["final_status"] == "success"
-    mock_sync.assert_awaited_once_with(100, 5)
+    mock_sync.assert_awaited_once_with(ANY, 100, 5)
     mock_telegram.assert_awaited_once_with(
         "⚽ Team of week synced: season 100 tour 5"
     )
@@ -188,7 +202,7 @@ def test_tow_telegram_not_on_retry():
                 with pytest.raises(Exception, match="retry"):
                     sync_team_of_week_for_tour.run(100, 5)
 
-    mock_sync.assert_awaited_once_with(100, 5)
+    mock_sync.assert_awaited_once_with(ANY, 100, 5)
     mock_telegram.assert_not_awaited()
 
 
@@ -212,7 +226,7 @@ def test_tow_telegram_on_max_retries_exceeded():
                 result = sync_team_of_week_for_tour.run(100, 5)
 
     assert result["final_status"] == "failed"
-    mock_sync.assert_awaited_once_with(100, 5)
+    mock_sync.assert_awaited_once_with(ANY, 100, 5)
     mock_telegram.assert_awaited_once_with(
         "❌ Team-of-week sync failed after retries: season 100 tour 5"
     )

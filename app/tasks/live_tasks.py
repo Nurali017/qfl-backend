@@ -766,15 +766,20 @@ async def _post_finish_followup(game_id: int):
             raise
 
 
-async def _sync_extended_stats_for_game(game_id: int):
+async def _sync_extended_stats_for_game(task, game_id: int):
     """Sync extended stats for a single game (24h+ post-match).
 
-    Skipped while any game is live. This task wraps a DB transaction around
-    a multi-second HTTP loop to sota.id (observed 190s on 2026-05-28) — one
-    such holder during a live-match burst is enough to push the web pool
-    over the edge. Backfill catches up after the live window closes; beat
-    re-pushes the task on its next tick (hourly).
+    Defers itself while any game is live. This task wraps a DB transaction
+    around a multi-second HTTP loop to sota.id (observed 190s on 2026-05-28)
+    — one such holder during a live-match burst is enough to push the web
+    pool over the edge.
+
+    When live is active, raises self.retry(countdown=60, max_retries=15) so
+    the task re-runs after the typical live window closes. After 15 attempts
+    (~15 min) it gives up; beat re-pushes hourly.
     """
+    from app.tasks._exceptions import LiveGamesActiveSkip
+
     async with AsyncSessionLocal() as db:
         live_count = await db.scalar(
             select(func.count())
@@ -782,16 +787,16 @@ async def _sync_extended_stats_for_game(game_id: int):
             .where(Game.status == GameStatus.live)
         )
     if live_count:
+        attempt = (task.request.retries or 0) + 1
         logger.info(
-            "_sync_extended_stats_for_game(%d): skipped, %d live game(s) in progress",
-            game_id, live_count,
+            "_sync_extended_stats_for_game(%d): %d live game(s) — retry in 60s (attempt %d/15)",
+            game_id, live_count, attempt,
         )
-        return {
-            "game_id": game_id,
-            "skipped": True,
-            "reason": "live_games_active",
-            "live_games": live_count,
-        }
+        raise task.retry(
+            countdown=60,
+            max_retries=15,
+            exc=LiveGamesActiveSkip(live_count),
+        )
 
     from app.services.sync import SyncOrchestrator
 
@@ -863,7 +868,13 @@ def post_finish_followup(game_id: int):
     return run_async(_post_finish_followup(game_id))
 
 
-@celery_app.task(name="app.tasks.live_tasks.sync_extended_stats_for_game", soft_time_limit=300, time_limit=360, **_DB_RETRY_KW)
-def sync_extended_stats_for_game(game_id: int):
+@celery_app.task(
+    name="app.tasks.live_tasks.sync_extended_stats_for_game",
+    bind=True,
+    soft_time_limit=300,
+    time_limit=360,
+    **_DB_RETRY_KW,
+)
+def sync_extended_stats_for_game(self, game_id: int):
     """Celery task: Sync extended stats for a single game."""
-    return run_async(_sync_extended_stats_for_game(game_id))
+    return run_async(_sync_extended_stats_for_game(self, game_id))

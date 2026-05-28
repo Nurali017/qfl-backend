@@ -32,17 +32,19 @@ _DB_RETRY_KW = {
 settings = get_settings()
 
 
-async def _sync_team_of_week_for_tour(season_id: int, tour: int) -> dict:
+async def _sync_team_of_week_for_tour(task, season_id: int, tour: int) -> dict:
     """Sync team-of-week for a single tour via SyncOrchestrator.
 
     Returns dict with 'needs_retry' flag based on sync completeness.
 
-    Skipped while any game is live (same rationale as
-    _sync_extended_stats_for_game): this task also runs an HTTP-heavy
-    sota.id sync inside a DB session and would hold a pool slot for tens of
-    seconds during live bursts. needs_retry=True so celery's built-in retry
-    re-queues it on its 10-min backoff, which naturally lands after live.
+    Defers itself while any game is live (same rationale as
+    _sync_extended_stats_for_game): this task runs an HTTP-heavy sota.id sync
+    inside a DB session and would hold a pool slot for tens of seconds during
+    live bursts. Raises task.retry(countdown=60, max_retries=15) so it
+    re-queues after the live window typically closes.
     """
+    from app.tasks._exceptions import LiveGamesActiveSkip
+
     async with AsyncSessionLocal() as db:
         live_count = await db.scalar(
             select(func.count())
@@ -50,16 +52,16 @@ async def _sync_team_of_week_for_tour(season_id: int, tour: int) -> dict:
             .where(Game.status == GameStatus.live)
         )
     if live_count:
+        attempt = (task.request.retries or 0) + 1
         logger.info(
-            "_sync_team_of_week_for_tour: skipped, %d live game(s) in progress (season=%s tour=%s)",
-            live_count, season_id, tour,
+            "_sync_team_of_week_for_tour(season=%s tour=%s): %d live game(s) — retry in 60s (attempt %d/15)",
+            season_id, tour, live_count, attempt,
         )
-        return {
-            "needs_retry": True,
-            "skipped": True,
-            "reason": "live_games_active",
-            "live_games": live_count,
-        }
+        raise task.retry(
+            countdown=60,
+            max_retries=15,
+            exc=LiveGamesActiveSkip(live_count),
+        )
 
     if season_id not in settings.extended_stats_season_ids:
         logger.info(
@@ -111,7 +113,7 @@ async def _sync_team_of_week_for_tour(season_id: int, tour: int) -> dict:
 )
 def sync_team_of_week_for_tour(self, season_id: int, tour: int):
     """Celery task: Sync team-of-week for a specific tour with retries."""
-    result = run_async(_sync_team_of_week_for_tour(season_id, tour))
+    result = run_async(_sync_team_of_week_for_tour(self, season_id, tour))
     if result.get("needs_retry"):
         try:
             raise self.retry(
