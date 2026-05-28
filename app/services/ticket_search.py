@@ -61,7 +61,7 @@ _TEAM_SLUG_OVERRIDES: dict[str, list[str]] = {
     "женис": ["zhenis", "jenis", "zhenis"],
     "иртыш": ["irtysh", "irtish", "ertis"],
     "кайрат": ["kairat", "qairat"],
-    "кайсар": ["kaisar", "kaysar"],
+    "кайсар": ["kaisar", "kaysar", "qaysar"],
     "жетысу": ["zhetysu", "jetisu", "zhetisu"],
     "окжетпес": ["okzhetpes", "okjetpes"],
     "елимай": ["elimai", "elimay"],
