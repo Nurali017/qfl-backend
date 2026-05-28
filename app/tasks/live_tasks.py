@@ -623,7 +623,32 @@ async def _post_finish_followup(game_id: int):
 
 
 async def _sync_extended_stats_for_game(game_id: int):
-    """Sync extended stats for a single game (24h+ post-match)."""
+    """Sync extended stats for a single game (24h+ post-match).
+
+    Skipped while any game is live. This task wraps a DB transaction around
+    a multi-second HTTP loop to sota.id (observed 190s on 2026-05-28) — one
+    such holder during a live-match burst is enough to push the web pool
+    over the edge. Backfill catches up after the live window closes; beat
+    re-pushes the task on its next tick (hourly).
+    """
+    async with AsyncSessionLocal() as db:
+        live_count = await db.scalar(
+            select(func.count())
+            .select_from(Game)
+            .where(Game.status == GameStatus.live)
+        )
+    if live_count:
+        logger.info(
+            "_sync_extended_stats_for_game(%d): skipped, %d live game(s) in progress",
+            game_id, live_count,
+        )
+        return {
+            "game_id": game_id,
+            "skipped": True,
+            "reason": "live_games_active",
+            "live_games": live_count,
+        }
+
     from app.services.sync import SyncOrchestrator
 
     aggregate_result = None

@@ -36,7 +36,31 @@ async def _sync_team_of_week_for_tour(season_id: int, tour: int) -> dict:
     """Sync team-of-week for a single tour via SyncOrchestrator.
 
     Returns dict with 'needs_retry' flag based on sync completeness.
+
+    Skipped while any game is live (same rationale as
+    _sync_extended_stats_for_game): this task also runs an HTTP-heavy
+    sota.id sync inside a DB session and would hold a pool slot for tens of
+    seconds during live bursts. needs_retry=True so celery's built-in retry
+    re-queues it on its 10-min backoff, which naturally lands after live.
     """
+    async with AsyncSessionLocal() as db:
+        live_count = await db.scalar(
+            select(func.count())
+            .select_from(Game)
+            .where(Game.status == GameStatus.live)
+        )
+    if live_count:
+        logger.info(
+            "_sync_team_of_week_for_tour: skipped, %d live game(s) in progress (season=%s tour=%s)",
+            live_count, season_id, tour,
+        )
+        return {
+            "needs_retry": True,
+            "skipped": True,
+            "reason": "live_games_active",
+            "live_games": live_count,
+        }
+
     if season_id not in settings.extended_stats_season_ids:
         logger.info(
             "Team-of-week sync skipped (no extended stats): season=%s tour=%s",
