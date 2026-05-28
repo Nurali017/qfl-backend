@@ -30,6 +30,7 @@ from app.schemas.admin.news import (
 from app.services.file_storage import FileStorageService
 from app.services.news_classifier import NewsClassifierService
 from app.services.news_translator import NewsTranslatorService
+from app.utils.html_cleaner import sanitize_news_html
 
 router = APIRouter(prefix="/news", tags=["admin-news"])
 
@@ -172,7 +173,7 @@ async def _apply_payload(
     if should_update("excerpt"):
         item.excerpt = payload.excerpt
     if should_update("content"):
-        item.content = payload.content
+        item.content = sanitize_news_html(payload.content)
     if should_update("content_text"):
         item.content_text = payload.content_text
     if should_update("image_url"):

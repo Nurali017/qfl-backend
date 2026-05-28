@@ -1,5 +1,7 @@
-"""HTML content cleaner for news articles."""
+"""HTML content cleaner and sanitizer for news articles."""
 import re
+
+import bleach
 from bs4 import BeautifulSoup
 
 
@@ -117,3 +119,97 @@ def clean_news_content(html: str | None) -> str | None:
             result += f'\n<div class="video-container ratio ratio-16x9">{iframe_html}</div>'
 
     return result.strip() if result.strip() else None
+
+
+# --- XSS sanitization (separate from clean_news_content above) ---
+#
+# sanitize_news_html() is the security boundary for HTML written into the
+# News.content column. It is independent from clean_news_content() which is a
+# heavy CMS-import normalizer (drops wrapper divs, unwraps <a>, throws away
+# attributes). Running clean_news_content() on existing admin-saved content
+# would destroy links and layout.
+#
+# Pipeline contract: admin save/update and the one-time backfill call ONLY
+# sanitize_news_html(). clean_news_content() stays available for external CMS
+# scrape paths; in that case sanitize_news_html() must run *after* it.
+
+_ALLOWED_TAGS = frozenset({
+    "p", "h2", "h3", "h4", "h5", "h6",
+    "ul", "ol", "li",
+    "table", "thead", "tbody", "tr", "td", "th",
+    "blockquote", "figure", "figcaption",
+    "img", "iframe",
+    "strong", "em", "b", "i", "u",
+    "a", "br", "hr", "span", "div",
+})
+
+_ALLOWED_ATTRS = {
+    "a": ["href", "title", "target", "rel"],
+    "img": ["src", "alt", "title", "width", "height"],
+    "iframe": ["src", "allowfullscreen", "allow", "frameborder", "width", "height"],
+    "td": ["colspan", "rowspan"],
+    "th": ["colspan", "rowspan"],
+}
+
+_ALLOWED_PROTOCOLS = ["http", "https", "mailto"]
+
+_YOUTUBE_EMBED_PREFIXES = (
+    "https://www.youtube.com/embed/",
+    "https://www.youtube-nocookie.com/embed/",
+)
+
+_bleach_cleaner = bleach.sanitizer.Cleaner(
+    tags=_ALLOWED_TAGS,
+    attributes=_ALLOWED_ATTRS,
+    protocols=_ALLOWED_PROTOCOLS,
+    strip=True,
+    strip_comments=True,
+)
+
+
+_DROP_WITH_CONTENT_TAGS = ("script", "style", "noscript")
+
+
+def sanitize_news_html(html: str | None) -> str | None:
+    """Sanitize HTML for safe rendering via dangerouslySetInnerHTML.
+
+    Strategy:
+    1. BeautifulSoup pre-pass decomposes <script>/<style>/<noscript> entirely.
+       Bleach's strip=True removes tags but preserves their text content, so
+       <script>alert(1)</script> would leak "alert(1)" as visible text. Pre-pass
+       fixes that.
+    2. bleach.Cleaner enforces tag/attribute/protocol allowlist.
+    3. BeautifulSoup post-pass:
+       - <iframe> without a YouTube embed src is removed entirely.
+       - <a> without href becomes plain text via unwrap().
+       - <a target="_blank"> gets rel="noopener noreferrer" forced.
+
+    Uses "html.parser" for fragment parsing (no <html>/<body>/<p> wrapping that
+    "lxml" applies to bare text).
+    """
+    if not html:
+        return html
+
+    pre_soup = BeautifulSoup(html, "html.parser")
+    for tag in pre_soup.find_all(_DROP_WITH_CONTENT_TAGS):
+        tag.decompose()
+
+    cleaned = _bleach_cleaner.clean(str(pre_soup))
+
+    soup = BeautifulSoup(cleaned, "html.parser")
+
+    for iframe in list(soup.find_all("iframe")):
+        src = (iframe.get("src") or "").strip()
+        if not src or not src.startswith(_YOUTUBE_EMBED_PREFIXES):
+            iframe.decompose()
+
+    for anchor in list(soup.find_all("a")):
+        href = (anchor.get("href") or "").strip()
+        if not href:
+            anchor.unwrap()
+            continue
+        if anchor.get("target") == "_blank":
+            anchor["rel"] = "noopener noreferrer"
+
+    result = str(soup).strip()
+    return result or None

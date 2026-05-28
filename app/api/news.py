@@ -15,6 +15,7 @@ from app.schemas.common import OkResponse
 from app.services.file_storage import FileStorageService
 from app.utils.file_urls import get_file_data_with_url
 from app.utils.error_messages import get_error_message
+from app.utils.html_cleaner import sanitize_news_html
 from app.utils.news_html_normalizer import normalize_news_html_content, normalize_news_media_url
 
 
@@ -396,7 +397,12 @@ async def get_news_item(
         source_url=response.get("source_url"),
         db=db,
     )
-    response["content"] = normalized_content.content
+    # Defense in depth: sanitize on read as well as on write. Admin save
+    # already runs sanitize_news_html, but rows can land in News.content via
+    # legacy imports / direct SQL / past migrations. This guarantees no
+    # unsafe HTML reaches the public dangerouslySetInnerHTML renderer even
+    # if the DB itself has stale dirty rows.
+    response["content"] = sanitize_news_html(normalized_content.content)
 
     normalized_images: list[dict] = []
     hero_url: str | None = None
