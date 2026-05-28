@@ -2,10 +2,26 @@
 
 import logging
 
+from sqlalchemy import func, select
+
+from app.database import AsyncSessionLocal
+from app.models import Game, GameStatus
 from app.tasks import celery_app
 from app.utils.async_celery import run_async
 
 logger = logging.getLogger(__name__)
+
+
+async def _any_game_live() -> int:
+    """Count games currently in 'live' status. Tasks that wrap an HTTP loop
+    inside a DB session use this to skip while the web pool is under
+    burst load — backfill is naturally caught up by the next beat tick.
+    pregame_lineups / rosters intentionally do NOT use this guard:
+    they're needed BEFORE the live window."""
+    async with AsyncSessionLocal() as db:
+        return (await db.scalar(
+            select(func.count()).select_from(Game).where(Game.status == GameStatus.live)
+        )) or 0
 
 _ROSTER_LOCK_KEY = "qfl:fcms-roster-sync"
 _ROSTER_LOCK_TTL = 600  # 10 min — sync takes ~30-60s for 30 teams
@@ -24,6 +40,15 @@ def fcms_bulk_import():
 
 
 async def _fcms_bulk_import() -> dict:
+    # Skip during live: bulk_import takes ~40s and overlaps the FCMS HTTP loop
+    # with DB writes. One holder during a HT/FT burst is enough to push the
+    # web pool over the edge (observed at 15:15:40 UTC on 2026-05-28). Beat
+    # re-pushes every 15 min so live windows naturally heal.
+    live_count = await _any_game_live()
+    if live_count:
+        logger.info("fcms_bulk_import: skipped, %d live game(s) in progress", live_count)
+        return {"status": "skipped", "reason": "live_games_active", "live_games": live_count}
+
     from scripts.fcms_bulk_import import bulk_import
     from app.utils.redis_lock import acquire_token_lock, release_token_lock
 
@@ -99,7 +124,17 @@ def sync_fcms_post_match_protocol():
 
 
 async def _sync_fcms_post_match_protocol() -> dict:
-    from app.database import AsyncSessionLocal
+    # Skip during live: protocol PDF fetch holds a DB session open across an
+    # FCMS HTTP loop (observed 11.5s on 2026-05-28). Strictly post-match, so
+    # delaying until live closes is harmless — next beat tick picks it up.
+    live_count = await _any_game_live()
+    if live_count:
+        logger.info(
+            "sync_fcms_post_match_protocol: skipped, %d live game(s) in progress",
+            live_count,
+        )
+        return {"status": "skipped", "reason": "live_games_active", "live_games": live_count}
+
     from app.services.fcms_client import get_fcms_client
     from app.services.fcms_sync_service import FcmsSyncService
 
