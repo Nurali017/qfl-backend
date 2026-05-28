@@ -93,21 +93,36 @@ _pool_stats_logger = logging.getLogger("app.database.pool_stats")
 
 
 async def log_pool_stats(interval_seconds: int = 60) -> None:
-    """Periodically emit pool checkout metrics so the next QueuePool incident
-    can be diagnosed from logs alone (size/checked_out/overflow per engine)."""
+    """Periodically emit pool checkout metrics.
+
+    Normal state is DEBUG (suppressed by default). WARNING fires only when
+    checked_out/size > 0.7 or overflow > 0 — i.e. when the pool is genuinely
+    under pressure. Without this threshold the previous .info() call wrote
+    ~1440 lines/day/process (web + worker every 60s) at INFO level,
+    drowning real incidents. Threshold turns the same emitter into a
+    contention canary for alerting."""
     while True:
         try:
             for name, eng in (("web", web_engine), ("worker", engine)):
                 pool = eng.pool
-                if hasattr(pool, "size") and hasattr(pool, "checkedout"):
-                    _pool_stats_logger.info(
-                        "pool=%s size=%d checked_in=%d checked_out=%d overflow=%d",
-                        name,
-                        pool.size(),
-                        pool.checkedin(),
-                        pool.checkedout(),
-                        pool.overflow(),
-                    )
+                if not (hasattr(pool, "size") and hasattr(pool, "checkedout")):
+                    continue
+                size = pool.size()
+                checked_out = pool.checkedout()
+                overflow = pool.overflow()
+                ratio = (checked_out / size) if size > 0 else 0.0
+                log_args = (
+                    "pool=%s size=%d checked_in=%d checked_out=%d overflow=%d",
+                    name,
+                    size,
+                    pool.checkedin(),
+                    checked_out,
+                    overflow,
+                )
+                if ratio > 0.7 or overflow > 0:
+                    _pool_stats_logger.warning(*log_args)
+                else:
+                    _pool_stats_logger.debug(*log_args)
         except Exception as exc:
             _pool_stats_logger.warning("pool stats failure: %s", exc)
         await asyncio.sleep(interval_seconds)
