@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -85,3 +87,27 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+_pool_stats_logger = logging.getLogger("app.database.pool_stats")
+
+
+async def log_pool_stats(interval_seconds: int = 60) -> None:
+    """Periodically emit pool checkout metrics so the next QueuePool incident
+    can be diagnosed from logs alone (size/checked_out/overflow per engine)."""
+    while True:
+        try:
+            for name, eng in (("web", web_engine), ("worker", engine)):
+                pool = eng.pool
+                if hasattr(pool, "size") and hasattr(pool, "checkedout"):
+                    _pool_stats_logger.info(
+                        "pool=%s size=%d checked_in=%d checked_out=%d overflow=%d",
+                        name,
+                        pool.size(),
+                        pool.checkedin(),
+                        pool.checkedout(),
+                        pool.overflow(),
+                    )
+        except Exception as exc:
+            _pool_stats_logger.warning("pool stats failure: %s", exc)
+        await asyncio.sleep(interval_seconds)

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -6,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import get_settings
-from app.database import engine
+from app.database import engine, log_pool_stats
 from app.minio_client import init_minio
 from app.utils.feature_flags import log_feature_flags
 
@@ -19,8 +20,16 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     log_feature_flags(logger, service="backend")
     await init_minio()
-    yield
-    await engine.dispose()
+    pool_stats_task = asyncio.create_task(log_pool_stats())
+    try:
+        yield
+    finally:
+        pool_stats_task.cancel()
+        try:
+            await pool_stats_task
+        except asyncio.CancelledError:
+            pass
+        await engine.dispose()
 
 
 app = FastAPI(
