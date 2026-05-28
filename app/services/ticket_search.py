@@ -55,6 +55,21 @@ _MONTHS_RU = {
     9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
 }
 
+# Kazakh month names (nominative) for date detection in club posts
+_MONTHS_KZ = {
+    1: "қаңтар", 2: "ақпан", 3: "наурыз", 4: "сәуір",
+    5: "мамыр", 6: "маусым", 7: "шілде", 8: "тамыз",
+    9: "қыркүйек", 10: "қазан", 11: "қараша", 12: "желтоқсан",
+}
+
+# Kazakh-only letters mapped to closest Cyrillic match so _normalize and
+# substring lookups treat "Қызылжар"/"Жетісу" as "Кызылжар"/"Жетису".
+# Without this, _normalize strips them as non-[а-яё] and team-match fails.
+_KAZAKH_TO_RU = str.maketrans({
+    "қ": "к", "ғ": "г", "ң": "н", "ү": "у", "ұ": "у",
+    "ө": "о", "һ": "х", "і": "и", "ә": "а",
+})
+
 # Known team name slugs used on ticket platforms (Cyrillic → Latin)
 # Covers cases where standard transliteration doesn't match URL slugs
 _TEAM_SLUG_OVERRIDES: dict[str, list[str]] = {
@@ -94,8 +109,8 @@ def _transliterate(text: str) -> str:
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, strip non-alphanumeric, for fuzzy matching."""
-    return re.sub(r"[^a-zа-яё0-9]", "", text.lower())
+    """Lowercase, fold Kazakh-only letters to Cyrillic, strip non-alphanumeric."""
+    return re.sub(r"[^a-zа-яё0-9]", "", text.lower().translate(_KAZAKH_TO_RU))
 
 
 def _team_matches_text(team_name: str, text: str) -> bool:
@@ -162,9 +177,12 @@ def _snippet_mentions_date(text: str, game_date: date) -> bool:
     """Check if snippet/title mentions the game date (day + month in any format)."""
     day = str(game_date.day)
     month_ru = _MONTHS_RU[game_date.month]
-    # "18 апреля", "18.04", "18/04"
+    month_kz = _MONTHS_KZ[game_date.month]
+    # "18 апреля", "18 мамыр", "18.04", "18/04"
     month_num = f"{game_date.month:02d}"
     if f"{day} {month_ru}" in text:
+        return True
+    if f"{day} {month_kz}" in text:
         return True
     if f"{day}.{month_num}" in text:
         return True
