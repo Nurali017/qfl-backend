@@ -433,6 +433,44 @@ class GameSyncService(BaseSyncService):
             "saves": ("saves", _parse_int),
         }
 
+        # Lazy-fetched v1 /games/{id}/teams/ payload. Used as a fallback
+        # source for possession when /em/ returns 0% (sota.id bug observed
+        # for game 975 — 47/53% in v1 but 0/0% in /em/). Fetched on first
+        # need and reused across sides.
+        v1_team_stats: list[dict] | None = None
+
+        async def _v1_possession_for(local_team_id: int) -> tuple[float | None, int | None]:
+            """Return (possession_raw_minutes, possession_percent) from v1 or (None, None)."""
+            nonlocal v1_team_stats
+            if v1_team_stats is None:
+                try:
+                    v1_team_stats = await self.client.get_game_team_stats(sota_game_uuid)
+                except Exception:
+                    logger.exception(
+                        "v1 team_stats fetch failed for game %s while looking up possession fallback",
+                        game_id,
+                    )
+                    v1_team_stats = []
+            for ts_data in v1_team_stats or []:
+                # For PL, sota team id == local Team.id (verified for ids
+                # 595, 293). Lower leagues that diverge fall back to the
+                # default 0 from /em/.
+                if ts_data.get("id") != local_team_id:
+                    continue
+                stats = ts_data.get("stats") or {}
+                raw = stats.get("possession")
+                pct = stats.get("possession_percent")
+                try:
+                    raw_f = float(raw) if raw is not None else None
+                except (TypeError, ValueError):
+                    raw_f = None
+                try:
+                    pct_i = int(pct) if pct is not None else None
+                except (TypeError, ValueError):
+                    pct_i = None
+                return raw_f, pct_i
+            return None, None
+
         for side, team_id in [("home", game.home_team_id), ("away", game.away_team_id)]:
             if not team_id:
                 continue
@@ -452,13 +490,35 @@ class GameSyncService(BaseSyncService):
                     if val is not None and getattr(ts, col) is None:
                         setattr(ts, col, val)
 
-            # /em/ possessions is the most reliable match-level source.
-            # Overwrite stale 0/None values from v1 payloads with the percent.
+            # Possession: /em/ is preferred when present and non-zero. When
+            # sota.id returns 0% (observed bug — game 975) fall back to the
+            # v1 /games/{id}/teams/ payload, which carries both the raw
+            # minutes and the percent. Without this guard we would overwrite
+            # correct v1 values with the stale zeros.
+            possession_applied = False
             if "possessions" in em_stats:
                 pct = _parse_possession(em_stats["possessions"].get(side))
-                if pct is not None:
+                if pct is not None and pct > 0:
                     ts.possession = float(pct)
                     ts.possession_percent = pct
+                    possession_applied = True
+            if not possession_applied:
+                raw_minutes, pct_v1 = await _v1_possession_for(team_id)
+                if pct_v1 is not None and pct_v1 > 0:
+                    # raw possession in the model is documented as "raw minutes"
+                    # in the user's analysis; v1 ships both fields so use them
+                    # as-is. Fall back to pct in the raw column when v1 omits
+                    # the minutes (older payloads).
+                    ts.possession = raw_minutes if raw_minutes is not None else float(pct_v1)
+                    ts.possession_percent = pct_v1
+                elif "possessions" in em_stats:
+                    # /em/ said 0%, v1 unreachable / also 0 — leave existing
+                    # ts.possession/percent intact rather than overwriting with
+                    # bogus zeros.
+                    logger.info(
+                        "possession unavailable for game=%s team=%s (em=0, v1=missing)",
+                        game_id, team_id,
+                    )
 
             # Build per-half extra_stats from captured _1.._5 metrics
             # (3/4 = extra time, 5 = shootout).
