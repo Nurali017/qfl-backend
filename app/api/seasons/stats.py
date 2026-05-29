@@ -88,18 +88,12 @@ async def get_player_stats_table(
             detail=f"Invalid sort_by field. Available: {', '.join(PLAYER_STATS_SORT_FIELDS)}",
         )
 
-    # Get the sort column — red_cards sorts by the computed sum (direct + second yellow)
-    # For goal/goal_pass/dry_match, sort by SOTA rank (ASC) to match SOTA's order
+    # For goal/goal_pass/dry_match, sort by SOTA rank (ASC) to match SOTA's order.
+    # SOTA's PlayerSeasonStats.red_cards already includes 2nd yellows, so no extra sum.
     RANK_SORT_FIELDS = {"goal": "goal_rank", "goal_pass": "goal_pass_rank", "dry_match": "dry_match_rank"}
     if sort_by in RANK_SORT_FIELDS:
         sort_column = getattr(PlayerSeasonStats, RANK_SORT_FIELDS[sort_by])
         use_rank_sort = True
-    elif sort_by == "red_cards":
-        sort_column = (
-            func.coalesce(PlayerSeasonStats.red_cards, 0)
-            + func.coalesce(PlayerSeasonStats.second_yellow_cards, 0)
-        )
-        use_rank_sort = False
     else:
         sort_column = getattr(PlayerSeasonStats, sort_by, None)
         if sort_column is None:
@@ -250,7 +244,7 @@ async def get_player_stats_table(
             dribble_success=stats.dribble_success,
             yellow_cards=stats.yellow_cards,
             second_yellow_cards=stats.second_yellow_cards,
-            red_cards=(stats.red_cards or 0) + (stats.second_yellow_cards or 0),
+            red_cards=stats.red_cards,
             save_shot=stats.save_shot,
             dry_match=stats.dry_match,
             owngoal=stats.owngoal,
