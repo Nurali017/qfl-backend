@@ -786,6 +786,23 @@ class GameSyncService(BaseSyncService):
             "ЗАМЕНА": GameEventType.substitution,
         }
 
+        # SOTA stopped emitting "2ЖК" around 2026-03 and now sends "КК" for
+        # both direct red cards and second-yellow removals. Build a per-player
+        # yellow log so КК events that follow a ЖК for the same player can be
+        # reclassified as second_yellow.
+        yellow_log: dict[tuple, list[tuple]] = {}
+        for _ed in events_data:
+            if _ed.get("action") != "ЖК":
+                continue
+            name_key = (
+                (_ed.get("first_name1") or "").strip().lower(),
+                (_ed.get("last_name1") or "").strip().lower(),
+                (_ed.get("team1") or "").strip().lower(),
+            )
+            yellow_log.setdefault(name_key, []).append(
+                (_ed.get("half") or 1, _ed.get("time") or 0)
+            )
+
         # Track which DB events were matched
         matched_db_events: set[int] = set()
         added = 0
@@ -811,6 +828,19 @@ class GameSyncService(BaseSyncService):
 
             team_name = event_data.get("team1", "")
             team_id = matcher.match(team_name)
+
+            # Reclassify КК → second_yellow when the same player already had
+            # a ЖК at or before this minute (SOTA no longer emits "2ЖК").
+            if action == "КК":
+                kk_name_key = (
+                    first_name1.strip().lower(),
+                    last_name1.strip().lower(),
+                    (team_name or "").strip().lower(),
+                )
+                for _yh, _ym in yellow_log.get(kk_name_key, []):
+                    if (_yh, _ym) <= (half, minute):
+                        event_type = GameEventType.second_yellow
+                        break
 
             player_id = await self._find_player_id_from_lineup(
                 game_id, first_name1, last_name1, team_id
