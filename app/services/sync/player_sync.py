@@ -39,6 +39,12 @@ _OUTER_LOCK_TTL_SECONDS = 7200
 # NS=1) isn't blocked long enough to hit lock_timeout. (A larger chunk held
 # locks for minutes under contention and timed best_players out.)
 _WRITE_CHUNK_SIZE = 50
+# Max players to fetch per best_players metric. SOTA defaults to 100, but a
+# season can have more scorers than that (e.g. 112 in PL-2026), and the
+# leaderboard endpoint filters on *_rank IS NOT NULL — so any scorer beyond
+# the top 100 gets *_rank=NULL and silently disappears from the "Голы" table.
+# Set comfortably above the active-roster size so every ranked player is kept.
+_BEST_PLAYERS_MAX = 1000
 
 from app.models import Player, PlayerTeam, PlayerSeasonStats
 from app.services.sync.guardrails import (
@@ -107,17 +113,17 @@ class PlayerSyncService(BaseSyncService):
         keepers: list = []
         for sota_season_id in sota_season_ids:
             try:
-                scorers.extend(await self.client.get_best_players(sota_season_id, metric="goal"))
+                scorers.extend(await self.client.get_best_players(sota_season_id, metric="goal", max_players=_BEST_PLAYERS_MAX))
             except Exception as e:
                 logger.warning("Failed to fetch best scorers for season %d (sota %d): %s", season_id, sota_season_id, e)
 
             try:
-                assisters.extend(await self.client.get_best_players(sota_season_id, metric="goal_pass"))
+                assisters.extend(await self.client.get_best_players(sota_season_id, metric="goal_pass", max_players=_BEST_PLAYERS_MAX))
             except Exception as e:
                 logger.warning("Failed to fetch best assisters for season %d (sota %d): %s", season_id, sota_season_id, e)
 
             try:
-                keepers.extend(await self.client.get_best_players(sota_season_id, metric="dry_match"))
+                keepers.extend(await self.client.get_best_players(sota_season_id, metric="dry_match", max_players=_BEST_PLAYERS_MAX))
             except Exception as e:
                 logger.warning("Failed to fetch best keepers for season %d (sota %d): %s", season_id, sota_season_id, e)
 
