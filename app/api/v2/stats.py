@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.utils.cache import cache_get, cache_get_or_compute, cache_set
 from app.models import Country, Player, PlayerSeasonStats, PlayerTeam, Team, TeamSeasonStats
 from app.schemas.country import CountryInPlayer
 from app.schemas.stats_v2 import (
@@ -39,7 +41,16 @@ POSITION_TO_AMPLUA = {v: k for k, v in AMPLUA_TO_POSITION.items()}
 
 @router.get("/stats/catalog", response_model=StatsCatalogResponseV2)
 async def get_stats_catalog_v2():
-    return StatsCatalogResponseV2(**build_stats_catalog_payload())
+    cache_key = "stats_catalog_v2"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
+    payload = StatsCatalogResponseV2(**build_stats_catalog_payload())
+    json_bytes = payload.model_dump_json().encode()
+    # Static catalog (no DB, no params) — long TTL just avoids re-serialization.
+    cache_set(cache_key, json_bytes, 3600)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/players/{player_id}/stats", response_model=PlayerStatsV2 | None)
@@ -49,15 +60,26 @@ async def get_player_stats_v2(
     db: AsyncSession = Depends(get_db),
 ):
     season_id = await resolve_visible_season_id(db, season_id)
-    payload = await get_player_detail_payload_with_ranks(
-        db,
-        season_id=season_id,
-        player_id=player_id,
-    )
-    if not payload:
-        return None
 
-    return PlayerStatsV2(**payload)
+    async def _compute() -> bytes:
+        payload = await get_player_detail_payload_with_ranks(
+            db,
+            season_id=season_id,
+            player_id=player_id,
+        )
+        if not payload:
+            return b"null"
+        return PlayerStatsV2(**payload).model_dump_json().encode()
+
+    # Singleflight: the ranks payload scans the whole season's stats table, so
+    # concurrent cold-key hits must not run it in parallel. Negative results
+    # get a short TTL — stats may appear right after a sync.
+    json_bytes = await cache_get_or_compute(
+        f"player_stats_v2:{player_id}:{season_id}",
+        ttl=lambda value: 10 if value == b"null" else 60,
+        compute=_compute,
+    )
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/teams/{team_id}/stats", response_model=TeamStatsV2 | None)
@@ -67,15 +89,23 @@ async def get_team_stats_v2(
     db: AsyncSession = Depends(get_db),
 ):
     season_id = await resolve_visible_season_id(db, season_id)
-    payload = await get_team_detail_payload_with_ranks(
-        db,
-        season_id=season_id,
-        team_id=team_id,
-    )
-    if not payload:
-        return None
 
-    return TeamStatsV2(**payload)
+    async def _compute() -> bytes:
+        payload = await get_team_detail_payload_with_ranks(
+            db,
+            season_id=season_id,
+            team_id=team_id,
+        )
+        if not payload:
+            return b"null"
+        return TeamStatsV2(**payload).model_dump_json().encode()
+
+    json_bytes = await cache_get_or_compute(
+        f"team_stats_v2:{team_id}:{season_id}",
+        ttl=lambda value: 10 if value == b"null" else 60,
+        compute=_compute,
+    )
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/seasons/{season_id}/player-stats", response_model=PlayerStatsTableResponseV2)

@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
+from app.utils.cache import cache_get, cache_set
 from app.models import Player, PlayerTeam, Game, GamePlayerStats, PlayerSeasonStats, Team, Season
 from app.models.game_event import GameEvent, GameEventType
 from app.schemas.player import (
@@ -142,6 +144,11 @@ async def get_player(
     if season_id is not None:
         await ensure_visible_season_or_404(db, season_id)
 
+    cache_key = f"player_detail:{player_id}:{season_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     result = await db.execute(
         select(Player)
         .where(Player.id == player_id)
@@ -243,7 +250,7 @@ async def get_player(
     if aggregated.source == "unknown":
         aggregated = fallback_positions_from_top_role(player.player_type, resolved_top_role)
 
-    return {
+    payload = PlayerDetailResponse.model_validate({
         "id": player.id,
         "first_name": get_localized_field(player, "first_name", lang),
         "last_name": get_localized_field(player, "last_name", lang),
@@ -269,7 +276,10 @@ async def get_player(
             "sample_size": aggregated.sample_size,
             "source": aggregated.source,
         },
-    }
+    })
+    json_bytes = payload.model_dump_json().encode()
+    cache_set(cache_key, json_bytes, 60)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{player_id}/stats", response_model=PlayerSeasonStatsResponse | None)
@@ -290,6 +300,11 @@ async def get_player_stats(
     """
     season_id = await resolve_visible_season_id(db, season_id)
 
+    cache_key = f"player_stats:{player_id}:{season_id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     # Get from player_season_stats table
     result = await db.execute(
         select(PlayerSeasonStats).where(
@@ -300,10 +315,15 @@ async def get_player_stats(
     stats = result.scalar_one_or_none()
 
     if not stats:
-        return None
+        # Short TTL: the stats row may appear right after a sync run.
+        cache_set(cache_key, b"null", 10)
+        return Response(content=b"null", media_type="application/json")
 
     payload = PlayerSeasonStatsResponse.model_validate(stats).model_dump()
-    return sanitize_non_finite_numbers(payload)
+    sanitized = sanitize_non_finite_numbers(payload)
+    json_bytes = PlayerSeasonStatsResponse.model_validate(sanitized).model_dump_json().encode()
+    cache_set(cache_key, json_bytes, 60)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{player_id}/games", response_model=GameListResponse)
@@ -614,6 +634,11 @@ async def get_player_tournament_history(
     Get player's tournament history (stats by season).
     Returns all seasons where the player has stats OR is in a roster.
     """
+    cache_key = f"player_tournaments:{player_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     # 1. Seasons with stats
     stats_result = await db.execute(
         select(PlayerSeasonStats)
@@ -765,9 +790,12 @@ async def get_player_tournament_history(
     if current_season_id is None:
         current_season_id = default_season_id
 
-    return PlayerTournamentHistoryResponse(
+    response = PlayerTournamentHistoryResponse(
         items=items,
         total=len(items),
         default_season_id=default_season_id,
         current_season_id=current_season_id,
     )
+    json_bytes = response.model_dump_json().encode()
+    cache_set(cache_key, json_bytes, 60)
+    return Response(content=json_bytes, media_type="application/json")

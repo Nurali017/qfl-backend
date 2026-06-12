@@ -15,7 +15,12 @@ logger = logging.getLogger(__name__)
 
 _cache: dict[str, tuple[float, bytes]] = {}
 _lock = threading.Lock()
-_MAX_SIZE = 512
+# 8192: player/team detail endpoints cache per-entity keys; the full hot
+# keyspace is ~5700 (700 players × 2 langs × {detail, tournaments} + stats
+# + team keys). Below that, eviction (earliest-expiry) thrashes under crawler
+# traffic and long-tail keys never survive their TTL. Payloads are small JSON
+# bytes (~2-10 KB) → worst case ~60 MB/worker.
+_MAX_SIZE = 8192
 
 # Singleflight: per-key asyncio.Lock to coalesce concurrent compute() calls
 # on the same cold key. Without this, N concurrent handlers hitting a cold
@@ -65,7 +70,7 @@ def cache_clear() -> None:
 
 async def cache_get_or_compute(
     key: str,
-    ttl: int,
+    ttl: int | Callable[[bytes], int],
     compute: Callable[[], Awaitable[bytes]],
 ) -> bytes:
     """Cache-aware fetch with singleflight protection.
@@ -79,6 +84,9 @@ async def cache_get_or_compute(
     one of them actually executes `compute()`; the rest read the value it
     just cached. Lock dict grows to at most _MAX_SIZE × 2 entries (~200B
     each), which is small enough to leave alone without cleanup.
+
+    `ttl` may be a callable receiving the computed bytes — used to cache
+    negative results (b"null") for a shorter time than real payloads.
     """
     cached = cache_get(key)
     if cached is not None:
@@ -90,5 +98,6 @@ async def cache_get_or_compute(
         if cached is not None:
             return cached
         value = await compute()
-        cache_set(key, value, ttl)
+        ttl_value = ttl(value) if callable(ttl) else ttl
+        cache_set(key, value, ttl_value)
         return value

@@ -95,6 +95,11 @@ async def get_team(
     db: AsyncSession = Depends(get_db),
 ):
     """Get team by ID."""
+    cache_key = f"team_detail:{team_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     result = await db.execute(
         select(Team)
         .where(Team.id == team_id)
@@ -115,7 +120,7 @@ async def get_team(
             "city": get_localized_city(team.stadium, lang) if hasattr(team.stadium, 'city') else None,
         }
 
-    return {
+    payload = TeamDetailResponse.model_validate({
         "id": team.id,
         "name": get_localized_name(team, lang),
         "city": get_localized_city(team, lang),
@@ -127,7 +132,10 @@ async def get_team(
         "stadium": stadium_data,
         "club_id": team.club_id,
         "club_name": get_localized_field(team.club, "name", lang) if team.club else None,
-    }
+    })
+    json_bytes = payload.model_dump_json().encode()
+    cache_set(cache_key, json_bytes, 60)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{team_id}/seasons", response_model=TeamSeasonsResponse)
@@ -385,6 +393,11 @@ async def get_team_coaches(
     """Get coaching staff for a team in a specific season."""
     season_id = await resolve_visible_season_id(db, season_id)
 
+    cache_key = f"team_coaches:{team_id}:{season_id}:{lang}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return Response(content=cached, media_type="application/json")
+
     _ROLE_FALLBACK_KZ = {2: "Бапкер", 3: "Персонал", 4: "Әкімші"}
     _ROLE_FALLBACK_RU = {2: "Тренер", 3: "Персонал", 4: "Администратор"}
 
@@ -439,7 +452,10 @@ async def get_team_coaches(
     sort_key = {c.player.id: _coach_priority(c) for c in contracts}
     items.sort(key=lambda x: sort_key.get(x["id"], (99, 1)))
 
-    return {"items": items, "total": len(items)}
+    result_dict = {"items": items, "total": len(items)}
+    json_bytes = json.dumps(result_dict, default=str, ensure_ascii=False).encode()
+    cache_set(cache_key, json_bytes, 30)
+    return Response(content=json_bytes, media_type="application/json")
 
 
 @router.get("/{team_id}/news", response_model=list[NewsListItem])
