@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# FCMS operators sometimes re-create a match (wrong round number, date typo)
+# before we bind it — the new entry then looks like a brand-new fixture. A real
+# repeat pairing in the same orientation only happens a full round apart, so a
+# nearby twin is a duplicate, not a fixture.
+DUPLICATE_GUARD_WINDOW_DAYS = 14
+
 
 def normalize(name: str | None) -> str:
     """Normalize team name for fuzzy matching."""
@@ -127,6 +133,28 @@ def _parse_fcms_time(time_str: str | None) -> time_type | None:
         return None
 
 
+def find_duplicate_twin(
+    all_games: list[Game],
+    season_id: int,
+    home_team_id: int,
+    away_team_id: int,
+    match_date: date_type,
+) -> Game | None:
+    """Existing game of the same pairing (same orientation, same season)
+    within DUPLICATE_GUARD_WINDOW_DAYS of match_date, else None."""
+    return next(
+        (
+            g for g in all_games
+            if g.season_id == season_id
+            and g.home_team_id == home_team_id
+            and g.away_team_id == away_team_id
+            and g.date
+            and abs((g.date - match_date).days) <= DUPLICATE_GUARD_WINDOW_DAYS
+        ),
+        None,
+    )
+
+
 def _parse_csv_ints(s: str | None) -> list[int]:
     if not s:
         return []
@@ -220,6 +248,7 @@ async def bulk_import():
     date_changes: list[dict] = []
     time_changes: list[dict] = []
     created_games: list[dict] = []
+    suspected_duplicates: list[dict] = []
 
     try:
         await client.authenticate()
@@ -411,6 +440,31 @@ async def bulk_import():
                 if home_team and away_team and season_id:
                     fcms_time = _parse_fcms_time(fm.get("time"))
                     tour = fm.get("matchDayNumber")
+
+                    twin = find_duplicate_twin(
+                        all_games, season_id, home_team.id, away_team.id, match_date
+                    )
+                    if twin:
+                        suspected_duplicates.append({
+                            "fcms_id": fcms_id,
+                            "date": str(match_date),
+                            "time": str(fcms_time) if fcms_time else "—",
+                            "home": home_team.name,
+                            "away": away_team.name,
+                            "season": group_to_season_name.get(group_id, "?"),
+                            "tour": tour,
+                            "twin_game_id": twin.id,
+                            "twin_date": str(twin.date),
+                            "twin_tour": twin.tour,
+                        })
+                        logger.warning(
+                            "Suspected duplicate: FCMS %d (%s %s vs %s, tour %s) "
+                            "near game %d (%s, tour %s) — NOT creating",
+                            fcms_id, match_date, home_team.name, away_team.name,
+                            tour, twin.id, twin.date, twin.tour,
+                        )
+                        continue
+
                     new_game = Game(
                         date=match_date,
                         time=fcms_time,
@@ -421,6 +475,8 @@ async def bulk_import():
                         tour=int(tour) if tour else None,
                     )
                     db.add(new_game)
+                    # Visible to the duplicate guard for later matches this run
+                    all_games.append(new_game)
                     created += 1
                     season_name = group_to_season_name.get(group_id, "?")
                     created_games.append({
@@ -464,7 +520,10 @@ async def bulk_import():
                     logger.info("  FCMS %s: %s", u.get("fcms_id"), u.get("reason"))
 
         # ── Telegram summary ──
-        has_changes = created_games or date_changes or time_changes or new_groups_report
+        has_changes = (
+            created_games or date_changes or time_changes
+            or new_groups_report or suspected_duplicates
+        )
         if has_changes:
             lines = ["<b>\U0001f4cb FCMS Sync</b>", ""]
 
@@ -482,6 +541,18 @@ async def bulk_import():
                 for g in created_games:
                     tour_str = f" (тур {g['tour']})" if g.get("tour") else ""
                     lines.append(f"  \u2022 {g['date']} {g['time']} {g['home']} — {g['away']} ({g['season']}{tour_str})")
+                lines.append("")
+
+            if suspected_duplicates:
+                lines.append(f"⚠️ <b>Подозрение на дубль (не создано): {len(suspected_duplicates)}</b>")
+                for d in suspected_duplicates:
+                    tour_str = f", тур {d['tour']}" if d.get("tour") else ""
+                    twin_tour_str = f", тур {d['twin_tour']}" if d.get("twin_tour") else ""
+                    lines.append(
+                        f"  • FCMS {d['fcms_id']}: {d['date']} {d['time']} "
+                        f"{d['home']} — {d['away']} ({d['season']}{tour_str}) "
+                        f"похож на game #{d['twin_game_id']} ({d['twin_date']}{twin_tour_str})"
+                    )
                 lines.append("")
 
             if date_changes:
