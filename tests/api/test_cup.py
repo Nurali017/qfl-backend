@@ -300,3 +300,32 @@ class TestSeasonBracketFromStages:
 async def test_admin_playoff_routes_are_not_available(client: AsyncClient):
     response = await client.get("/api/v1/admin/playoff-brackets?season_id=71")
     assert response.status_code == 404
+
+
+class _G:
+    """Minimal stand-in for a Game row (date + nullable time)."""
+
+    def __init__(self, d, t):
+        self.date = d
+        self.time = t
+
+
+def test_chrono_sort_key_same_date_null_time_does_not_raise():
+    """Regression for the prod 500 on 2026-06-13: same-date games where one
+    has a NULL time must not tie-break into a `str < datetime.time` compare.
+
+    The old key `(g.date, g.time or "")` raised TypeError here; the helper
+    falls back to time.min so all keys stay (date, time)-typed.
+    """
+    from app.api.cup import chrono_sort_key
+
+    d = date(2026, 6, 13)
+    games = [_G(d, time(18, 0)), _G(d, None), _G(d, time(16, 0))]
+
+    # Both orderings used by the overview handler must not raise.
+    ascending = sorted(games, key=chrono_sort_key)
+    descending = sorted(games, key=chrono_sort_key, reverse=True)
+
+    # NULL time sorts to the start of the day (time.min).
+    assert [g.time for g in ascending] == [None, time(16, 0), time(18, 0)]
+    assert [g.time for g in descending] == [time(18, 0), time(16, 0), None]

@@ -1,6 +1,6 @@
 """Public Cup API — aggregated endpoints for cup/knockout tournament pages."""
 
-from datetime import date as date_type
+from datetime import date as date_type, time as time_type
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -35,6 +35,17 @@ from app.services.season_visibility import is_season_visible_clause
 from app.utils.localization import get_localized_field
 
 router = APIRouter(prefix="/cup", tags=["cup"])
+
+
+def chrono_sort_key(game) -> tuple:
+    """Chronological sort key (date, time) for cup games.
+
+    Falls back to time.min — NOT "" — for games with a NULL time, so that
+    two same-date games don't tie-break into a `str < datetime.time`
+    comparison (the prod 500 on 2026-06-13). Games with a NULL time sort to
+    the start of their day.
+    """
+    return (game.date, game.time or time_type.min)
 
 
 async def _load_season(db: AsyncSession, season_id: int, lang: str) -> Season:
@@ -130,14 +141,14 @@ async def get_cup_overview(
         g for g in all_games if compute_game_status(g) == "live"
     ]
 
-    # Recent: last N finished (most recent first)
-    finished_games.sort(key=lambda g: (g.date, g.time or ""), reverse=True)
+    # Recent: last N finished (most recent first).
+    finished_games.sort(key=chrono_sort_key, reverse=True)
     recent_results = [
         build_cup_game(g, lang) for g in finished_games[:recent_limit]
     ]
 
     # Upcoming: live games first, then next N upcoming (soonest first)
-    upcoming_games_raw.sort(key=lambda g: (g.date, g.time or ""))
+    upcoming_games_raw.sort(key=chrono_sort_key)
     upcoming_built = [build_cup_game(g, lang) for g in live_games]
     upcoming_built += [
         build_cup_game(g, lang) for g in upcoming_games_raw[:upcoming_limit]
