@@ -270,11 +270,12 @@ async def bulk_import():
 
         # Fetch all FCMS matches, track which group each belongs to
         all_fcms_matches: list[dict] = []
+        PAGE_LIMIT = 100
         for group_id in group_ids:
             page = 1
             group_count = 0
             while True:
-                data = await client.list_matches(group_id, page=page, limit=100)
+                data = await client.list_matches(group_id, page=page, limit=PAGE_LIMIT)
                 matches = data.get("_embedded", {}).get("matches", [])
                 if not matches:
                     break
@@ -282,8 +283,13 @@ async def bulk_import():
                     m["_group_id"] = group_id
                 all_fcms_matches.extend(matches)
                 group_count += len(matches)
-                total_pages = data.get("page_count", 1)
-                if page >= total_pages:
+                # FCMS does not return `page_count`; rely on total_items when
+                # present, otherwise stop once a short (< limit) page arrives.
+                total_items = data.get("total_items") or data.get("total")
+                if total_items is not None:
+                    if group_count >= int(total_items):
+                        break
+                elif len(matches) < PAGE_LIMIT:
                     break
                 page += 1
             logger.info("Fetched %d matches from FCMS group %d", group_count, group_id)
