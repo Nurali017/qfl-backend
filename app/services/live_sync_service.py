@@ -245,6 +245,9 @@ class LiveSyncService:
             if not team_id:
                 continue
 
+            # Commit prior-side writes and release the pooled connection during
+            # this side's sota.id HTTP roundtrip.
+            await self.db.commit()
             try:
                 live_data = await self.client.get_live_team_lineup(sota_uuid, side)
             except Exception as exc:
@@ -639,6 +642,9 @@ class LiveSyncService:
             return {"error": f"Game {game_id} not found or no sota_id"}
 
         sota_uuid = str(game.sota_id)
+        # Release the pooled connection during the sota.id HTTP roundtrip
+        # (expire_on_commit=False keeps `game` usable below).
+        await self.db.commit()
         try:
             time_data = await self.client.get_live_match_time(sota_uuid)
         except Exception as exc:
@@ -757,6 +763,9 @@ class LiveSyncService:
             return {"error": f"Game {game_id} not found or no sota_id"}
 
         sota_uuid = str(game.sota_id)
+        # Release the pooled connection during the sota.id HTTP roundtrip
+        # (expire_on_commit=False keeps `game` usable below).
+        await self.db.commit()
         try:
             stats_data = await self.client.get_live_match_stats(sota_uuid)
         except Exception as exc:
@@ -946,6 +955,9 @@ class LiveSyncService:
             if not team_id:
                 continue
 
+            # Commit prior-side writes and release the pooled connection during
+            # this side's sota.id HTTP roundtrip.
+            await self.db.commit()
             try:
                 players_data = await self.client.get_live_match_player_stats(sota_uuid, side)
             except Exception as exc:
@@ -1119,6 +1131,11 @@ class LiveSyncService:
         if not sota_uuid:
             logger.warning("Game %s has no sota_id, cannot fetch live events", game_id)
             return {"added": 0, "updated": 0, "deleted": 0}
+        # Release the pooled connection during the sota.id HTTP roundtrip. Only
+        # reads have happened so far (existing_events + game) and the dedup
+        # snapshot is already built in memory, so this commits a read-only
+        # transaction; expire_on_commit=False keeps those ORM objects usable.
+        await self.db.commit()
         events_data = await self.client.get_live_match_events(sota_uuid)
 
         # Safety check: if SOTA returns empty but we have SOTA events, skip deletion
