@@ -26,6 +26,10 @@ from app.services.sota_client import get_sota_client
 from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
 from app.utils.timestamps import ensure_utc, utcnow
+from app.utils.tour_completion import (
+    tour_completed_predicate,
+    tour_playable_predicate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -698,21 +702,10 @@ async def _post_finish_followup(game_id: int):
                 # Postponed/cancelled matches are treated as non-blocking so a
                 # rescheduled fixture cannot stall tour-of-week generation.
                 try:
-                    TERMINAL = {GameStatus.finished, GameStatus.technical_defeat}
-                    NON_BLOCKING = (GameStatus.postponed, GameStatus.cancelled)
                     tour_check = await db.execute(
                         select(
-                            func.count(case(
-                                (Game.status.notin_(NON_BLOCKING), 1),
-                            )).label("total"),
-                            func.count(case(
-                                (
-                                    Game.status.in_(TERMINAL)
-                                    & Game.home_score.isnot(None)
-                                    & Game.away_score.isnot(None),
-                                    1,
-                                ),
-                            )).label("completed"),
+                            func.count(case((tour_playable_predicate(), 1))).label("total"),
+                            func.count(case((tour_completed_predicate(), 1))).label("completed"),
                         ).where(
                             Game.season_id == game.season_id,
                             Game.tour == game.tour,

@@ -45,3 +45,8 @@ def to_almaty(value: datetime | None) -> datetime | None:
     if normalized is None:
         return None
     return normalized.astimezone(ALMATY_TZ)
+
+
+def today_almaty() -> date:
+    """Return today's date in Asia/Almaty (matches how games.date is stored)."""
+    return datetime.now(ALMATY_TZ).date()

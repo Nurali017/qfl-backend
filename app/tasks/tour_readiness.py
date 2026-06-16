@@ -7,11 +7,10 @@ from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Game, GameStatus
+from app.models import Game
 from app.models.tour_sync_status import TourSyncStatus
-from app.utils.timestamps import utcnow
-
-NON_BLOCKING_STATUSES = (GameStatus.postponed, GameStatus.cancelled)
+from app.utils.timestamps import today_almaty, utcnow
+from app.utils.tour_completion import tour_playable_predicate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -45,10 +44,10 @@ async def maybe_trigger_tour_revalidation(
     """
     from app.tasks.sync_tasks import trigger_stats_revalidation
 
-    # Condition 1+2: game-level completeness.  Postponed/cancelled games are
-    # excluded from the total — a rescheduled fixture must not block the rest
-    # of the tour from being marked ready.
-    playable = Game.status.notin_(NON_BLOCKING_STATUSES)
+    # Condition 1+2: game-level completeness.  Postponed/cancelled and
+    # future-rescheduled games are excluded from the total — a moved fixture
+    # must not block the rest of the tour from being marked ready.
+    playable = tour_playable_predicate(today_almaty())
     row = (await db.execute(
         select(
             func.count(case((playable, 1))).label("total"),

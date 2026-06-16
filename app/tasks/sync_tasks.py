@@ -14,7 +14,11 @@ from app.models.team_of_week import TeamOfWeek
 from app.config import get_settings
 from app.services.telegram import send_telegram_message
 from app.utils.async_celery import run_async
-from app.utils.timestamps import utcnow
+from app.utils.timestamps import today_almaty, utcnow
+from app.utils.tour_completion import (
+    tour_completed_predicate,
+    tour_playable_predicate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -709,8 +713,7 @@ async def _retry_missing_team_of_week():
     team-of-week hasn't been synced (for either locale). Dispatches
     sync_team_of_week_for_tour for each missing tour.
     """
-    TERMINAL = {GameStatus.finished, GameStatus.technical_defeat}
-    NON_BLOCKING = (GameStatus.postponed, GameStatus.cancelled)
+    today = today_almaty()
     cutoff = utcnow() - timedelta(days=7)
     dispatched = []
 
@@ -718,15 +721,13 @@ async def _retry_missing_team_of_week():
         for season_id in settings.sync_season_ids:
             if season_id not in settings.extended_stats_season_ids:
                 continue
-            # Find tours where all playable (non-postponed/cancelled) games finished
-            # within the last 7 days. Postponed/cancelled games are non-blocking.
+            # Find tours where all playable games finished within the last 7 days.
+            # Postponed/cancelled and future-rescheduled games are non-blocking.
             tour_query = await db.execute(
                 select(
                     Game.tour,
-                    func.count(case((Game.status.notin_(NON_BLOCKING), 1))).label("total"),
-                    func.count(case(
-                        (Game.status.in_(TERMINAL) & Game.home_score.isnot(None) & Game.away_score.isnot(None), 1),
-                    )).label("completed"),
+                    func.count(case((tour_playable_predicate(today), 1))).label("total"),
+                    func.count(case((tour_completed_predicate(), 1))).label("completed"),
                     func.max(Game.finished_at).label("last_finished"),
                 ).where(
                     Game.season_id == season_id,
