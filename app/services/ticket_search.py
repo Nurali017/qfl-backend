@@ -132,6 +132,38 @@ def _team_matches_text(team_name: str, text: str) -> bool:
     return False
 
 
+def _team_position_in_text(team_name: str, text: str) -> int:
+    """Earliest index where the team name appears (Cyrillic, slug, or translit), or -1.
+
+    Used to verify home/away ordering in ticket URL slugs like
+    "fk-aktobe-vs-fk-astana" where the home team must come first.
+    """
+    text_norm = _normalize(text)
+    candidates: list[str] = []
+    name_lower = team_name.lower()
+    candidates.append(_normalize(name_lower))
+    candidates.extend(_TEAM_SLUG_OVERRIDES.get(name_lower, []))
+    candidates.append(_transliterate(name_lower))
+    positions = [text_norm.find(c) for c in candidates if c]
+    positions = [p for p in positions if p >= 0]
+    return min(positions) if positions else -1
+
+
+def _home_before_away_in_slug(home_name: str, away_name: str, path: str) -> bool:
+    """True if home team appears before away team in a ticketon event slug.
+
+    Ticketon slugs always list the home team first (e.g. "fk-aktobe-vs-fk-astana").
+    Returns True when ordering can't be determined (one of them not found by
+    position), leaving the existing presence checks as the gate.
+    """
+    text = unquote(path)
+    home_pos = _team_position_in_text(home_name, text)
+    away_pos = _team_position_in_text(away_name, text)
+    if home_pos < 0 or away_pos < 0 or home_pos == away_pos:
+        return True
+    return home_pos < away_pos
+
+
 def _format_date_ru(d: date) -> str:
     """Format date as '15 апреля' for Russian-language search queries."""
     return f"{d.day} {_MONTHS_RU[d.month]}"
@@ -308,6 +340,15 @@ def _extract_ticket_urls(
                 if not _team_matches_text(home_name, unquote(path)):
                     continue
                 if not _team_matches_text(away_name, unquote(path)):
+                    continue
+                # Home team must come first in the slug (ticketon lists home first).
+                # Rejects the mirror fixture, e.g. accepting "astana-vs-aktobe"
+                # for an Aktobe home game.
+                if not _home_before_away_in_slug(home_name, away_name, path):
+                    logger.info(
+                        "Rejected ticket URL (home/away reversed in slug): %s",
+                        link,
+                    )
                     continue
             # Check domain allowlist
             domain_ok = False
