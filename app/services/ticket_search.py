@@ -181,6 +181,20 @@ def _build_instagram_query(home_name: str, away_name: str, game_date: date) -> s
     return f"site:instagram.com {home_name} {away_name} {date_str}"
 
 
+def _build_afisha_query(home_name: str, away_name: str) -> str:
+    """Build a Google search targeting the indexed Yandex.Afisha event page.
+
+    Clubs frequently sell tickets via an embedded Afisha widget
+    (widget.afisha.yandex.kz/w/sessions/<opaque-id>) whose URL carries no team
+    names and is never indexed by Google. The SAME sale, however, has a canonical
+    indexed event page like afisha.yandex.kz/<city>/sport/football-<home>-<away>
+    with both teams in the slug (home first). A site:-scoped search surfaces it
+    without drowning in avia/rail "город→город" ticket noise. No date in the
+    query — the slug has none; date is verified later via snippet + AI validation.
+    """
+    return f"site:afisha.yandex.kz {home_name} {away_name}"
+
+
 # Phrases indicating free entry (case-insensitive)
 _FREE_ENTRY_PHRASES = [
     "вход свободный",
@@ -348,6 +362,34 @@ def _extract_ticket_urls(
                     logger.info(
                         "Rejected ticket URL (home/away reversed in slug): %s",
                         link,
+                    )
+                    continue
+            # afisha.yandex.{kz,ru}: only accept specific sport EVENT pages with
+            # both teams in the slug (home first). Rejects city roots
+            # (/aktobe), venue schedules (/sport/places/...), concerts,
+            # selections, and the opaque widget (/w/sessions/...) which has no
+            # teams to validate against.
+            is_afisha = (
+                hostname == "afisha.yandex.kz" or hostname.endswith(".afisha.yandex.kz")
+                or hostname == "afisha.yandex.ru" or hostname.endswith(".afisha.yandex.ru")
+            )
+            if is_afisha:
+                seg = [p for p in path.split("/") if p]
+                if "sport" not in seg or "places" in seg or "selections" in seg:
+                    continue
+                slug = seg[-1]
+                if slug in ("sport", "places", "schedule"):
+                    continue
+                slug_text = unquote(slug)
+                if not _team_matches_text(home_name, slug_text):
+                    continue
+                if not _team_matches_text(away_name, slug_text):
+                    continue
+                # Home team must come first in the slug (afisha lists home first).
+                # Rejects the mirror fixture, e.g. .../sport/football-astana-aktobe.
+                if not _home_before_away_in_slug(home_name, away_name, slug):
+                    logger.info(
+                        "Rejected afisha URL (home/away reversed in slug): %s", link,
                     )
                     continue
             # Check domain allowlist
@@ -555,8 +597,16 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                 await asyncio.sleep(1.0)  # rate limit between requests
                 ig_organic = await _search_serper(ig_query, settings.serper_api_key, client)
 
-                # Merge results: general search + Instagram-specific
-                all_organic = organic + ig_organic
+                # Also search the indexed Yandex.Afisha event page — catches matches
+                # sold only via the embedded Afisha widget (opaque, non-indexed URL).
+                afisha_query = _build_afisha_query(home_team.name, away_team.name)
+                await asyncio.sleep(1.0)  # rate limit between requests
+                afisha_organic = await _search_serper(
+                    afisha_query, settings.serper_api_key, client
+                )
+
+                # Merge results: general search + Instagram + Afisha event page
+                all_organic = organic + ig_organic + afisha_organic
 
                 # Check for free entry in all results
                 is_free = _detect_free_entry(all_organic, home_team.name, game.date)
