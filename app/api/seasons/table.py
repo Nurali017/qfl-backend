@@ -520,13 +520,15 @@ async def get_league_performance(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Get league position for each team at each matchweek.
-    Returns positions over time for the league performance chart.
+    Get league position for each team at the end of each calendar week.
+
+    Positions are bucketed by the ISO week of each match's date instead of by
+    matchweek (tour). Tour-based bucketing breaks when a fixture is postponed and
+    replayed in a different slot; week-based bucketing is chronological by
+    construction. Only weeks that actually had a completed match produce a point,
+    so international breaks / paused weeks don't add flat segments.
     """
     await _ensure_visible_season(db, season_id)
-
-    season = await db.get(Season, season_id)
-    total_rounds = season.total_rounds if season else None
 
     filter_team_ids: set[int] | None = None
     if team_ids:
@@ -534,12 +536,7 @@ async def get_league_performance(
             int(x.strip()) for x in team_ids.split(",") if x.strip().isdigit()
         }
 
-    # Load both terminal games (for scoring) and postponed games (for the
-    # makeup-mapping below).  A rescheduled fixture played in a far-off tour
-    # slot should appear in the dynamics chart at the original tour it was
-    # supposed to be played in, not the placeholder slot it currently sits
-    # at (PL-2026: Qairat vs Kaspiy game #1081 in tour 25 is the makeup for
-    # postponed tour 6 game #926).
+    # Terminal games (with a score and a non-null date) drive the standings.
     query = (
         select(Game)
         .where(
@@ -548,57 +545,20 @@ async def get_league_performance(
                 GameStatus.finished,
                 GameStatus.technical_defeat,
                 GameStatus.live,
-                GameStatus.postponed,
             ]),
-            Game.tour.isnot(None),
         )
         .options(selectinload(Game.home_team), selectinload(Game.away_team))
-        .order_by(Game.tour, Game.date, Game.time)
+        .order_by(Game.date, Game.time)
     )
 
     result = await db.execute(query)
     games = result.scalars().all()
 
+    empty_response = {"season_id": season_id, "week_count": 0, "max_tour": 0, "weeks": [], "teams": []}
     if not games:
-        return {"season_id": season_id, "max_tour": 0, "total_rounds": total_rounds, "teams": []}
+        return empty_response
 
-    # Build makeup map: earliest postponed-tour for each team pair.  If a
-    # later-tour terminal game between the same two teams exists, it is
-    # almost always the rescheduled makeup and belongs in the earlier slot.
-    postponed_tour_by_pair: dict[frozenset[int], int] = {}
-    for g in games:
-        if g.status != GameStatus.postponed:
-            continue
-        if g.home_team_id is None or g.away_team_id is None:
-            continue
-        pair = frozenset((g.home_team_id, g.away_team_id))
-        existing = postponed_tour_by_pair.get(pair)
-        if existing is None or g.tour < existing:
-            postponed_tour_by_pair[pair] = g.tour
-
-    def _effective_tour(g) -> int:
-        if g.home_team_id is None or g.away_team_id is None:
-            return g.tour
-        pair = frozenset((g.home_team_id, g.away_team_id))
-        makeup_tour = postponed_tour_by_pair.get(pair)
-        if makeup_tour is not None and g.tour > makeup_tour:
-            return makeup_tour
-        return g.tour
-
-    # Terminal games go into their effective tour; postponed games contribute
-    # nothing to positions (no score) so they are skipped entirely.
-    games_by_tour: dict[int, list] = defaultdict(list)
-    for g in games:
-        if g.status == GameStatus.postponed:
-            continue
-        games_by_tour[_effective_tour(g)].append(g)
-
-    if not games_by_tour:
-        return {"season_id": season_id, "max_tour": 0, "total_rounds": total_rounds, "teams": []}
-
-    max_tour = max(games_by_tour.keys())
-
-    # Collect all team IDs and info
+    # Collect team info from all loaded games.
     team_info: dict[int, dict] = {}
     for game in games:
         if game.home_team_id not in team_info and game.home_team:
@@ -612,21 +572,40 @@ async def get_league_performance(
                 "logo": resolve_team_logo_url(game.away_team),
             }
 
+    # Bucket fully-played games by the ISO (year, week) of their date. A game is
+    # counted only if BOTH scores are present and BOTH teams are known, so a
+    # half-entered or broken game can never invent a week point (or be counted
+    # with a phantom 0). A week with no completed match therefore produces no
+    # point at all.
+    games_by_week: dict[tuple[int, int], list] = defaultdict(list)
+    for g in games:
+        if g.home_score is None or g.away_score is None:
+            continue
+        if g.home_team_id not in team_info or g.away_team_id not in team_info:
+            continue
+        iso = g.date.isocalendar()
+        games_by_week[(iso[0], iso[1])].append(g)
+
+    if not games_by_week:
+        return empty_response
+
+    week_keys = sorted(games_by_week.keys())
+
     # Initialize cumulative stats for all teams
     cumulative: dict[int, dict] = {
         tid: {"points": 0, "gd": 0, "gs": 0, "wins": 0}
         for tid in team_info
     }
     positions_by_team: dict[int, list[int]] = {tid: [] for tid in team_info}
+    weeks_meta: list[dict] = []
 
-    for tour in range(1, max_tour + 1):
-        for game in games_by_tour.get(tour, []):
-            # Skip live games without scores yet
-            if game.home_score is None and game.away_score is None:
-                continue
+    for idx, week_key in enumerate(week_keys, 1):
+        for game in games_by_week[week_key]:
+            # The bucket already guarantees both teams are known and both scores
+            # are present.
             h_id, a_id = game.home_team_id, game.away_team_id
-            h_score = game.home_score if game.home_score is not None else 0
-            a_score = game.away_score if game.away_score is not None else 0
+            h_score = game.home_score
+            a_score = game.away_score
 
             cumulative[h_id]["gs"] += h_score
             cumulative[h_id]["gd"] += h_score - a_score
@@ -650,6 +629,9 @@ async def get_league_performance(
         for pos, (tid, _) in enumerate(standings, 1):
             positions_by_team[tid].append(pos)
 
+        first_date = min(g.date for g in games_by_week[week_key])
+        weeks_meta.append({"week": idx, "start": first_date.isoformat()})
+
     teams_result = []
     for tid, positions in positions_by_team.items():
         if filter_team_ids and tid not in filter_team_ids:
@@ -666,4 +648,12 @@ async def get_league_performance(
         key=lambda t: t["positions"][-1] if t["positions"] else 999
     )
 
-    return {"season_id": season_id, "max_tour": max_tour, "total_rounds": total_rounds, "teams": teams_result}
+    week_count = len(week_keys)
+    return {
+        "season_id": season_id,
+        "week_count": week_count,
+        # Legacy alias kept so the chart's X-axis length keeps working.
+        "max_tour": week_count,
+        "weeks": weeks_meta,
+        "teams": teams_result,
+    }
