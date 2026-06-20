@@ -742,11 +742,14 @@ async def _enrich_with_telegram(
     client: httpx.AsyncClient,
     game_date: date,
     max_channels: int,
+    known_channel_url: str | None = None,
 ) -> list[dict]:
-    """Discover the club's Telegram channel and return posts mentioning BOTH
-    teams as synthetic result dicts (text as snippet + embedded URLs as results).
+    """Return club Telegram posts about this fixture as synthetic result dicts.
+
+    Prefers the home club's channel stored in DB (clubs.social_links.telegram) —
+    exact, no fuzzy matching. Falls back to Google discovery only when the DB has
+    no handle (a 't.me <home> <away>' search + harvesting any t.me links).
     """
-    # Discover channels: a dedicated t.me search + any t.me links already present.
     channels: list[str] = []
 
     def _collect(text: str) -> None:
@@ -756,18 +759,24 @@ async def _enrich_with_telegram(
                 continue
             channels.append(h)
 
-    try:
-        tg_query = _build_telegram_query(home_name, away_name)
-        tg_results = await _search_serper(tg_query, serper_key, client)
-        await asyncio.sleep(1.0)
-        for r in tg_results:
+    # 1) Authoritative: the club's own channel from the DB
+    if known_channel_url:
+        _collect(known_channel_url)
+
+    # 2) Fallback: discover via search only if DB had no handle
+    if not channels:
+        try:
+            tg_query = _build_telegram_query(home_name, away_name)
+            tg_results = await _search_serper(tg_query, serper_key, client)
+            await asyncio.sleep(1.0)
+            for r in tg_results:
+                _collect(r.get("link", ""))
+        except SerperAuthError:
+            raise
+        except Exception:
+            logger.warning("Telegram discovery search failed", exc_info=True)
+        for r in all_organic:
             _collect(r.get("link", ""))
-    except SerperAuthError:
-        raise
-    except Exception:
-        logger.warning("Telegram discovery search failed", exc_info=True)
-    for r in all_organic:
-        _collect(r.get("link", ""))
 
     enriched: list[dict] = []
     for channel in channels[:max_channels]:
@@ -821,7 +830,10 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
     result = await db.execute(
         select(Game)
         .join(Season, Game.season_id == Season.id)
-        .options(selectinload(Game.home_team), selectinload(Game.away_team))
+        .options(
+            selectinload(Game.home_team).selectinload(Team.club),
+            selectinload(Game.away_team),
+        )
         .where(
             Game.date.in_(search_dates),
             Game.status == GameStatus.created,
@@ -851,6 +863,11 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
             if not home_team or not away_team:
                 skipped += 1
                 continue
+
+            # Home club's official socials from DB (clubs.social_links JSONB)
+            club = getattr(home_team, "club", None)
+            socials = (club.social_links or {}) if club else {}
+            club_telegram_url = socials.get("telegram")
 
             try:
                 query = _build_search_query(home_team.name, away_team.name, game.date)
@@ -888,6 +905,7 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                         all_organic, home_team.name, away_team.name,
                         settings.serper_api_key, client, game.date,
                         settings.ticket_telegram_scrape_max_channels,
+                        known_channel_url=club_telegram_url,
                     )
                     all_organic = all_organic + tg_enriched
 
