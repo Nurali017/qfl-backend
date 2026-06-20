@@ -295,6 +295,73 @@ async def _check_team_website_free_entry(
     return False
 
 
+# Pages on the club portal that are NOT a single-match sale — never link these.
+_NON_MATCH_TICKET_PATHS = ("subscription", "abonement", "abonen", "season")
+
+
+async def _find_ticket_url_on_website(
+    website: str,
+    home_name: str,
+    away_name: str,
+    game_date: date,
+    client: httpx.AsyncClient,
+) -> str | None:
+    """Scan the home team's official site for a link to its own ticket portal.
+
+    Many clubs sell tickets only through their own portal (e.g.
+    tickets.fcelimai.kz) whose landing page carries no team names — so Serper
+    can't find it and the URL can't be validated on its own. Instead we anchor
+    on the CLUB SITE: only when both team names AND the game date appear on the
+    page do we treat the featured match as this one, then extract the club's
+    ticketing link. The link may be a generic portal landing — acceptable, since
+    it is the club's official sales channel for their home match.
+    """
+    parsed = urlparse(website)
+    if not parsed.hostname:
+        return None
+    root_url = f"{parsed.scheme}://{parsed.hostname}"
+    # Own ticket subdomain like tickets.fcelimai.kz — derived from the site host
+    own_ticket_host = f"tickets.{parsed.hostname.removeprefix('www.')}"
+    for url in dict.fromkeys([website, root_url]):
+        try:
+            resp = await client.get(url, follow_redirects=True, timeout=12)
+            if resp.status_code != 200:
+                continue
+            html = resp.text
+            text = html.lower()
+            # Anchor: the page must feature THIS match (both teams + date)
+            if not _team_matches_text(home_name, text):
+                continue
+            if not _team_matches_text(away_name, text):
+                continue
+            if not _snippet_mentions_date(text, game_date):
+                continue
+            for link in re.findall(r'https?://[^\s"\'<>]+', html):
+                low = link.lower()
+                host = urlparse(low).hostname or ""
+                is_ticket_link = (
+                    host == own_ticket_host
+                    or host.startswith("tickets.")
+                    or "/tickets" in low
+                    or "/bilety" in low
+                    or host.endswith("ticketon.kz")
+                    or "afisha.yandex" in host
+                )
+                if not is_ticket_link:
+                    continue
+                if any(p in low for p in _NON_MATCH_TICKET_PATHS):
+                    continue
+                clean = link.rstrip('",);')
+                logger.info(
+                    "Found club ticket portal on %s for %s vs %s: %s",
+                    url, home_name, away_name, clean,
+                )
+                return clean
+        except Exception:
+            continue
+    return None
+
+
 def _snippet_has_wrong_year(snippet: str, title: str, game_year: int) -> bool:
     """Reject if snippet/title mentions a specific year that doesn't match the game year."""
     text = f"{title} {snippet}"
@@ -649,6 +716,30 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                             "AI rejected ticket URL for game %s: %s",
                             game.id, cand.url,
                         )
+                    # Fallback: no search candidate — scan the club's own site for
+                    # its ticket portal (catches clubs selling only via tickets.<club>).
+                    if match is None and home_team.website:
+                        portal_url = await _find_ticket_url_on_website(
+                            home_team.website, home_team.name, away_team.name,
+                            game.date, client,
+                        )
+                        if portal_url:
+                            game.ticket_url = portal_url
+                            updated += 1
+                            logger.info(
+                                "Found club ticket portal for game %s (%s vs %s): %s",
+                                game.id, home_team.name, away_team.name, portal_url,
+                            )
+                            await send_telegram_message(
+                                "\U0001f3df Билеты найдены (сайт клуба)\n\n"
+                                f"⚽ Матч: {home_team.name} — {away_team.name}\n"
+                                f"\U0001f4c5 Дата: {game.date}\n"
+                                f'\U0001f517 Ссылка: <a href="{portal_url}">Купить билеты</a>'
+                            )
+                            game.ticket_url_fetched_at = utcnow()
+                            searched += 1
+                            await asyncio.sleep(1.0)
+                            continue
                     if match is None and candidates and not game.ticket_url_fetched_at:
                         # All candidates rejected — notify once (avoid spam every 3h)
                         first = candidates[0]
