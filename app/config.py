@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     # Serper (Google Search) API for ticket search
     serper_api_key: str = ""
     ticket_search_enabled: bool = False
+    # Deep-read Instagram captions via Serper scrape (Google snippets truncate
+    # free-entry / ticket info that lives deeper in the caption). Costs extra
+    # Serper credits — disable to fall back to snippet-only detection.
+    ticket_ig_scrape_enabled: bool = True
+    ticket_ig_scrape_max_posts: int = 2
+    # Deep-read the club's Telegram channel (t.me/s/) — free-entry/ticket info
+    # often lives there only. Reliable plain-HTTP scrape, no Serper credits.
+    ticket_telegram_scrape_enabled: bool = True
+    ticket_telegram_scrape_max_channels: int = 5
 
     # FCMS (FIFA CMS) API
     fcms_enabled: bool = False

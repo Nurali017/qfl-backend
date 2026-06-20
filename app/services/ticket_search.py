@@ -47,6 +47,7 @@ _FUTSAL_KEYWORDS = [
 ]
 
 SERPER_URL = "https://google.serper.dev/search"
+SERPER_SCRAPE_URL = "https://scrape.serper.dev"
 
 # Russian month names (genitive case) for query formatting
 _MONTHS_RU = {
@@ -598,6 +599,202 @@ async def _search_serper(
     return data.get("organic", [])
 
 
+async def _scrape_caption(url: str, api_key: str, client: httpx.AsyncClient) -> str:
+    """Deep-read a page's full text via Serper scrape (renders JS).
+
+    Google's organic snippet truncates Instagram captions to the first line, so
+    free-entry phrases («Кіру тегін») and ticket links deeper in the caption are
+    invisible to snippet-only detection. The scrape endpoint returns the full
+    rendered text + og:description. It's slow and flaky for instagram.com
+    (JS-heavy, occasional 5xx/timeout), so we retry briefly and degrade to "".
+    """
+    for _ in range(2):
+        try:
+            resp = await client.post(
+                SERPER_SCRAPE_URL,
+                headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+                json={"url": url},
+                timeout=35,
+            )
+            if resp.status_code in (401, 403):
+                raise SerperAuthError(f"Serper scrape {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            meta = data.get("metadata") or {}
+            parts = [str(meta.get("og:description") or ""), data.get("text") or ""]
+            caption = "\n".join(p for p in parts if p).strip()
+            if caption:
+                return caption
+        except SerperAuthError:
+            raise
+        except Exception:
+            continue
+    return ""
+
+
+async def _enrich_with_instagram_captions(
+    all_organic: list[dict],
+    home_name: str,
+    api_key: str,
+    client: httpx.AsyncClient,
+    max_posts: int,
+) -> list[dict]:
+    """Scrape full captions of the most relevant Instagram posts and return them
+    as synthetic result dicts (caption as snippet, plus any embedded URLs as
+    separate results so ticket extraction sees links buried in the caption).
+
+    Only posts whose short snippet already mentions the home team are scraped,
+    to bound Serper credit spend.
+    """
+    candidates: list[str] = []
+    for r in all_organic:
+        link = r.get("link", "") or ""
+        if "instagram.com/p/" not in link and "instagram.com/reel/" not in link:
+            continue
+        if link in candidates:
+            continue
+        blurb = f"{r.get('title', '')} {r.get('snippet', '')}"
+        if not _team_matches_text(home_name, blurb):
+            continue
+        candidates.append(link)
+        if len(candidates) >= max_posts:
+            break
+
+    enriched: list[dict] = []
+    for link in candidates:
+        caption = await _scrape_caption(link, api_key, client)
+        await asyncio.sleep(1.0)  # rate limit between scrape calls
+        if not caption:
+            continue
+        logger.info("Scraped IG caption for %s (%d chars)", link, len(caption))
+        # The caption itself — feeds free-entry detection + team/date presence.
+        enriched.append({"link": link, "title": "", "snippet": caption})
+        # Any ticket links embedded in the caption — feeds ticket extraction.
+        for u in set(re.findall(r'https?://[^\s"\'<>]+', caption)):
+            enriched.append({"link": u.rstrip('",);'), "title": "", "snippet": caption})
+    return enriched
+
+
+def _build_telegram_query(home_name: str, away_name: str) -> str:
+    """Build a Google search to discover the club's Telegram channel.
+
+    No date — Google rarely indexes fresh posts, but the channel root is stable
+    and its live t.me/s/ feed always shows the latest posts once discovered.
+    """
+    return f"t.me {home_name} {away_name}"
+
+
+# Extract the channel handle from a t.me link (handles /s/ feed form and ?query).
+_TELEGRAM_LINK_RE = re.compile(
+    r"t\.me/(?:s/)?([A-Za-z0-9_]{4,32})", re.IGNORECASE
+)
+# Pull individual messages (post id + text) out of a t.me/s/<channel> feed page.
+_TG_MESSAGE_RE = re.compile(
+    r'data-post="([^"]+)".*?'
+    r'tgme_widget_message_text[^>]*>(.*?)</div>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_html(fragment: str) -> str:
+    """Convert a Telegram message HTML fragment to plain text (keep <a> hrefs)."""
+    import html as _html
+    # Surface link targets so embedded ticket URLs survive tag stripping
+    fragment = re.sub(r'<a[^>]*href="([^"]+)"[^>]*>', r" \1 ", fragment)
+    fragment = re.sub(r"<br\s*/?>", "\n", fragment)
+    return _html.unescape(re.sub(r"<[^>]+>", " ", fragment)).strip()
+
+
+async def _scrape_telegram_channel(
+    channel: str, client: httpx.AsyncClient
+) -> list[tuple[str, str]]:
+    """Fetch the public t.me/s/<channel> feed → list of (post_url, plain_text).
+
+    Public Telegram channels render their latest ~20 posts (full text + links)
+    without auth, so a plain GET is reliable — unlike Instagram, which blocks
+    scraping. Free-entry phrases and ticket links in club posts live here.
+    """
+    try:
+        resp = await client.get(
+            f"https://t.me/s/{channel}",
+            follow_redirects=True,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        if resp.status_code != 200:
+            return []
+        out: list[tuple[str, str]] = []
+        for post_id, frag in _TG_MESSAGE_RE.findall(resp.text):
+            text = _strip_html(frag)
+            if text:
+                out.append((f"https://t.me/{post_id}", text))
+        return out
+    except Exception:
+        return []
+
+
+async def _enrich_with_telegram(
+    all_organic: list[dict],
+    home_name: str,
+    away_name: str,
+    serper_key: str,
+    client: httpx.AsyncClient,
+    game_date: date,
+    max_channels: int,
+) -> list[dict]:
+    """Discover the club's Telegram channel and return posts mentioning BOTH
+    teams as synthetic result dicts (text as snippet + embedded URLs as results).
+    """
+    # Discover channels: a dedicated t.me search + any t.me links already present.
+    channels: list[str] = []
+
+    def _collect(text: str) -> None:
+        for handle in _TELEGRAM_LINK_RE.findall(text or ""):
+            h = handle.lower()
+            if h in ("s", "share", "joinchat", "addemoji", "iv") or h in channels:
+                continue
+            channels.append(h)
+
+    try:
+        tg_query = _build_telegram_query(home_name, away_name)
+        tg_results = await _search_serper(tg_query, serper_key, client)
+        await asyncio.sleep(1.0)
+        for r in tg_results:
+            _collect(r.get("link", ""))
+    except SerperAuthError:
+        raise
+    except Exception:
+        logger.warning("Telegram discovery search failed", exc_info=True)
+    for r in all_organic:
+        _collect(r.get("link", ""))
+
+    enriched: list[dict] = []
+    for channel in channels[:max_channels]:
+        posts = await _scrape_telegram_channel(channel, client)
+        for post_url, text in posts:
+            # A club's own channel names only the OPPONENT + city for a home game
+            # (it omits its own name), so requiring both teams is too strict.
+            # Anchor on the match DATE + at least one team — strong enough given
+            # the channel was surfaced by a "<home> <away>" search.
+            if not _snippet_mentions_date(text.lower(), game_date):
+                continue
+            if not (
+                _team_matches_text(home_name, text)
+                or _team_matches_text(away_name, text)
+            ):
+                continue
+            logger.info("Telegram post matched fixture (%s): %s", channel, post_url)
+            # Prepend both team names so downstream home/away presence checks pass
+            # regardless of which side the club named; real text follows verbatim
+            # (preserves free-entry phrases + embedded ticket URLs).
+            snippet = f"{home_name} {away_name}\n{text}"
+            enriched.append({"link": post_url, "title": "", "snippet": snippet})
+            for u in set(re.findall(r'https?://[^\s"\'<>]+', text)):
+                enriched.append({"link": u.rstrip('",);'), "title": "", "snippet": snippet})
+    return enriched
+
+
 async def search_and_update_tickets(db: AsyncSession) -> dict:
     """Search for ticket URLs for upcoming games and store results."""
     from app.config import get_settings
@@ -674,6 +871,25 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
 
                 # Merge results: general search + Instagram + Afisha event page
                 all_organic = organic + ig_organic + afisha_organic
+
+                # Deep-read full Instagram captions — Google snippets truncate the
+                # free-entry phrase / ticket link that lives deeper in the caption.
+                if settings.ticket_ig_scrape_enabled:
+                    enriched = await _enrich_with_instagram_captions(
+                        all_organic, home_team.name, settings.serper_api_key,
+                        client, settings.ticket_ig_scrape_max_posts,
+                    )
+                    all_organic = all_organic + enriched
+
+                # Deep-read the club's Telegram channel — many clubs post free-entry
+                # and ticket info there only; t.me/s/ is reliably scrapable.
+                if settings.ticket_telegram_scrape_enabled:
+                    tg_enriched = await _enrich_with_telegram(
+                        all_organic, home_team.name, away_team.name,
+                        settings.serper_api_key, client, game.date,
+                        settings.ticket_telegram_scrape_max_channels,
+                    )
+                    all_organic = all_organic + tg_enriched
 
                 # Check for free entry in all results
                 is_free = _detect_free_entry(all_organic, home_team.name, game.date)
