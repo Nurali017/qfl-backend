@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, nulls_last, case, distinct, extract, text, cast
+from sqlalchemy import select, func, desc, nulls_last, case, distinct, extract, text, cast, or_
 from sqlalchemy.types import Numeric
 from sqlalchemy.orm import selectinload
 
@@ -319,6 +319,7 @@ TEAM_STATS_RESPONSE_ONLY_FIELDS = {
     "goals_per_match", "goals_conceded_per_match",
     "shot_accuracy", "shot_per_match",
     "foul_per_match",
+    "clean_sheets",  # computed via Game query, not stored in TeamSeasonStats
 }
 
 # Available sort fields for team stats (accept both response names and DB names)
@@ -345,6 +346,9 @@ TEAM_STATS_SORT_FIELDS = [
     "foul_taken", "penalty", "penalty_ratio",
     "opponent_xg", "visitor_total", "average_visitors",
     "freekick_shot",
+    # Computed per-team
+    "clean_sheets",
+    "goal_to_shot_ratio",
 ]
 
 
@@ -444,6 +448,27 @@ async def get_team_stats_table(
         .where(*main_filters)
     )
     rows = main_result.all()
+
+    # Build per-team clean_sheets map in one query (games where the team conceded 0 goals).
+    # TeamSeasonStats has no stored clean_sheets column; we compute from Game rows.
+    cs_filters = [
+        Game.season_id == season_id,
+        Game.home_score.is_not(None),
+        Game.away_score.is_not(None),
+    ]
+    if group_team_ids is not None:
+        cs_filters.append(
+            or_(Game.home_team_id.in_(group_team_ids), Game.away_team_id.in_(group_team_ids))
+        )
+    cs_result = await db.execute(
+        select(Game.home_team_id, Game.away_team_id, Game.home_score, Game.away_score).where(*cs_filters)
+    )
+    clean_sheets_map: dict[int, int] = {}
+    for home_id, away_id, home_score, away_score in cs_result.all():
+        if away_score == 0:
+            clean_sheets_map[home_id] = clean_sheets_map.get(home_id, 0) + 1
+        if home_score == 0:
+            clean_sheets_map[away_id] = clean_sheets_map.get(away_id, 0) + 1
 
     # Fallback: if v2 TeamSeasonStats is empty, build a basic table
     if not rows:
@@ -672,6 +697,8 @@ async def get_team_stats_table(
                 visitor_total=stats.visitor_total,
                 average_visitors=to_finite_float(stats.average_visitors),
                 freekick_shot=stats.freekick_shot,
+                clean_sheets=clean_sheets_map.get(team.id),
+                goal_to_shot_ratio=to_finite_float(stats.goal_to_shot_ratio),
             )
         )
 

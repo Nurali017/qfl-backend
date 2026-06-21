@@ -253,6 +253,10 @@ class TeamStatsTableEntry(BaseModel):
     # Free kicks
     freekick_shot: int | None = None
 
+    # Derived / computed
+    clean_sheets: int | None = None
+    goal_to_shot_ratio: float | None = None
+
     class Config:
         from_attributes = True
 
