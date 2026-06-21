@@ -280,7 +280,26 @@ async def get_player_stats_table(
     total = total_result.scalar() or 0
 
     if use_rank_sort:
-        query = base_query.order_by(nulls_last(sort_column.asc())).offset(offset).limit(limit)
+        # Sort by the displayed metric first, then by SOTA's official rank as the
+        # tie-break among players with equal values. Ordering purely by *_rank can
+        # disagree with the number we actually render: best_players (the only task
+        # that writes goal_rank/goal_pass_rank/dry_match_rank) is skipped while any
+        # game is live, so on match days the rank lags behind the freshly-synced
+        # goal/goal_pass/dry_match counts for the few minutes between the
+        # post-match stats sync and the next best_players run. During that window a
+        # pure rank sort shows the new counts in the stale rank order (e.g. 7, 6, 7,
+        # 6, 7). Making the visible metric primary keeps the column monotonic
+        # regardless of sync timing, while goal_rank still decides ties exactly as
+        # SOTA ordered them.
+        value_column = getattr(PlayerSeasonStats, sort_by)
+        query = (
+            base_query.order_by(
+                nulls_last(desc(value_column)),
+                nulls_last(sort_column.asc()),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
     else:
         query = base_query.order_by(nulls_last(desc(sort_column))).offset(offset).limit(limit)
     result = await db.execute(query)
