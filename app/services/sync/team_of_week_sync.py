@@ -166,8 +166,9 @@ class TeamOfWeekSyncService(BaseSyncService):
             for s in result.scalars().all():
                 stats_by_player[s.player_id] = s
 
-        # 3. Fetch team names via PlayerTeam → Team
+        # 3. Fetch team names + per-team squad photos via PlayerTeam → Team
         team_by_player: dict[int, Team] = {}
+        pt_photo_by_player: dict[int, str] = {}
         if player_ids:
             result = await self.db.execute(
                 select(PlayerTeam)
@@ -180,13 +181,18 @@ class TeamOfWeekSyncService(BaseSyncService):
             )
             for pt in result.scalars().all():
                 team_by_player[pt.player_id] = pt.team
+                # Squad photos live per-team; prefer the head-centered avatar crop
+                pt_photo = pt.photo_url_avatar or pt.photo_url_leaderboard or pt.photo_url
+                if pt_photo:
+                    pt_photo_by_player[pt.player_id] = pt_photo
 
         # 4. Build cache
         cache: dict[str, dict[str, Any]] = {}
         for sota_id, player in players.items():
             pss = stats_by_player.get(player.id)
-            # photo_url is stored as object name, resolve to full URL
-            photo = resolve_file_url(player.photo_url) if player.photo_url else None
+            # Prefer per-team squad photo (player_teams); fall back to base player photo
+            photo_src = pt_photo_by_player.get(player.id) or player.photo_url
+            photo = resolve_file_url(photo_src) if photo_src else None
             team = team_by_player.get(player.id)
 
             cache[sota_id] = {
@@ -222,9 +228,10 @@ class TeamOfWeekSyncService(BaseSyncService):
         if not players:
             return {}
 
-        # 2. Fetch team names via PlayerTeam → Team
+        # 2. Fetch team names + per-team squad photos via PlayerTeam → Team
         player_ids = [p.id for p in players.values()]
         team_by_player: dict[int, Team] = {}
+        pt_photo_by_player: dict[int, str] = {}
         if player_ids:
             result = await self.db.execute(
                 select(PlayerTeam)
@@ -237,6 +244,10 @@ class TeamOfWeekSyncService(BaseSyncService):
             )
             for pt in result.scalars().all():
                 team_by_player[pt.player_id] = pt.team
+                # Squad photos live per-team; prefer the head-centered avatar crop
+                pt_photo = pt.photo_url_avatar or pt.photo_url_leaderboard or pt.photo_url
+                if pt_photo:
+                    pt_photo_by_player[pt.player_id] = pt_photo
 
         # 3. Call SOTA v2 for each player using tour param (no DB lookups needed)
         v2_stats_by_player: dict[int, dict] = {}
@@ -255,7 +266,9 @@ class TeamOfWeekSyncService(BaseSyncService):
         # 4. Build cache using v2 data
         cache: dict[str, dict[str, Any]] = {}
         for sota_id, player in players.items():
-            photo = resolve_file_url(player.photo_url) if player.photo_url else None
+            # Prefer per-team squad photo (player_teams); fall back to base player photo
+            photo_src = pt_photo_by_player.get(player.id) or player.photo_url
+            photo = resolve_file_url(photo_src) if photo_src else None
             v2_data = v2_stats_by_player.get(player.id, {})
             team = team_by_player.get(player.id)
 
