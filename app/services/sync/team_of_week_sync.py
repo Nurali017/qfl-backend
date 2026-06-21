@@ -181,8 +181,8 @@ class TeamOfWeekSyncService(BaseSyncService):
             )
             for pt in result.scalars().all():
                 team_by_player[pt.player_id] = pt.team
-                # Squad photos live per-team; prefer the head-centered avatar crop
-                pt_photo = pt.photo_url_avatar or pt.photo_url_leaderboard or pt.photo_url
+                # Squad photos live per-team; squad displays use the leaderboard crop
+                pt_photo = pt.photo_url_leaderboard or pt.photo_url
                 if pt_photo:
                     pt_photo_by_player[pt.player_id] = pt_photo
 
@@ -244,8 +244,8 @@ class TeamOfWeekSyncService(BaseSyncService):
             )
             for pt in result.scalars().all():
                 team_by_player[pt.player_id] = pt.team
-                # Squad photos live per-team; prefer the head-centered avatar crop
-                pt_photo = pt.photo_url_avatar or pt.photo_url_leaderboard or pt.photo_url
+                # Squad photos live per-team; squad displays use the leaderboard crop
+                pt_photo = pt.photo_url_leaderboard or pt.photo_url
                 if pt_photo:
                     pt_photo_by_player[pt.player_id] = pt_photo
 
