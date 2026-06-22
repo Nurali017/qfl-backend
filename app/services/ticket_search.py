@@ -299,6 +299,27 @@ async def _check_team_website_free_entry(
 # Pages on the club portal that are NOT a single-match sale — never link these.
 _NON_MATCH_TICKET_PATHS = ("subscription", "abonement", "abonen", "season")
 
+# Static-asset extensions and directories. A WordPress club site running the
+# "Event Tickets" plugin ships its stylesheet at
+# .../plugins/event-tickets/build/css/tickets.css — whose path contains
+# "/tickets" and would otherwise pass the ticket-link heuristic. These are never
+# a real ticket-sale page, so reject them before extracting a link.
+_ASSET_EXTENSIONS = (
+    ".css", ".js", ".mjs", ".map", ".json", ".xml", ".rss",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".mp4", ".webm", ".mp3", ".pdf", ".zip",
+)
+_ASSET_PATH_MARKERS = ("/wp-content/", "/wp-includes/", "/wp-json/")
+
+
+def _is_asset_url(url: str) -> bool:
+    """True if the URL points to a static asset / plugin resource, not a page."""
+    low = url.lower()
+    if any(marker in low for marker in _ASSET_PATH_MARKERS):
+        return True
+    return urlparse(low).path.endswith(_ASSET_EXTENSIONS)
+
 
 async def _find_ticket_url_on_website(
     website: str,
@@ -339,6 +360,10 @@ async def _find_ticket_url_on_website(
                 continue
             for link in re.findall(r'https?://[^\s"\'<>]+', html):
                 low = link.lower()
+                # Skip stylesheets/scripts/images — e.g. the Event Tickets
+                # plugin's tickets.css, whose path falsely matches "/tickets".
+                if _is_asset_url(low):
+                    continue
                 host = urlparse(low).hostname or ""
                 is_ticket_link = (
                     host == own_ticket_host
