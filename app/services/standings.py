@@ -125,6 +125,10 @@ async def get_next_games_for_teams(
         .where(
             Game.season_id == season_id,
             Game.home_score.is_(None),
+            # A cancelled fixture (e.g. against a withdrawn team) is never a
+            # team's "next game" — postponed games still are, since they are
+            # rescheduled rather than annulled.
+            Game.status != GameStatus.cancelled,
             Game.date >= today,
             or_(
                 Game.home_team_id.in_(team_ids),

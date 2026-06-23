@@ -9,6 +9,7 @@ import logging
 from sqlalchemy import or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Advisory lock namespace for team_season_stats writers.
 # Pairs with player_sync._PLAYER_STATS_LOCK_NS to serialize concurrent UPSERTs.
@@ -21,6 +22,44 @@ from app.services.sync.base import BaseSyncService, TEAM_SEASON_STATS_FIELDS
 from app.utils.timestamps import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+async def collect_season_team_ids(db: AsyncSession, season_id: int) -> set[int]:
+    """Resolve every team that should receive season stats for a season.
+
+    Combines three sources so split-group or partially-populated seasons are
+    fully covered: ``score_table`` + ``season_participants`` + ``games``.
+
+    Cancelled fixtures are excluded when scanning games: a team whose only
+    presence in the season is via cancelled matches (e.g. a club withdrawn
+    mid-season per reg. 2.16) is intentionally left out so its
+    ``team_season_stats`` row is not re-created after removal.
+    """
+    score_table_result = await db.execute(
+        select(ScoreTable).where(ScoreTable.season_id == season_id)
+    )
+    team_ids = {st.team_id for st in score_table_result.scalars().all()}
+
+    participants_result = await db.execute(
+        select(SeasonParticipant.team_id).where(SeasonParticipant.season_id == season_id)
+    )
+    for team_id in participants_result.scalars().all():
+        if team_id:
+            team_ids.add(team_id)
+
+    games_result = await db.execute(
+        select(Game.home_team_id, Game.away_team_id).where(
+            Game.season_id == season_id,
+            Game.status != GameStatus.cancelled,
+        )
+    )
+    for home_id, away_id in games_result.all():
+        if home_id:
+            team_ids.add(home_id)
+        if away_id:
+            team_ids.add(away_id)
+
+    return team_ids
 
 
 class StatsSyncService(BaseSyncService):
@@ -44,31 +83,11 @@ class StatsSyncService(BaseSyncService):
 
         Uses v2 endpoint which provides 92 metrics (xG, possession, duels, etc.).
         """
-        # Phase A — reads. Build candidate team set from all season sources:
-        # score_table + season_participants + games. This prevents partial sync
-        # when score_table is incomplete (e.g. split groups). Then commit so the
-        # connection returns to the pool for the fetch phase.
-        score_table_result = await self.db.execute(
-            select(ScoreTable).where(ScoreTable.season_id == season_id)
-        )
-        team_ids = {st.team_id for st in score_table_result.scalars().all()}
-
-        participants_result = await self.db.execute(
-            select(SeasonParticipant.team_id).where(SeasonParticipant.season_id == season_id)
-        )
-        for team_id in participants_result.scalars().all():
-            if team_id:
-                team_ids.add(team_id)
-
-        # Cup-style seasons or partially populated participants are additionally covered by games.
-        games_result = await self.db.execute(
-            select(Game.home_team_id, Game.away_team_id).where(Game.season_id == season_id)
-        )
-        for home_id, away_id in games_result.all():
-            if home_id:
-                team_ids.add(home_id)
-            if away_id:
-                team_ids.add(away_id)
+        # Phase A — reads. Build candidate team set from all season sources
+        # (score_table + season_participants + non-cancelled games) so partial
+        # score_table population (e.g. split groups) still syncs fully. Then
+        # commit so the connection returns to the pool for the fetch phase.
+        team_ids = await collect_season_team_ids(self.db, season_id)
 
         if not team_ids:
             await self.db.rollback()  # leave the session clean for the caller
