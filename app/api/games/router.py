@@ -82,6 +82,10 @@ async def get_games(
     date_to: date_type | None = None,
     status: str | None = Query(default=None, pattern="^(upcoming|finished|live|all)$"),
     hide_past: bool = False,
+    include_cancelled: bool = Query(
+        default=False,
+        description="Include cancelled matches (hidden by default — e.g. fixtures of a withdrawn team)",
+    ),
     group_by_date: bool = False,
     lang: str = Query(default="kz", pattern="^(kz|ru|en)$"),
     limit: int = Query(default=50, le=100),
@@ -132,6 +136,12 @@ async def get_games(
 
     # Build base query
     query = select(Game).where(Game.season_id == season_id)
+    # Cancelled fixtures (e.g. matches of a team withdrawn mid-season) are
+    # hidden from public listings by default — they would otherwise render as
+    # empty rows in the calendar/fixtures. Explicit ?include_cancelled=true
+    # (and the admin endpoint) can still surface them.
+    if not include_cancelled:
+        query = query.where(Game.status != GameStatus.cancelled)
     if group_team_ids is not None:
         query = query.where(
             Game.home_team_id.in_(group_team_ids),

@@ -51,6 +51,46 @@ class TestGamesAPI:
         assert response.status_code == 404
         assert response.json()["detail"] == "Season not found"
 
+    async def test_get_games_hides_cancelled_by_default(
+        self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
+    ):
+        """Cancelled fixtures are hidden from the public list unless requested."""
+        from app.models import Game, GameStatus
+
+        cancelled = Game(
+            sota_id=uuid4(),
+            date=date(2025, 7, 1),
+            time=datetime.strptime("18:00", "%H:%M").time(),
+            tour=3,
+            season_id=sample_season.id,
+            home_team_id=sample_teams[0].id,
+            away_team_id=sample_teams[1].id,
+            home_score=None,
+            away_score=None,
+            status=GameStatus.cancelled,
+        )
+        test_session.add(cancelled)
+        await test_session.commit()
+
+        # Default: cancelled hidden, the finished sample_game still shown.
+        resp = await client.get(f"/api/v1/games?season_id={sample_season.id}")
+        assert resp.status_code == 200
+        ids = {g["id"] for g in resp.json()["items"]}
+        assert sample_game.id in ids
+        assert cancelled.id not in ids
+
+        # By tour (calendar/fixtures path): still hidden.
+        resp = await client.get(f"/api/v1/games?season_id={sample_season.id}&tour=3")
+        ids = {g["id"] for g in resp.json()["items"]}
+        assert cancelled.id not in ids
+
+        # Opt-in: cancelled surfaced when explicitly requested.
+        resp = await client.get(
+            f"/api/v1/games?season_id={sample_season.id}&include_cancelled=true"
+        )
+        ids = {g["id"] for g in resp.json()["items"]}
+        assert cancelled.id in ids
+
     async def test_get_games_filter_by_month_without_year(
         self, client: AsyncClient, test_session, sample_season, sample_teams, sample_game
     ):
