@@ -13,6 +13,7 @@ import io
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Iterable
 
 from tenacity import (
@@ -223,9 +224,9 @@ class GoogleDriveClient:
     async def download_file(self, file_id: str) -> bytes:
         """Download the entire file into memory.
 
-        Goal clips are small (~10-50 MB), so in-memory download is acceptable
-        and keeps the caller free of temp-file management. Caller is expected
-        to immediately stream the bytes to MinIO.
+        Kept for callers that genuinely want bytes (small files, tests).
+        For goal-video sync, prefer download_file_to_path to avoid loading
+        50–200 MB clips into RAM only to immediately write them to disk.
         """
         service = await self._get_service()
 
@@ -239,6 +240,37 @@ class GoogleDriveClient:
             while not done:
                 _status, done = downloader.next_chunk()
             return buffer.getvalue()
+
+        return await asyncio.to_thread(_call)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=20),
+        retry=retry_if_exception_type(Exception),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def download_file_to_path(self, file_id: str, dest: Path) -> int:
+        """Stream a Drive file into `dest` chunk-by-chunk; return final size in bytes.
+
+        MediaIoBaseDownload is given a file handle directly so the full payload
+        never lives in process memory. Used by the goal-video sync pipeline:
+        Drive → tempfile → ffmpeg → MinIO, none of which require the whole
+        clip in RAM at once.
+        """
+        service = await self._get_service()
+        dest = Path(dest)
+
+        def _call() -> int:
+            from googleapiclient.http import MediaIoBaseDownload
+
+            request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+            with open(dest, "wb") as fh:
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done:
+                    _status, done = downloader.next_chunk()
+            return dest.stat().st_size
 
         return await asyncio.to_thread(_call)
 

@@ -49,7 +49,7 @@ from app.services.goal_video_ai_matcher import (
 from app.services.google_drive_client import DriveFile, get_drive_client
 from app.utils.file_urls import to_object_name
 from app.utils.goal_video_filename import parse_goal_filename
-from app.utils.video_transcode import transcode_mp4
+from app.utils.video_transcode import transcode_mp4, transcode_mp4_paths
 
 logger = logging.getLogger(__name__)
 
@@ -570,14 +570,39 @@ def _content_hash(payload: bytes) -> str:
     return hashlib.blake2b(payload, digest_size=8).hexdigest()
 
 
-def _object_name_for(event: GameEvent, drive_file: DriveFile, payload: bytes) -> str:
-    ext = ""
+def _content_hash_from_path(path: Path, *, chunk_size: int = 64 * 1024) -> str:
+    """Same digest as _content_hash but streams the file from disk.
+
+    Used by the path-based pipeline (PR6) to avoid loading the full clip
+    into memory just to compute its versioned object name.
+    """
+    h = hashlib.blake2b(digest_size=8)
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _extension_for(drive_file: DriveFile) -> str:
     if "." in drive_file.name:
-        ext = drive_file.name.rsplit(".", 1)[-1].lower()
-    if not ext:
-        guessed = mimetypes.guess_extension(drive_file.mime_type or "") or ".mp4"
-        ext = guessed.lstrip(".")
+        return drive_file.name.rsplit(".", 1)[-1].lower()
+    guessed = mimetypes.guess_extension(drive_file.mime_type or "") or ".mp4"
+    return guessed.lstrip(".")
+
+
+def _object_name_for(event: GameEvent, drive_file: DriveFile, payload: bytes) -> str:
+    ext = _extension_for(drive_file)
     version = _content_hash(payload)
+    return f"goal_videos/{event.game_id}/{event.id}-{version}.{ext}"
+
+
+def _object_name_from_path(event: GameEvent, drive_file: DriveFile, path: Path) -> str:
+    """Path-based variant of _object_name_for. Streams the file for hashing."""
+    ext = _extension_for(drive_file)
+    version = _content_hash_from_path(path)
     return f"goal_videos/{event.game_id}/{event.id}-{version}.{ext}"
 
 
@@ -620,6 +645,21 @@ async def _post_goal_video_from_payload(
                 tmp_path.unlink(missing_ok=True)
             except Exception:
                 logger.debug("Cleanup of %s failed", tmp_path)
+
+
+async def _post_goal_video_from_path(
+    db: AsyncSession,
+    event: GameEvent,
+    path: Path,
+) -> bool:
+    """Path-based variant — caller already has the clip on disk.
+
+    Avoids the read-payload + write-tempfile round-trip that
+    _post_goal_video_from_payload performs.
+    """
+    from app.services.telegram_posts import post_goal_video_from_file
+
+    return await post_goal_video_from_file(db, event.id, path)
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +712,164 @@ async def _download_and_link(
     folder_label: str | None = None,
     remove_previous_attachment: bool = True,
 ) -> bool:
+    """Pipeline: Drive → tempfile → ffmpeg (path) → MinIO (streaming) → DB.
+
+    No step holds the full payload in memory. TemporaryDirectory is the
+    cleanup boundary — auto-removed on every exit path, including exceptions.
+    Falls back to legacy bytes-based path when `drive` only exposes
+    download_file() (mocks in older tests).
+    """
+    if not hasattr(drive, "download_file_to_path"):
+        return await _download_and_link_legacy_bytes(
+            drive, db, drive_file, event,
+            previous_record=previous_record,
+            folder_label=folder_label,
+            remove_previous_attachment=remove_previous_attachment,
+        )
+
+    settings = get_settings()
+    suffix = _temp_suffix_for(drive_file)
+
+    with tempfile.TemporaryDirectory(prefix="qfl-goal-") as tmp_dir:
+        tmp_dir_path = Path(tmp_dir)
+        raw_path = tmp_dir_path / f"raw{suffix}"
+        transcoded_path = tmp_dir_path / "transcoded.mp4"
+
+        try:
+            await drive.download_file_to_path(drive_file.id, raw_path)
+        except Exception:
+            logger.exception("Failed to download Drive file %s", drive_file.id)
+            return False
+
+        final_path = raw_path
+        if settings.goal_video_transcode_enabled and (drive_file.mime_type or "").startswith("video/"):
+            try:
+                result = await transcode_mp4_paths(
+                    raw_path,
+                    transcoded_path,
+                    crf=settings.goal_video_transcode_crf,
+                    preset=settings.goal_video_transcode_preset,
+                    threads=settings.goal_video_transcode_threads,
+                )
+                if result.transcoded:
+                    final_path = result.output_path
+            except Exception:
+                logger.exception("Transcode step failed for %s — uploading original", drive_file.id)
+
+        final_size = final_path.stat().st_size
+        object_name = _object_name_from_path(event, drive_file, final_path)
+        content_type = drive_file.mime_type or "video/mp4"
+        try:
+            await FileStorageService.upload_file_from_path(
+                final_path,
+                object_name=object_name,
+                content_type=content_type,
+                category="goal_videos",
+                metadata={"drive-file-id": drive_file.id, "game-id": str(event.game_id)},
+            )
+        except Exception:
+            logger.exception("MinIO upload failed for event %s", event.id)
+            return False
+
+        previous_object_name = await _detach_previous_record(
+            db, event, object_name,
+            previous_record=previous_record,
+            remove_previous_attachment=remove_previous_attachment,
+            drive_file_id=drive_file.id,
+        )
+
+        event.video_url = object_name
+        await db.commit()
+
+        if previous_object_name:
+            await _delete_goal_video_object(previous_object_name)
+
+        record = ProcessedGoalVideoRecord(
+            file_id=drive_file.id,
+            game_id=event.game_id,
+            event_id=event.id,
+            object_name=object_name,
+            folder_label=folder_label or _folder_label_for(drive_file),
+        )
+        await _mark_processed(drive_file.id, record=record)
+        logger.info(
+            "Linked Drive file %s → event %s (game %s, %s, minute %s, %.1f MB)",
+            drive_file.name, event.id, event.game_id, event.player_name, event.minute,
+            final_size / 1024 / 1024,
+        )
+
+        # Telegram inline: stream directly from disk while we still have the
+        # local tempfile. Fall back to Celery retry path on any failure.
+        if event.telegram_message_id and event.telegram_video_sent_at is None:
+            try:
+                inline_ok = await _post_goal_video_from_path(db, event, final_path)
+                if not inline_ok:
+                    _enqueue_goal_video_followup(event.id)
+            except Exception:
+                logger.exception(
+                    "inline goal video post failed for %s; enqueueing fallback",
+                    event.id,
+                )
+                _enqueue_goal_video_followup(event.id)
+        return True
+
+
+async def _detach_previous_record(
+    db: AsyncSession,
+    event: GameEvent,
+    object_name: str,
+    *,
+    previous_record: ProcessedGoalVideoRecord | None,
+    remove_previous_attachment: bool,
+    drive_file_id: str,
+) -> str | None:
+    """Clear video_url on the previously linked event if it points at our old
+    object. Returns the object name to delete from MinIO, or None.
+    """
+    if previous_record is None or not remove_previous_attachment:
+        return None
+    if (
+        previous_record.game_id == event.game_id
+        and previous_record.event_id == event.id
+        and previous_record.object_name == object_name
+    ):
+        return None
+
+    previous_event = await db.get(GameEvent, previous_record.event_id)
+    if previous_event is None or not previous_event.video_url:
+        return None
+
+    attached_object_name = to_object_name(previous_event.video_url)
+    if attached_object_name == previous_record.object_name:
+        previous_event.video_url = None
+        return previous_record.object_name
+
+    logger.warning(
+        "processed_goal_video_record_stale file_id=%s stored_event=%s stored_object=%s attached_object=%s",
+        drive_file_id,
+        previous_record.event_id,
+        previous_record.object_name,
+        attached_object_name,
+    )
+    return None
+
+
+async def _download_and_link_legacy_bytes(
+    drive,
+    db: AsyncSession,
+    drive_file: DriveFile,
+    event: GameEvent,
+    *,
+    previous_record: ProcessedGoalVideoRecord | None = None,
+    folder_label: str | None = None,
+    remove_previous_attachment: bool = True,
+) -> bool:
+    """Legacy in-memory pipeline.
+
+    Kept for drive clients (mostly test mocks) that only implement
+    download_file() → bytes. Production drive client uses the path-based
+    pipeline in _download_and_link.
+    """
     try:
         payload = await drive.download_file(drive_file.id)
     except Exception:
@@ -707,30 +905,12 @@ async def _download_and_link(
         logger.exception("MinIO upload failed for event %s", event.id)
         return False
 
-    previous_object_name: str | None = None
-    if (
-        previous_record is not None
-        and remove_previous_attachment
-        and (
-            previous_record.game_id != event.game_id
-            or previous_record.event_id != event.id
-            or previous_record.object_name != object_name
-        )
-    ):
-        previous_event = await db.get(GameEvent, previous_record.event_id)
-        if previous_event is not None and previous_event.video_url:
-            attached_object_name = to_object_name(previous_event.video_url)
-            if attached_object_name == previous_record.object_name:
-                previous_event.video_url = None
-                previous_object_name = previous_record.object_name
-            else:
-                logger.warning(
-                    "processed_goal_video_record_stale file_id=%s stored_event=%s stored_object=%s attached_object=%s",
-                    drive_file.id,
-                    previous_record.event_id,
-                    previous_record.object_name,
-                    attached_object_name,
-                )
+    previous_object_name = await _detach_previous_record(
+        db, event, object_name,
+        previous_record=previous_record,
+        remove_previous_attachment=remove_previous_attachment,
+        drive_file_id=drive_file.id,
+    )
 
     event.video_url = object_name
     await db.commit()
@@ -752,9 +932,6 @@ async def _download_and_link(
         len(payload) / 1024 / 1024,
     )
 
-    # Attach the video on the media host while we still have the local payload.
-    # If that fails, fall back to the Celery retry path, which will re-read
-    # the clip from MinIO via event.video_url.
     if event.telegram_message_id and event.telegram_video_sent_at is None:
         try:
             inline_ok = await _post_goal_video_from_payload(db, drive_file, event, payload)

@@ -6,6 +6,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote
 
@@ -280,6 +281,61 @@ class FileStorageService:
 
         except S3Error as e:
             raise RuntimeError(f"Failed to upload file: {e}")
+
+    @staticmethod
+    async def upload_file_from_path(
+        path: Path,
+        *,
+        object_name: str,
+        content_type: str,
+        category: str = "uploads",
+        metadata: dict | None = None,
+    ) -> dict:
+        """Stream a file from disk to MinIO without loading it into memory.
+
+        Used by goal-video sync where in-memory uploads were peaking at
+        2-3× file size (download buffer + transcode buffer + upload buffer).
+        minio-py's put_object accepts any binary file-like with known length,
+        which it streams via its internal chunked uploader.
+
+        No image optimization or news-hero generation paths — for those use
+        upload_file(file_data=bytes).
+        """
+        client = get_minio_client()
+        bucket = settings.minio_bucket
+        path = Path(path)
+        size = path.stat().st_size
+
+        file_metadata = {
+            "original-filename": quote(path.name, safe=""),
+            "uploaded-at": datetime.now(timezone.utc).isoformat(),
+            "category": category,
+            **(metadata or {}),
+        }
+
+        try:
+            with open(path, "rb") as fh:
+                await _run_sync(
+                    client.put_object,
+                    bucket_name=bucket,
+                    object_name=object_name,
+                    data=fh,
+                    length=size,
+                    content_type=content_type,
+                    metadata=file_metadata,
+                )
+
+            return {
+                "file_id": str(uuid.uuid4()),
+                "object_name": object_name,
+                "url": get_public_url(object_name),
+                "filename": path.name,
+                "content_type": content_type,
+                "size": size,
+                "category": category,
+            }
+        except S3Error as e:
+            raise RuntimeError(f"Failed to upload file from path: {e}")
 
     @staticmethod
     async def get_file(object_name: str) -> tuple[bytes, dict] | None:
