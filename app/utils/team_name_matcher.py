@@ -36,6 +36,21 @@ def normalize_team_name(value: str | None) -> str:
     return normalized
 
 
+def _strip_trailing_marker(name: str) -> str | None:
+    """Drop a trailing single-letter gender/region marker token.
+
+    Broadcast feeds append a one-letter marker to women's/regional sides
+    ("Каспий Ж", "Тұран Ә") that the stored name may omit or spell with a
+    different letter ("Туран", "Каспий Ж" vs incoming "Каспий Ә"). Returns the
+    name without that trailing token, or None when there is nothing to strip.
+    Operates on already-normalized names (so "ә" is folded to "а").
+    """
+    tokens = name.split()
+    if len(tokens) > 1 and len(tokens[-1]) == 1:
+        return " ".join(tokens[:-1])
+    return None
+
+
 def _hyphen_head_variant(value: str) -> str | None:
     """For hyphenated compound club names, keep only the first component.
 
@@ -76,8 +91,9 @@ def _build_aliases(names: set[str]) -> set[str]:
     aliases: set[str] = set()
     for name in names:
         tokens = name.split()
-        if len(tokens) > 1 and len(tokens[-1]) == 1:
-            aliases.add(" ".join(tokens[:-1]))
+        marker_stripped = _strip_trailing_marker(name)
+        if marker_stripped:
+            aliases.add(marker_stripped)
         if len(tokens) > 1 and tokens[0] in {"fc", "фк"}:
             aliases.add(" ".join(tokens[1:]))
     aliases.discard("")
@@ -133,6 +149,28 @@ class TeamNameMatcher:
             return next(iter(alias_candidates)), False
         if len(alias_candidates) > 1:
             return None, True
+
+        # Gender/region marker tolerance. Broadcast feeds carry a trailing
+        # single-letter marker ("Тұран Ә", "Каспий Ә") that the stored name may
+        # lack or spell differently ("Туран", "Каспий Ж"). `_build_aliases`
+        # already strips that token from the stored side; mirror it on the
+        # incoming side so both directions reconcile.
+        stripped = _strip_trailing_marker(normalized)
+        if stripped:
+            marker_candidates: set[int] = set()
+            if self.home_team_id is not None and (
+                stripped in self.home_names or stripped in self.home_aliases
+            ):
+                marker_candidates.add(self.home_team_id)
+            if self.away_team_id is not None and (
+                stripped in self.away_names or stripped in self.away_aliases
+            ):
+                marker_candidates.add(self.away_team_id)
+
+            if len(marker_candidates) == 1:
+                return next(iter(marker_candidates)), False
+            if len(marker_candidates) > 1:
+                return None, True
 
         return None, False
 
