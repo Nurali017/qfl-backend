@@ -598,6 +598,76 @@ async def _ai_validate_ticket_url(
         return True
 
 
+async def _ai_validate_ticket_page(
+    url: str,
+    home_name: str,
+    away_name: str,
+    api_key: str,
+    client: httpx.AsyncClient,
+) -> bool:
+    """Stage 2: scrape the candidate page and let GLM confirm tickets are
+    actually on sale there.
+
+    Stage 1 (_ai_validate_ticket_url) only sees the URL/title/snippet, so it
+    accepts info-only stub pages that name both teams but offer no purchase
+    (e.g. ticketon event pages that merely describe the match, with a wrong or
+    placeholder date). This reads the rendered page text via Serper scrape and
+    rejects pages without an active sale. Degrades to True (accept) when the
+    page can't be read, to avoid false rejects on flaky scrapes.
+    """
+    from app.config import get_settings
+    settings = get_settings()
+
+    if not settings.glm_api_key:
+        return True
+
+    page_text = await _scrape_caption(url, api_key, client)
+    if not page_text:
+        return True  # couldn't read page — don't be stricter than stage 1
+
+    prompt = (
+        "Ниже текст страницы по ссылке на билеты.\n"
+        f"Нужный матч: {home_name} (дома) — {away_name}.\n\n"
+        f"ТЕКСТ СТРАНИЦЫ (начало):\n{page_text[:1800]}\n\n"
+        "Вопрос: на этой странице реально МОЖНО КУПИТЬ билеты на футбольный "
+        "матч (есть продажа/кнопка покупки/сеансы/цена)?\n"
+        "Ответь 'нет' если это просто анонс или описание матча без возможности "
+        "покупки.\n"
+        "Ответь только 'да' или 'нет'."
+    )
+
+    try:
+        glm = anthropic.AsyncAnthropic(
+            api_key=settings.glm_api_key,
+            base_url=settings.glm_base_url,
+            max_retries=1,
+            timeout=15,
+        )
+        response = await glm.messages.create(
+            model=settings.glm_model,
+            max_tokens=16,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = "".join(
+            getattr(block, "text", "")
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip().lower()
+        on_sale = answer.startswith("да") or answer.startswith("yes")
+        logger.info(
+            "AI page validation for ticket (%s vs %s): %s → %s",
+            home_name, away_name, url, "on sale" if on_sale else "no active sale",
+        )
+        return on_sale
+    except Exception:
+        logger.warning(
+            "AI ticket page validation failed, accepting URL as fallback",
+            exc_info=True,
+        )
+        return True
+
+
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.TimeoutException):
         return True
@@ -979,13 +1049,27 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                             cand.url, cand.title, cand.snippet,
                             home_team.name, away_team.name, game.date,
                         )
-                        if is_valid:
-                            match = cand
-                            break
-                        logger.info(
-                            "AI rejected ticket URL for game %s: %s",
-                            game.id, cand.url,
+                        if not is_valid:
+                            logger.info(
+                                "AI rejected ticket URL for game %s: %s",
+                                game.id, cand.url,
+                            )
+                            continue
+                        # Stage 2: scrape the page and confirm tickets are
+                        # actually on sale (stage 1 only saw URL/title/snippet,
+                        # so it can't tell a live sale from an info-only stub).
+                        page_ok = await _ai_validate_ticket_page(
+                            cand.url, home_team.name, away_team.name,
+                            settings.serper_api_key, client,
                         )
+                        if not page_ok:
+                            logger.info(
+                                "AI rejected ticket PAGE (no active sale) for game %s: %s",
+                                game.id, cand.url,
+                            )
+                            continue
+                        match = cand
+                        break
                     # Fallback: no search candidate — scan the club's own site for
                     # its ticket portal (catches clubs selling only via tickets.<club>).
                     if match is None and home_team.website:
