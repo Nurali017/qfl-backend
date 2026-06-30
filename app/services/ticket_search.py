@@ -1077,6 +1077,17 @@ async def search_and_update_tickets(db: AsyncSession) -> dict:
                             home_team.website, home_team.name, away_team.name,
                             game.date, client,
                         )
+                        # Same stage-2 page check — a club site may link to an
+                        # info-only stub (right teams, but no active sale).
+                        if portal_url and not await _ai_validate_ticket_page(
+                            portal_url, home_team.name, away_team.name,
+                            settings.serper_api_key, client,
+                        ):
+                            logger.info(
+                                "AI rejected club portal PAGE (no active sale) for game %s: %s",
+                                game.id, portal_url,
+                            )
+                            portal_url = None
                         if portal_url:
                             game.ticket_url = portal_url
                             updated += 1
