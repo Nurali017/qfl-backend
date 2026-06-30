@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
 
+    # GLM (Z.AI) — free AI provider for ticket-URL validation.
+    # Z.AI exposes an Anthropic-compatible endpoint, so the anthropic SDK is reused
+    # with this base_url. Set glm_api_key (ZAI_API_KEY) in .env to enable; empty
+    # key falls back to skipping AI validation (accepts the URL).
+    glm_api_key: str = ""
+    glm_base_url: str = "https://api.z.ai/api/anthropic"
+    glm_model: str = "glm-4.5-flash"  # free tier on Z.AI
+
     # Telegram notifications (admin operations)
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

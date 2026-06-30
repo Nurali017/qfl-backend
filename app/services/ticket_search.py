@@ -531,11 +531,15 @@ async def _ai_validate_ticket_url(
     away_name: str,
     game_date: date,
 ) -> bool:
-    """Use Claude Haiku to validate whether a ticket URL is for this specific match."""
+    """Use GLM (Z.AI, free) to validate whether a ticket URL is for this specific match.
+
+    Z.AI exposes an Anthropic-compatible API, so the anthropic SDK is reused with a
+    GLM base_url and model. Falls back to accepting the URL if no key is configured.
+    """
     from app.config import get_settings
     settings = get_settings()
 
-    if not settings.anthropic_api_key:
+    if not settings.glm_api_key:
         return True  # Skip AI validation if no API key
 
     date_str = _format_date_ru(game_date)
@@ -566,16 +570,22 @@ async def _ai_validate_ticket_url(
 
     try:
         client = anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key,
+            api_key=settings.glm_api_key,
+            base_url=settings.glm_base_url,
             max_retries=1,
             timeout=10,
         )
         response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=8,
+            model=settings.glm_model,
+            max_tokens=16,
             messages=[{"role": "user", "content": prompt}],
         )
-        answer = response.content[0].text.strip().lower()
+        # Collect text from all text blocks (GLM may return non-text blocks too).
+        answer = "".join(
+            getattr(block, "text", "")
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip().lower()
         is_valid = answer.startswith("да") or answer.startswith("yes")
         logger.info(
             "AI validation for game ticket (%s vs %s): %s → %s",
