@@ -578,6 +578,7 @@ async def _ai_validate_ticket_url(
         response = await client.messages.create(
             model=settings.glm_model,
             max_tokens=16,
+            temperature=0,  # deterministic yes/no — GLM flash flip-flops without it
             messages=[{"role": "user", "content": prompt}],
         )
         # Collect text from all text blocks (GLM may return non-text blocks too).
