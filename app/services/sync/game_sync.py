@@ -773,8 +773,10 @@ class GameSyncService(BaseSyncService):
             )
             skip_deletes = True
 
-        # SOTA collapses 2nd yellow into КК — we follow the same convention
-        # and store both "2ЖК" (legacy) and "КК" as red_card.
+        # SOTA collapses a plain 2nd yellow into bare "КК" (no way to tell it
+        # apart from a straight red), but some competitions emit the
+        # unambiguous "КК2ЖК" code for a red-via-second-yellow — map that one
+        # to second_yellow. Bare "2ЖК" (legacy) and "КК" still map to red_card.
         ACTION_TYPE_MAP = {
             "ГОЛ": GameEventType.goal,
             "АВТОГОЛ": GameEventType.own_goal,
@@ -784,6 +786,7 @@ class GameSyncService(BaseSyncService):
             "ГОЛЕВОЙ ПАС": GameEventType.assist,
             "ЖК": GameEventType.yellow_card,
             "2ЖК": GameEventType.red_card,
+            "КК2ЖК": GameEventType.second_yellow,
             "КК": GameEventType.red_card,
             "ЗАМЕНА": GameEventType.substitution,
         }

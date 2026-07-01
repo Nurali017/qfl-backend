@@ -37,6 +37,7 @@ ACTION_TYPE_MAP = {
     "ГОЛЕВОЙ ПАС": GameEventType.assist,
     "ЖК": GameEventType.yellow_card,
     "2ЖК": GameEventType.second_yellow,
+    "КК2ЖК": GameEventType.second_yellow,
     "КК": GameEventType.red_card,
     "ЗАМЕНА": GameEventType.substitution,
 }
