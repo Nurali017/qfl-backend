@@ -168,6 +168,14 @@ async def get_player(
     else:
         player_teams_filtered = list(player.player_teams)
 
+    # A hidden contract (e.g. an old team kept only for historical stats after
+    # a transfer) must never outrank the player's current, visible contract —
+    # frontend picks teams[0] as "the" team, so hidden entries must be dropped
+    # here whenever a visible one exists for the same scope.
+    visible_filtered = [pt for pt in player_teams_filtered if not pt.is_hidden]
+    if visible_filtered:
+        player_teams_filtered = visible_filtered
+
     teams = list(set(pt.team_id for pt in player_teams_filtered))
 
     # Fallback to latest season contracts if current season has none
@@ -178,6 +186,9 @@ async def get_player(
         if all_pts_sorted:
             latest_season_id = all_pts_sorted[0].season_id
             latest_pts = [pt for pt in all_pts_sorted if pt.season_id == latest_season_id]
+            visible_latest = [pt for pt in latest_pts if not pt.is_hidden]
+            if visible_latest:
+                latest_pts = visible_latest
             teams = list(set(pt.team_id for pt in latest_pts))
         else:
             latest_pts = []

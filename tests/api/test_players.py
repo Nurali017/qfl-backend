@@ -163,6 +163,67 @@ class TestPlayersAPI:
         response_kz = await client.get(f"/api/v1/players/{player.id}?lang=kz")
         assert response_kz.json()["top_role"] == "Шабуылшы"
 
+    async def test_get_player_ignores_hidden_team_when_visible_one_exists(
+        self,
+        client: AsyncClient,
+        test_session,
+        sample_season,
+        sample_teams,
+    ):
+        """A hidden contract (e.g. an old team kept for historical stats after a
+        transfer) must never be picked as "the" team over a visible contract in
+        the same season — this is what player.teams[0] on the frontend uses to
+        render the player's team badge/link."""
+        from uuid import uuid4
+        from datetime import date
+        from app.models.player import Player
+        from app.models.player_team import PlayerTeam
+
+        player = Player(
+            sota_id=uuid4(),
+            first_name="Transferred",
+            last_name="Player",
+            birthday=date(1999, 4, 20),
+            player_type="halfback",
+        )
+        test_session.add(player)
+        await test_session.commit()
+        await test_session.refresh(player)
+
+        old_team, new_team = sample_teams[0], sample_teams[1]
+
+        # Old contract inserted first, so it would sort first in the relationship
+        # by primary key — and is marked hidden after the transfer.
+        old_pt = PlayerTeam(
+            player_id=player.id,
+            team_id=old_team.id,
+            season_id=sample_season.id,
+            number=9,
+            is_active=True,
+            is_hidden=True,
+        )
+        test_session.add(old_pt)
+        await test_session.commit()
+
+        new_pt = PlayerTeam(
+            player_id=player.id,
+            team_id=new_team.id,
+            season_id=sample_season.id,
+            number=7,
+            is_active=True,
+            is_hidden=False,
+        )
+        test_session.add(new_pt)
+        await test_session.commit()
+
+        response = await client.get(
+            f"/api/v1/players/{player.id}?season_id={sample_season.id}"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["teams"] == [new_team.id]
+        assert data["jersey_number"] == 7
+
     async def test_top_role_none_when_no_player_team(
         self,
         client: AsyncClient,
